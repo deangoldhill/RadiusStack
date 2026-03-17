@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>Users</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-gray-800">User Management</h1>
+      <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add User</button>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+      <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Username</th><th class="p-3">Password</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="userModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border border-gray-100">
+      <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Create / Edit User</h2>
+      <form id="userForm" class="space-y-4">
+        <div><label class="block text-sm font-bold text-gray-700">Username</label>
+        <input type="text" id="uname" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Cleartext Password</label>
+        <input type="text" id="upass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none"></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Billing Plan</label>
+        <select id="uplan" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- No Plan (Unlimited) --</option></select></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Profile</label>
+        <select id="uprofile" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- None --</option></select></div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t">
+          <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/js/layout.js"></script>
+  <script>
+    let originalUsername = null;
+
+    async function loadData() {
+      const plRes = await apiFetch('/api/plans');
+      if (plRes.ok) { 
+          const pl = await plRes.json(); 
+          document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + pl.map(x => `<option value="${x.id}">${x.name}</option>`).join(''); 
+      }
+
+      const pRes = await apiFetch('/api/profiles');
+      if (pRes.ok) { 
+          const p = await pRes.json(); 
+          document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + p.map(x => `<option value="${x}">${x}</option>`).join(''); 
+      }
+
+      const res = await apiFetch('/api/users');
+      if (res.ok) {
+        const users = await res.json();
+        document.querySelector('#usersTable tbody').innerHTML = users.map(u => `
+        <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+          <td class="p-3 font-bold text-gray-800">${u.username}</td>
+          <td class="p-3 text-gray-500 font-mono text-xs">${u.password}</td>
+          <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
+          <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
+          <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d||0)/1048576).toFixed(2)} MB</td>
+          <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d||0)/3600).toFixed(1)} hrs</td>
+          <td class="p-3 text-right space-x-2">
+            ${u.plan_id ? `<button onclick="resetPlan('${u.username}')" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
+            <button onclick="editUser('${u.username}', '${u.password}', '${u.profile||''}', '${u.plan_id||''}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+            <button onclick="deleteUser('${u.username}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+          </td>
+        </tr>`).join('');
+      }
+    }
+
+    async function resetPlan(username) {
+        if(!confirm(`Manually reset plan usage limits for ${username}?`)) return;
+        const res = await apiFetch(`/api/users/${username}/reset-plan`, { method: 'POST' });
+        if(res.ok) { alert('Limits reset successfully'); loadData(); }
+    }
+
+    function openModal() {
+      originalUsername = null;
+      document.getElementById('userModal').classList.remove('hidden');
+      document.getElementById('userForm').reset();
+      document.getElementById('uname').readOnly = false;
+      document.getElementById('uname').classList.remove('bg-gray-100');
+    }
+
+    function closeModal() { document.getElementById('userModal').classList.add('hidden'); }
+
+    function editUser(username, password, profile, plan_id) {
+      originalUsername = username;
+      document.getElementById('userModal').classList.remove('hidden');
+      document.getElementById('uname').value = username;
+      document.getElementById('uname').readOnly = true;
+      document.getElementById('uname').classList.add('bg-gray-100');
+      document.getElementById('upass').value = password;
+      document.getElementById('uprofile').value = profile;
+      document.getElementById('uplan').value = plan_id;
+    }
+
+    async function deleteUser(username) {
+      if(!confirm(`Delete user ${username}?`)) return;
+      const res = await apiFetch(`/api/users/${username}`, { method: 'DELETE' });
+      if(res.ok) loadData();
+    }
+
+    document.getElementById('userForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const u = document.getElementById('uname').value;
+      const p = document.getElementById('upass').value;
+      const prof = document.getElementById('uprofile').value;
+      const plan = document.getElementById('uplan').value;
+
+      const payload = { username: u, password: p, profile: prof, plan_id: plan };
+
+      if (originalUsername) {
+        const res = await apiFetch(`/api/users/${originalUsername}`, { method: 'PUT', body: JSON.stringify(payload) });
+        if(res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
+      } else {
+        const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(payload) });
+        if(res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
+      }
+    };
+
+    loadData();
+  </script>
+</body></html>

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Settings</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body>
+  <main>
+    <h1 class="text-3xl font-bold mb-6 text-gray-800">System Settings</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <!-- Global Config -->
+        <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-700">Global Configuration</h2>
+            <div class="space-y-4">
+
+                <div>
+                    <label class="block text-sm font-bold mb-1 text-gray-700">UI Theme Color</label>
+                    <select id="uiTheme" class="w-full border p-2 rounded text-sm bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+                        <option value="blue">Default Blue</option>
+                        <option value="red">Danger Red</option>
+                        <option value="green">Secure Green</option>
+                        <option value="purple">Royal Purple</option>
+                        <option value="gray">Dark Mode Accent</option>
+                    </select>
+                </div>
+
+                <label class="flex items-center space-x-2 mt-4 cursor-pointer">
+                    <input type="checkbox" id="enforce2FA" class="form-checkbox h-5 w-5 text-blue-600 rounded">
+                    <span class="text-gray-700 font-medium">Enforce 2FA for all Administrators</span>
+                </label>
+
+                <div>
+                    <label class="block text-sm font-bold mt-4 mb-1 text-gray-700 flex items-center">
+                        Custom Profile Attributes
+                        <span class="ml-2 text-gray-400 cursor-help" data-tooltip="These will appear in the dropdown when creating profiles">&#9432;</span>
+                    </label>
+                    <input type="text" id="customAttrs" placeholder="e.g. Filter-Id, WISPr-Bandwidth-Max-Up" class="w-full border p-2 rounded text-sm bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+                </div>
+
+                <div class="mt-4 border-t pt-4">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="radiusDebug" class="form-checkbox h-5 w-5 text-red-600 rounded">
+                        <span class="font-bold text-gray-700">Enable FreeRADIUS Debug Mode</span>
+                    </label>
+                    <p class="text-xs text-red-500 ml-7 mt-1 font-medium">Warning: Saving this will immediately restart the RADIUS container.</p>
+                </div>
+
+                <button onclick="saveSettings()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded mt-4 w-full font-bold shadow-sm">Save Configuration</button>
+            </div>
+        </div>
+
+        <!-- EAP Certificates -->
+        <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-700">EAP Certificates Manager</h2>
+
+            <div class="mb-4">
+                <h3 class="font-bold text-sm mb-2 text-blue-600 flex items-center">
+                    Generate New 10-Year Certificate
+                    <span class="ml-2 text-gray-400 cursor-help" data-tooltip="Replaces existing certs and restarts RADIUS">&#9432;</span>
+                </h3>
+                <form id="genCertForm" class="space-y-3 mb-4">
+                    <div class="flex space-x-2">
+                        <input type="text" id="certC" placeholder="Country (e.g. US)" class="border p-2 w-1/4 rounded text-sm bg-gray-50">
+                        <input type="text" id="certST" placeholder="State" class="border p-2 w-1/4 rounded text-sm bg-gray-50">
+                        <input type="text" id="certL" placeholder="City" class="border p-2 w-1/4 rounded text-sm bg-gray-50">
+                    </div>
+                    <div class="flex space-x-2">
+                        <input type="text" id="certO" placeholder="Organization" class="border p-2 w-1/2 rounded text-sm bg-gray-50">
+                        <input type="text" id="certCN" placeholder="Common Name (FQDN/IP)" class="border p-2 w-1/2 rounded text-sm bg-gray-50" required>
+                    </div>
+                    <button type="submit" class="bg-purple-600 hover:bg-purple-700 transition-colors text-white px-4 py-2 rounded w-full text-sm font-bold shadow-sm">Generate & Restart RADIUS</button>
+                </form>
+            </div>
+
+            <div class="border-t pt-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold text-sm text-gray-700">Active Certificate Public Key</h3>
+                    <button onclick="downloadCert()" class="bg-green-100 text-green-700 hover:bg-green-200 transition-colors px-3 py-1 rounded text-xs font-bold shadow-sm">Download (.pem)</button>
+                </div>
+                <pre id="certDetails" class="bg-gray-800 p-3 text-xs overflow-y-auto max-h-32 rounded text-green-400 font-mono shadow-inner border border-gray-700">Loading...</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Health -->
+    <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
+        <div class="flex justify-between items-center mb-4 border-b pb-2">
+            <h2 class="text-xl font-bold text-gray-700">System Health & Containers</h2>
+            <button onclick="loadHealth()" class="text-sm bg-gray-200 hover:bg-gray-300 transition-colors text-gray-800 px-3 py-1 rounded font-medium shadow-sm">Refresh State</button>
+        </div>
+        <table class="w-full text-left text-sm whitespace-nowrap" id="healthTable">
+            <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Container Name</th><th class="p-3">State</th><th class="p-3">Uptime/Status</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+  </main>
+
+  <!-- Logs Modal -->
+  <div id="logsModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-gray-900 w-full max-w-6xl rounded-xl shadow-2xl overflow-hidden flex flex-col h-[85vh] border border-gray-700">
+        <div class="flex justify-between items-center p-4 bg-gray-800 text-white border-b border-gray-700">
+            <div class="flex items-center space-x-3">
+                <h3 class="font-bold text-lg tracking-wide" id="logsTitle">Container Logs</h3>
+                <span id="logStatus" class="flex items-center text-xs text-green-400 bg-green-400 bg-opacity-20 px-2 py-1 rounded-full"><span class="w-2 h-2 rounded-full bg-green-400 mr-2 animate-pulse"></span>Live</span>
+            </div>
+            <div class="space-x-2 flex items-center">
+                <button onclick="toggleLogs()" id="pauseBtn" class="text-sm bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded font-bold transition-colors shadow-sm">Pause Stream</button>
+                <button onclick="closeLogs()" class="text-gray-400 hover:text-white text-2xl leading-none ml-4 transition-colors">&times;</button>
+            </div>
+        </div>
+        <div class="flex-1 p-4 overflow-y-auto bg-[#0d1117] relative">
+            <pre id="logsOutput" class="text-green-400 font-mono text-xs whitespace-pre-wrap leading-relaxed"></pre>
+        </div>
+    </div>
+  </div>
+
+  <script src="/js/layout.js"></script>
+  <script>
+      async function loadSettings() {
+          const res = await apiFetch('/api/settings');
+          if (res.ok) {
+              const data = await res.json();
+              document.getElementById('enforce2FA').checked = data.enforce_2fa === 'true';
+              document.getElementById('radiusDebug').checked = data.radius_debug === 'true';
+              document.getElementById('customAttrs').value = data.custom_reply_attributes || '';
+              if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
+          }
+      }
+
+      async function saveSettings() {
+          const payload = {
+              enforce_2fa: document.getElementById('enforce2FA').checked ? 'true' : 'false',
+              radius_debug: document.getElementById('radiusDebug').checked ? 'true' : 'false',
+              custom_reply_attributes: document.getElementById('customAttrs').value,
+              ui_theme: document.getElementById('uiTheme').value
+          };
+          const res = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+          if(res.ok) {
+              alert('Settings saved successfully. UI Theme will apply on next reload.');
+              window.location.reload();
+          }
+      }
+
+      async function loadHealth() {
+          const res = await apiFetch('/api/system/status');
+          if (res.ok) {
+              const data = await res.json();
+              document.querySelector('#healthTable tbody').innerHTML = data.map(c => {
+                  const stateColor = c.state === 'running' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200';
+                  return `<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                      <td class="p-3 font-bold text-gray-700">${c.name}</td>
+                      <td class="p-3"><span class="px-2 py-1 text-xs rounded border font-bold ${stateColor}">${c.state.toUpperCase()}</span></td>
+                      <td class="p-3 text-xs text-gray-500 font-mono">${c.status}</td>
+                      <td class="p-3 text-right space-x-2">
+                          <button onclick="viewLogs('${c.name}')" class="bg-gray-800 text-white hover:bg-gray-700 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm">View Logs</button>
+                          <button onclick="restartContainer('${c.name}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm">Restart</button>
+                      </td>
+                  </tr>`;
+              }).join('');
+          }
+      }
+
+      async function restartContainer(name) {
+          if(!confirm(`Restart ${name}?`)) return;
+          await apiFetch(`/api/system/restart/${name}`, { method: 'POST' });
+          loadHealth();
+      }
+
+      let logsInterval = null;
+      let currentContainer = null;
+      let isLogsPaused = false;
+
+      async function fetchLogs() {
+          if(!currentContainer || isLogsPaused) return;
+          const res = await apiFetch(`/api/system/logs/${currentContainer}`);
+          if (res.ok) {
+              const data = await res.json();
+              const out = document.getElementById('logsOutput');
+              const isScrolled = out.scrollHeight - out.clientHeight <= out.scrollTop + 20;
+              out.textContent = data.logs || 'No logs available.';
+              if(isScrolled) out.scrollTop = out.scrollHeight;
+          }
+      }
+
+      function viewLogs(name) {
+          currentContainer = name;
+          isLogsPaused = false;
+          updateLogStatusUI();
+          document.getElementById('logsTitle').textContent = `Live Logs: ${name}`;
+          document.getElementById('logsModal').classList.remove('hidden');
+          fetchLogs();
+          logsInterval = setInterval(fetchLogs, 2000);
+      }
+
+      function toggleLogs() {
+          isLogsPaused = !isLogsPaused;
+          updateLogStatusUI();
+      }
+
+      function updateLogStatusUI() {
+          const btn = document.getElementById('pauseBtn');
+          const status = document.getElementById('logStatus');
+          if (isLogsPaused) {
+              btn.textContent = "Resume Stream";
+              btn.className = "text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded font-bold transition-colors shadow-sm";
+              status.innerHTML = `<span class="w-2 h-2 rounded-full bg-yellow-400 mr-2"></span>Paused`;
+              status.className = "flex items-center text-xs text-yellow-400 bg-yellow-400 bg-opacity-20 px-2 py-1 rounded-full";
+          } else {
+              btn.textContent = "Pause Stream";
+              btn.className = "text-sm bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded font-bold transition-colors shadow-sm";
+              status.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-400 mr-2 animate-pulse"></span>Live`;
+              status.className = "flex items-center text-xs text-green-400 bg-green-400 bg-opacity-20 px-2 py-1 rounded-full";
+              fetchLogs();
+          }
+      }
+
+      function closeLogs() {
+          document.getElementById('logsModal').classList.add('hidden');
+          clearInterval(logsInterval);
+          currentContainer = null;
+      }
+
+      async function loadCertDetails() {
+          const res = await apiFetch('/api/certs/details');
+          if (res.ok) {
+              const data = await res.json();
+              document.getElementById('certDetails').textContent = data.details;
+          }
+      }
+
+      async function downloadCert() {
+          const res = await apiFetch('/api/certs/download');
+          if (res.ok) {
+              const blob = await res.blob();
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'radius-server.pem';
+              a.click();
+          }
+      }
+
+      document.getElementById('genCertForm').onsubmit = async (e) => {
+          e.preventDefault();
+          if(!confirm('This will overwrite existing certificates! Continue?')) return;
+          const payload = {
+              c: document.getElementById('certC').value,
+              st: document.getElementById('certST').value,
+              l: document.getElementById('certL').value,
+              o: document.getElementById('certO').value,
+              cn: document.getElementById('certCN').value
+          };
+          const res = await apiFetch('/api/certs/generate', { method: 'POST', body: JSON.stringify(payload) });
+          if(res.ok) { 
+              alert('New certificate generated successfully.'); 
+              loadCertDetails(); 
+              loadHealth(); 
+          }
+      };
+
+      loadSettings();
+      loadHealth();
+      loadCertDetails();
+  </script>
+</body></html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>Plans & Data Limits</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-gray-800">Billing Plans & Limits</h1>
+      <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Create Plan</button>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+      <table class="w-full text-left text-sm whitespace-nowrap" id="plansTable">
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Plan Name</th><th class="p-3">Data Limit (MB)</th><th class="p-3">Time Limit (Hours)</th><th class="p-3">Reset Cycle</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="planModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">
+      <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Create Plan</h2>
+      <form id="planForm" class="space-y-4">
+        <input type="hidden" id="planId">
+
+        <div><label class="block text-sm font-bold text-gray-700">Plan Name</label>
+        <input type="text" id="pName" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required></div>
+
+        <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-sm font-bold text-gray-700">Data Limit (MB)<br><span class="text-xs font-normal text-gray-500">0 = Unlimited</span></label>
+            <input type="number" id="pData" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" value="0" min="0"></div>
+
+            <div><label class="block text-sm font-bold text-gray-700">Time Limit (Hours)<br><span class="text-xs font-normal text-gray-500">0 = Unlimited</span></label>
+            <input type="number" id="pTime" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" value="0" min="0" step="0.1"></div>
+        </div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Automatic Reset Period</label>
+        <select id="pReset" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+            <option value="never">Never Reset (Prepaid / One-Time)</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly (Monday)</option>
+            <option value="monthly">Monthly (1st of Month)</option>
+        </select></div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t">
+          <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save Plan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/js/layout.js"></script>
+  <script>
+    let plansList = [];
+
+    async function loadPlans() {
+      const res = await apiFetch('/api/plans');
+      if (res.ok) {
+        plansList = await res.json();
+        document.querySelector('#plansTable tbody').innerHTML = plansList.map(p => `
+            <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+            <td class="p-3 font-bold text-gray-800">${p.name}</td>
+            <td class="p-3 font-mono text-gray-600">${p.data_limit_mb > 0 ? p.data_limit_mb : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
+            <td class="p-3 font-mono text-gray-600">${p.time_limit_seconds > 0 ? (p.time_limit_seconds/3600).toFixed(1) : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
+            <td class="p-3 text-xs capitalize"><span class="px-2 py-1 bg-gray-100 rounded border font-bold">${p.reset_period}</span></td>
+            <td class="p-3 text-right space-x-2">
+                <button onclick="openModal(${p.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                <button onclick="deletePlan(${p.id}, '${p.name}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+            </td>
+            </tr>`).join('');
+      }
+    }
+
+    function openModal(id = null) {
+        document.getElementById('planModal').classList.remove('hidden');
+        document.getElementById('planForm').reset();
+
+        if (id) {
+            const p = plansList.find(x => x.id === id);
+            document.getElementById('modalTitle').textContent = `Edit Plan: ${p.name}`;
+            document.getElementById('planId').value = p.id;
+            document.getElementById('pName').value = p.name;
+            document.getElementById('pData').value = p.data_limit_mb;
+            document.getElementById('pTime').value = p.time_limit_seconds / 3600;
+            document.getElementById('pReset').value = p.reset_period;
+        } else {
+            document.getElementById('modalTitle').textContent = 'Create Plan';
+            document.getElementById('planId').value = '';
+        }
+    }
+
+    function closeModal() { document.getElementById('planModal').classList.add('hidden'); }
+
+    async function deletePlan(id, name) {
+        if(!confirm(`Are you sure you want to delete plan: ${name}? Users on this plan will lose their limits.`)) return;
+        const res = await apiFetch(`/api/plans/${id}`, { method: 'DELETE' });
+        if(res.ok) loadPlans();
+    }
+
+    document.getElementById('planForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('planId').value;
+        const payload = {
+            name: document.getElementById('pName').value,
+            data_limit_mb: parseInt(document.getElementById('pData').value) || 0,
+            time_limit_seconds: Math.floor(parseFloat(document.getElementById('pTime').value) * 3600) || 0,
+            reset_period: document.getElementById('pReset').value
+        };
+
+        const url = id ? `/api/plans/${id}` : '/api/plans';
+        const method = id ? 'PUT' : 'POST';
+
+        const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
+        if(res.ok) { closeModal(); loadPlans(); } 
+        else { const err = await res.json(); alert('Error: ' + err.error); }
+    };
+
+    loadPlans();
+  </script>
+</body></html>

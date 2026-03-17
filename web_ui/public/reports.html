@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en"><head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Reports & Analytics</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head><body>
+  <main>
+    <h1 class="text-3xl font-bold mb-6">Reports & Analytics</h1>
+
+    <!-- Dashboard Charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div class="bg-white p-4 rounded shadow">
+        <h2 class="text-lg font-bold mb-2">Authentications (Last 7 Days)</h2>
+        <canvas id="authChart" height="200"></canvas>
+      </div>
+      <div class="bg-white p-4 rounded shadow">
+        <h2 class="text-lg font-bold mb-2">Top Users by Data Usage (MB)</h2>
+        <canvas id="dataChart" height="200"></canvas>
+      </div>
+    </div>
+
+    <!-- Live Active Sessions Table -->
+    <div class="bg-white p-4 rounded shadow mb-6">
+      <h2 class="text-lg font-bold mb-4">Active RADIUS Sessions</h2>
+      <table class="w-full text-left text-sm" id="activeTable">
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">NAS Client</th><th class="p-3">IP Address</th><th class="p-3 rounded-tr-lg">Active Sessions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <hr class="my-8">
+
+    <div class="grid grid-cols-2 gap-6">
+      <!-- User Report -->
+      <div class="bg-white p-6 rounded shadow">
+        <h2 class="text-xl font-bold mb-4 border-b pb-2 text-blue-600">User-Specific Executive Report</h2>
+        <form id="userReportForm" class="space-y-4">
+          <div>
+            <label class="block text-sm font-bold text-gray-700">Username</label>
+            <input type="text" id="repUser" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-bold text-gray-700">Start Date</label>
+              <input type="date" id="repStart" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-bold text-gray-700">End Date</label>
+              <input type="date" id="repEnd" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+            </div>
+          </div>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg w-full font-bold shadow-sm">Generate Detailed Report</button>
+        </form>
+        <div id="userReport" class="mt-8 hidden"></div>
+      </div>
+
+      <!-- Failed Auth Report -->
+      <div class="bg-white p-6 rounded shadow">
+        <h2 class="text-xl font-bold mb-4 border-b pb-2 text-red-600">Failed Authentication Analysis</h2>
+        <button onclick="loadFailedReport()" class="bg-red-600 text-white px-4 py-2 rounded w-full font-bold">Generate Failed Auth Report</button>
+        <div id="failedReport" class="mt-6 border-t pt-4 hidden"></div>
+      </div>
+    </div>
+  </main>
+  <script src="/js/layout.js"></script>
+  <script>
+    async function loadDashboard() {
+      const res = await apiFetch('/api/reports/stats');
+      if (res.ok) {
+        const data = await res.json();
+
+        // Active Sessions Table
+        document.querySelector('#activeTable tbody').innerHTML = data.activeSessions.length ? data.activeSessions.map(a => `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors"><td class="p-3 font-bold text-gray-800">${a.shortname || 'Unknown NAS'}</td><td class="p-3 text-xs text-gray-500 font-mono">${a.nasipaddress}</td><td class="p-3 font-bold text-green-600">${a.count}</td></tr>`).join('') : '<tr><td colspan="3" class="p-3 text-center text-gray-500">No active sessions</td></tr>';
+
+        // Data Chart
+        new Chart(document.getElementById('dataChart'), {
+          type: 'doughnut',
+          data: {
+            labels: data.topUsers.map(u => u.username),
+            datasets: [{
+              data: data.topUsers.map(u => (u.total_bytes / 1048576).toFixed(2)),
+              backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
+            }]
+          }
+        });
+
+        // Auth Chart (Group by Date and Reply type)
+        const dates = [...new Set(data.recentAuths.map(a => a.date.split('T')[0]))];
+        const accepts = dates.map(d => { const x = data.recentAuths.find(a => a.date.startsWith(d) && a.reply==='Access-Accept'); return x ? x.count : 0; });
+        const rejects = dates.map(d => { const x = data.recentAuths.find(a => a.date.startsWith(d) && a.reply==='Access-Reject'); return x ? x.count : 0; });
+
+        new Chart(document.getElementById('authChart'), {
+          type: 'bar',
+          data: {
+            labels: dates,
+            datasets: [
+              { label: 'Accepts', data: accepts, backgroundColor: '#10b981' },
+              { label: 'Rejects', data: rejects, backgroundColor: '#ef4444' }
+            ]
+          },
+          options: { scales: { x: { stacked: true }, y: { stacked: true } } }
+        });
+      }
+    }
+
+    // HTML only reports (removed Puppeteer to prevent silent Docker failures)
+    let userChart = null;
+
+    document.getElementById('userReportForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('repUser').value;
+      const start = document.getElementById('repStart').value;
+      const end = document.getElementById('repEnd').value;
+
+      let url = `/api/reports/user/${username}?`;
+      if(start) url += `&start_date=${start}`;
+      if(end) url += `&end_date=${end}`;
+
+      const res = await apiFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const stats = data.stats;
+
+        document.getElementById('userReport').innerHTML = `
+          <div class="bg-gray-50 p-4 rounded-lg border border-gray-100 mb-6">
+              <h3 class="font-bold text-xl text-gray-800 mb-4">Summary for: <span class="text-blue-600">${username}</span></h3>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div class="bg-white p-3 rounded shadow-sm">
+                      <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">Sessions</div>
+                      <div class="text-2xl font-black text-gray-800">${stats.total_sessions}</div>
+                  </div>
+                  <div class="bg-white p-3 rounded shadow-sm">
+                      <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">Data In (Upload)</div>
+                      <div class="text-2xl font-black text-green-600">${((stats.total_input||0)/1048576).toFixed(1)} <span class="text-sm">MB</span></div>
+                  </div>
+                  <div class="bg-white p-3 rounded shadow-sm">
+                      <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">Data Out (Download)</div>
+                      <div class="text-2xl font-black text-blue-600">${((stats.total_output||0)/1048576).toFixed(1)} <span class="text-sm">MB</span></div>
+                  </div>
+                  <div class="bg-white p-3 rounded shadow-sm">
+                      <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">Total Time</div>
+                      <div class="text-2xl font-black text-purple-600">${((stats.total_time||0)/3600).toFixed(1)} <span class="text-sm">Hrs</span></div>
+                  </div>
+              </div>
+          </div>
+
+          <div class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+              <h4 class="font-bold text-gray-700 mb-4">Daily Data Usage Trend (MB)</h4>
+              <canvas id="userLineChart" height="250"></canvas>
+          </div>
+
+          <h4 class="font-bold text-gray-700 mb-2">Recent Sessions (Top 10)</h4>
+          <div class="overflow-x-auto rounded-lg border border-gray-100 shadow-sm">
+              <table class="w-full text-left text-sm whitespace-nowrap">
+                  <tr class="bg-gray-50 text-gray-600">
+                      <th class="p-3">NAS IP</th>
+                      <th class="p-3">Start Time</th>
+                      <th class="p-3">Duration</th>
+                      <th class="p-3 text-right">Upload</th>
+                      <th class="p-3 text-right">Download</th>
+                  </tr>
+                  ${data.accounting.slice(0,10).map(a => `
+                  <tr class="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                      <td class="p-3 font-mono text-xs text-gray-500">${a.nasipaddress}</td>
+                      <td class="p-3 text-gray-800 font-medium">${new Date(a.acctstarttime).toLocaleString()}</td>
+                      <td class="p-3 text-gray-600">${(a.acctsessiontime/60).toFixed(1)} min</td>
+                      <td class="p-3 text-right text-green-600 font-bold">${((a.acctinputoctets||0)/1048576).toFixed(2)} MB</td>
+                      <td class="p-3 text-right text-blue-600 font-bold">${((a.acctoutputoctets||0)/1048576).toFixed(2)} MB</td>
+                  </tr>`).join('')}
+              </table>
+          </div>
+        `;
+        document.getElementById('userReport').classList.remove('hidden');
+
+        // Render Line Chart
+        if(userChart) userChart.destroy();
+        const dates = data.timeseries.map(t => t.date.split('T')[0]);
+        const uploads = data.timeseries.map(t => (t.upload / 1048576).toFixed(2));
+        const downloads = data.timeseries.map(t => (t.download / 1048576).toFixed(2));
+
+        userChart = new Chart(document.getElementById('userLineChart'), {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [
+                    { label: 'Download (MB)', data: downloads, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4 },
+                    { label: 'Upload (MB)', data: uploads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.4 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false } }
+        });
+      }
+    };
+
+    async function loadFailedReport() {
+      const res = await apiFetch('/api/reports/failed-auth');
+      if (res.ok) {
+        const data = await res.json();
+        document.getElementById('failedReport').innerHTML = `
+          <h3 class="font-bold text-lg mb-2">Top Failing Accounts</h3>
+          <table class="w-full text-sm mb-4"><tr class="bg-gray-100"><th class="p-2">Username</th><th class="p-2">Failed Count</th></tr>
+          ${data.summary.slice(0,10).map(s => `<tr><td class="p-2 border-b">${s.username}</td><td class="p-2 border-b font-bold text-red-600">${s.fail_count}</td></tr>`).join('')}
+          </table>
+        `;
+        document.getElementById('failedReport').classList.remove('hidden');
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body></html>

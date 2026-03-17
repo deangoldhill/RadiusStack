@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en"><head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Auth Logs</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <h1 class="text-3xl font-bold mb-6">RADIUS Authentication Logs</h1>
+
+    <div class="bg-white p-4 rounded shadow mb-6">
+      <label class="block text-sm font-bold mb-2">Filter by Username</label>
+      <input type="text" id="usernameFilter" placeholder="Enter username (leave blank for all)" class="border p-2 rounded w-1/3">
+      <button onclick="loadLogs()" class="ml-4 bg-blue-600 text-white px-4 py-2 rounded">Apply</button>
+    </div>
+
+    <div class="bg-white p-4 rounded shadow overflow-x-auto">
+      <table class="w-full text-left text-sm" id="logsTable">
+        <thead><tr class="bg-gray-100"><th class="p-2">Username</th><th class="p-2">Reply</th><th class="p-2">Date/Time</th><th class="p-2">Class</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="/js/layout.js"></script>
+  <script>
+    async function loadLogs() {
+      const username = document.getElementById('usernameFilter').value;
+      let url = '/api/logs/auth';
+      if (username) url += `?username=${encodeURIComponent(username)}`;
+
+      const res = await apiFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        document.querySelector('#logsTable tbody').innerHTML = data.map(l => {
+          const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
+          return `<tr>
+            <td class="p-2 border-b font-bold">${l.username}</td>
+            <td class="p-2 border-b"><span class="px-2 py-1 text-xs rounded text-white ${badge}">${l.reply}</span></td>
+            <td class="p-2 border-b text-xs">${l.authdate}</td>
+            <td class="p-2 border-b text-xs">${l.class}</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
+    // Pre-filter from URL params
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('username')) {
+      document.getElementById('usernameFilter').value = params.get('username');
+      loadLogs();
+    } else {
+      loadLogs();
+    }
+  </script>
+</body></html>

@@ -1,0 +1,87 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: radius_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: radiusdbrootpass
+      MYSQL_DATABASE: radius
+      MYSQL_USER: radius
+      MYSQL_PASSWORD: radiusdbpass
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./db-init:/docker-entrypoint-initdb.d
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    networks:
+      - radius_net
+
+  radius:
+    build: ./radius
+    container_name: radius_server
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    ports:
+      - "${RADIUS_AUTH_PORT:-1812}:1812/udp"
+      - "${RADIUS_ACCT_PORT:-1813}:1813/udp"
+    volumes:
+      - certs_volume:/certs_shared
+    networks:
+      - radius_net
+
+  api:
+    build:
+      context: ./api
+    container_name: radius_api
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    environment:
+      - DB_HOST=mariadb
+      - DB_USER=radius
+      - DB_PASS=radiusdbpass
+      - DB_NAME=radius
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - certs_volume:/certs_shared
+    networks:
+      - radius_net
+
+  web_ui:
+    image: nginx:alpine
+    container_name: radius_web_ui
+    restart: unless-stopped
+    ports:
+      - "${WEB_UI_PORT:-80}:80"
+    volumes:
+      - ./web_ui/public:/usr/share/nginx/html
+      - ./web_ui/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - api
+    networks:
+      - radius_net
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: radius_phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    environment:
+      PMA_HOST: mariadb
+      PMA_USER: root
+      PMA_PASSWORD: radiusdbrootpass
+    ports:
+      - "${PHPMYADMIN_PORT:-8080}:80"
+    networks:
+      - radius_net
+
+volumes:
+  mariadb_data:
+  certs_volume:
+
+networks:
+  radius_net:
