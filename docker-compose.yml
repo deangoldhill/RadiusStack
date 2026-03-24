@@ -22,6 +22,11 @@ services:
     restart: unless-stopped
     depends_on:
       - mariadb
+    env_file:
+      - container_config.env
+    environment:
+      RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
+      RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
     ports:
       - "${RADIUS_AUTH_PORT:-1812}:1812/udp"
       - "${RADIUS_ACCT_PORT:-1813}:1813/udp"

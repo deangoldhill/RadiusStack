@@ -1,6 +1,77 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Settings</title><script src="https://cdn.tailwindcss.com"></script></head>
+<head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Settings</title><script src="https://cdn.tailwindcss.com">
+        async function generateBackup() {
+            const type = document.querySelector('input[name="backupType"]:checked').value;
+            let url = `/api/system/backup?type=${type}`;
+            if (type === 'partial') {
+                const acct = document.getElementById('backupAccounting').checked;
+                const auth = document.getElementById('backupAuthLogs').checked;
+                const audit = document.getElementById('backupAuditLogs').checked;
+                url += `&acct=${acct}&auth=${auth}&audit=${audit}`;
+            }
+
+            try {
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch(url, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!res.ok) throw new Error('Backup failed to generate');
+
+                const blob = await res.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `radius_${type}_backup_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function executeRestore() {
+            const fileInput = document.getElementById('restoreFile');
+            if (!fileInput.files.length) {
+                return alert('Please select a .json backup file first.');
+            }
+            if (!confirm('WARNING: Restoring will overwrite existing data with the contents of the backup. Are you sure you want to proceed?')) {
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('backup', fileInput.files[0]);
+
+            try {
+                // Find the button inside the execution scope
+                const btn = document.querySelector('button[onclick="executeRestore()"]');
+                const oldText = btn.textContent;
+                btn.textContent = 'Restoring...';
+                btn.disabled = true;
+
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch('/api/system/restore', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey },
+                    body: formData
+                });
+
+                const data = await res.json().catch(() => ({}));
+                btn.textContent = oldText;
+                btn.disabled = false;
+
+                if (!res.ok) throw new Error(data.error || 'Restore failed');
+
+                alert('Restore completed successfully!\n\n' + (data.message || ''));
+                fileInput.value = ''; // clear input
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+    </script></head>
 <body>
   <main>
     <h1 class="text-3xl font-bold mb-6 text-gray-800">System Settings</h1>
@@ -26,6 +97,19 @@
                     <span class="text-gray-700 font-medium">Enforce 2FA for all Administrators</span>
                 </label>
 
+          <!-- TOTP Settings -->
+          <div class="pt-4 border-t border-gray-100">
+            <h3 class="text-sm font-bold text-gray-700 mb-4">User TOTP Settings</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                <label class="block text-sm font-semibold text-gray-700 mb-1">Enrollment Code Expiry (Hours)</label>
+                <div class="text-xs text-gray-500 mb-2">How long a generated TOTP setup code remains valid.</div>
+                <input type="number" id="totpEnrollmentHours" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" min="1" max="720" value="24">
+              </div>
+            </div>
+          </div>
+
+
                 <div>
                     <label class="block text-sm font-bold mt-4 mb-1 text-gray-700 flex items-center">
                         Custom Profile Attributes
@@ -33,6 +117,74 @@
                     </label>
                     <input type="text" id="customAttrs" placeholder="e.g. Filter-Id, WISPr-Bandwidth-Max-Up" class="w-full border p-2 rounded text-sm bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
                 </div>
+
+                <!-- Database Backup & Restore -->
+                <div class="mt-8 border-t pt-6 mb-6">
+                    <h3 class="text-sm font-bold text-gray-700 mb-4">Database Backup & Restore</h3>
+
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <!-- Backup Column -->
+                        <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                            <h4 class="font-bold text-sm text-blue-600 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                Export Backup
+                            </h4>
+
+                            <div class="space-y-4">
+                                <label class="flex items-start space-x-3 cursor-pointer">
+                                    <input type="radio" name="backupType" value="full" checked onchange="document.getElementById('partialOptions').classList.add('opacity-50', 'pointer-events-none'); Array.from(document.querySelectorAll('#partialOptions input')).forEach(i => i.disabled = true);" class="form-radio mt-1 h-4 w-4 text-blue-600">
+                                    <div>
+                                        <span class="font-bold text-sm text-gray-800 block">Full Database Backup</span>
+                                        <span class="text-xs text-gray-500 block">This will backup the entire database which can only be safely restored to a server of the same version.</span>
+                                    </div>
+                                </label>
+
+                                <label class="flex items-start space-x-3 cursor-pointer">
+                                    <input type="radio" name="backupType" value="partial" onchange="document.getElementById('partialOptions').classList.remove('opacity-50', 'pointer-events-none'); Array.from(document.querySelectorAll('#partialOptions input')).forEach(i => i.disabled = false);" class="form-radio mt-1 h-4 w-4 text-blue-600">
+                                    <div>
+                                        <span class="font-bold text-sm text-gray-800 block">Objects & Logs Only</span>
+                                        <span class="text-xs text-gray-500 block">This backs up most of the data in the database but not the database structure, so it may safely import to a different version.</span>
+                                    </div>
+                                </label>
+
+                                <div id="partialOptions" class="ml-7 space-y-2 opacity-50 pointer-events-none transition-opacity">
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="checkbox" id="backupAccounting" class="form-checkbox h-3 w-3 text-blue-600" disabled>
+                                        <span class="text-xs text-gray-700">Include Accounting Logs (radacct)</span>
+                                    </label>
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="checkbox" id="backupAuthLogs" class="form-checkbox h-3 w-3 text-blue-600" disabled>
+                                        <span class="text-xs text-gray-700">Include Auth Logs (radpostauth)</span>
+                                    </label>
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="checkbox" id="backupAuditLogs" class="form-checkbox h-3 w-3 text-blue-600" disabled>
+                                        <span class="text-xs text-gray-700">Include Audit Logs (admin_audit_log)</span>
+                                    </label>
+                                </div>
+
+                                <button type="button" onclick="generateBackup()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm transition-colors shadow-sm">
+                                    Download Backup
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Restore Column -->
+                        <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                            <h4 class="font-bold text-sm text-green-600 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                Import Restore
+                            </h4>
+                            <p class="text-xs text-gray-500 mb-4">Upload a previously generated <code>.json</code> backup file. The system will auto-detect the type of backup and map the data into your current database tables safely.</p>
+
+                            <input type="file" id="restoreFile" accept=".json" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 mb-4 bg-white border border-gray-200 rounded p-1">
+
+                            <button type="button" onclick="executeRestore()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded text-sm transition-colors shadow-sm">
+                                Upload & Restore
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
 
                 <div class="mt-4 border-t pt-4">
                     <label class="flex items-center space-x-2 cursor-pointer">
@@ -132,7 +284,78 @@
     </div>
   </div>
 
-  <script src="/js/layout.js"></script>
+  <script src="/js/layout.js">
+        async function generateBackup() {
+            const type = document.querySelector('input[name="backupType"]:checked').value;
+            let url = `/api/system/backup?type=${type}`;
+            if (type === 'partial') {
+                const acct = document.getElementById('backupAccounting').checked;
+                const auth = document.getElementById('backupAuthLogs').checked;
+                const audit = document.getElementById('backupAuditLogs').checked;
+                url += `&acct=${acct}&auth=${auth}&audit=${audit}`;
+            }
+
+            try {
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch(url, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!res.ok) throw new Error('Backup failed to generate');
+
+                const blob = await res.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `radius_${type}_backup_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function executeRestore() {
+            const fileInput = document.getElementById('restoreFile');
+            if (!fileInput.files.length) {
+                return alert('Please select a .json backup file first.');
+            }
+            if (!confirm('WARNING: Restoring will overwrite existing data with the contents of the backup. Are you sure you want to proceed?')) {
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('backup', fileInput.files[0]);
+
+            try {
+                // Find the button inside the execution scope
+                const btn = document.querySelector('button[onclick="executeRestore()"]');
+                const oldText = btn.textContent;
+                btn.textContent = 'Restoring...';
+                btn.disabled = true;
+
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch('/api/system/restore', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey },
+                    body: formData
+                });
+
+                const data = await res.json().catch(() => ({}));
+                btn.textContent = oldText;
+                btn.disabled = false;
+
+                if (!res.ok) throw new Error(data.error || 'Restore failed');
+
+                alert('Restore completed successfully!\n\n' + (data.message || ''));
+                fileInput.value = ''; // clear input
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+    </script>
   <script>
       async function loadSettings() {
           const res = await apiFetch('/api/settings');
@@ -141,6 +364,7 @@
               document.getElementById('enforce2FA').checked = data.enforce_2fa === 'true';
               document.getElementById('radiusDebug').checked = data.radius_debug === 'true';
               document.getElementById('customAttrs').value = data.custom_reply_attributes || '';
+              document.getElementById('totpEnrollmentHours').value = data.totp_enrollment_hours || '24';
               if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
           }
       }
@@ -150,7 +374,8 @@
               enforce_2fa: document.getElementById('enforce2FA').checked ? 'true' : 'false',
               radius_debug: document.getElementById('radiusDebug').checked ? 'true' : 'false',
               custom_reply_attributes: document.getElementById('customAttrs').value,
-              ui_theme: document.getElementById('uiTheme').value
+              ui_theme: document.getElementById('uiTheme').value,
+              totp_enrollment_hours: document.getElementById('totpEnrollmentHours').value || '24'
           };
           const res = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
           if(res.ok) {
@@ -319,5 +544,76 @@
       loadSettings();
       loadHealth();
       loadCertDetails();
-  </script>
+  
+        async function generateBackup() {
+            const type = document.querySelector('input[name="backupType"]:checked').value;
+            let url = `/api/system/backup?type=${type}`;
+            if (type === 'partial') {
+                const acct = document.getElementById('backupAccounting').checked;
+                const auth = document.getElementById('backupAuthLogs').checked;
+                const audit = document.getElementById('backupAuditLogs').checked;
+                url += `&acct=${acct}&auth=${auth}&audit=${audit}`;
+            }
+
+            try {
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch(url, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!res.ok) throw new Error('Backup failed to generate');
+
+                const blob = await res.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `radius_${type}_backup_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function executeRestore() {
+            const fileInput = document.getElementById('restoreFile');
+            if (!fileInput.files.length) {
+                return alert('Please select a .json backup file first.');
+            }
+            if (!confirm('WARNING: Restoring will overwrite existing data with the contents of the backup. Are you sure you want to proceed?')) {
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('backup', fileInput.files[0]);
+
+            try {
+                // Find the button inside the execution scope
+                const btn = document.querySelector('button[onclick="executeRestore()"]');
+                const oldText = btn.textContent;
+                btn.textContent = 'Restoring...';
+                btn.disabled = true;
+
+                const apiKey = localStorage.getItem('apiKey');
+                const res = await fetch('/api/system/restore', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey },
+                    body: formData
+                });
+
+                const data = await res.json().catch(() => ({}));
+                btn.textContent = oldText;
+                btn.disabled = false;
+
+                if (!res.ok) throw new Error(data.error || 'Restore failed');
+
+                alert('Restore completed successfully!\n\n' + (data.message || ''));
+                fileInput.value = ''; // clear input
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+    </script>
 </body></html>

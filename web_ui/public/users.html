@@ -8,7 +8,7 @@
 
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
       <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
-        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Username</th><th class="p-3">Password</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Username</th><th class="p-3">Password</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -42,6 +42,40 @@
   <script>
     let originalUsername = null;
 
+    
+    function clearEnrollment(username) {
+        if (window.totpEnrollments) delete window.totpEnrollments[username];
+        loadData();
+    }
+
+    async function toggleTotp(username, enabled) {
+      const res = await apiFetch(`/api/users/${encodeURIComponent(username)}`, {
+        method: 'PUT', body: JSON.stringify({ totp_enabled: enabled })
+      });
+      const data = await res.json().catch(()=>({}));
+      if (!res.ok) { alert(data.error || 'Failed to update TOTP'); return; }
+
+      window.totpEnrollments = window.totpEnrollments || {};
+      if (data.enrollment) {
+          window.totpEnrollments[username] = data.enrollment;
+      } else {
+          delete window.totpEnrollments[username];
+      }
+      await loadData();
+    }
+    async function resetTotp(username) {
+      if (!confirm(`Reset TOTP for ${username}? They will need to scan a new QR code.`)) return;
+      const res = await apiFetch(`/api/users/${encodeURIComponent(username)}/totp/reset`, { method: 'POST' });
+      const data = await res.json().catch(()=>({}));
+      if (!res.ok) { alert(data.error || 'Failed to reset TOTP'); return; }
+
+      window.totpEnrollments = window.totpEnrollments || {};
+      if (data.enrollment) {
+          window.totpEnrollments[username] = data.enrollment;
+      }
+      await loadData();
+    }
+
     async function loadData() {
       const plRes = await apiFetch('/api/plans');
       if (plRes.ok) { 
@@ -66,12 +100,51 @@
           <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
           <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d||0)/1048576).toFixed(2)} MB</td>
           <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d||0)/3600).toFixed(1)} hrs</td>
-          <td class="p-3 text-right space-x-2">
+          
+          <td class="p-3">
+            <div class="flex items-center gap-2">
+              <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp('${u.username}', this.checked)" class="h-4 w-4 text-blue-600 rounded">
+              <span class="text-sm ${Number(u.totp_registered) === 1 ? 'text-green-600 font-medium' : 'text-amber-600'}">
+                ${Number(u.totp_enabled) === 1 ? (Number(u.totp_registered) === 1 ? 'Registered' : 'Pending setup') : 'Disabled'}
+              </span>
+            </div>
+            ${Number(u.totp_enabled) === 1 ? `<div class="text-[10px] text-blue-600 mt-1 cursor-pointer hover:underline uppercase tracking-wider font-bold" onclick="resetTotp('${u.username}')">Reset Key</div>` : ''}
+          </td>
+<td class="p-3 text-right space-x-2">
             ${u.plan_id ? `<button onclick="resetPlan('${u.username}')" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
             <button onclick="editUser('${u.username}', '${u.password}', '${u.profile||''}', '${u.plan_id||''}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
             <button onclick="deleteUser('${u.username}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
           </td>
-        </tr>`).join('');
+        </tr>
+        ${window.totpEnrollments?.[u.username] ? `
+          <tr class="bg-blue-50 border-b border-gray-100">
+            <td colspan="8" class="p-4">
+              <div class="flex justify-between items-start mb-2">
+                <h4 class="text-sm font-bold text-blue-800">Pending TOTP Enrollment for ${u.username}</h4>
+                <button onclick="clearEnrollment('${u.username}')" class="text-xs text-blue-600 hover:text-blue-800">Dismiss</button>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <div class="font-semibold text-gray-700 text-xs mb-1">Registration URL</div>
+                  <div class="flex">
+                    <input class="w-full border rounded-l px-2 py-1.5 bg-white font-mono text-xs" readonly value="${window.totpEnrollments[u.username].url}" id="url_${u.username}">
+                    <button onclick="navigator.clipboard.writeText(document.getElementById('url_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                  </div>
+                </div>
+                <div>
+                  <div class="font-semibold text-gray-700 text-xs mb-1">One-Time Setup Code</div>
+                  <div class="flex">
+                    <input class="w-full border rounded-l px-2 py-1.5 bg-white font-mono text-xs" readonly value="${window.totpEnrollments[u.username].code}" id="code_${u.username}">
+                    <button onclick="navigator.clipboard.writeText(document.getElementById('code_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                  </div>
+                </div>
+                <div>
+                  <div class="font-semibold text-gray-700 text-xs mb-1">Expires</div>
+                  <input class="w-full border rounded px-2 py-1.5 bg-gray-100 text-xs text-gray-600" readonly value="${new Date(window.totpEnrollments[u.username].expires_at).toLocaleString()}">
+                </div>
+              </div>
+            </td>
+          </tr>` : ''}`).join('');
       }
     }
 

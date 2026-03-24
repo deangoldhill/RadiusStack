@@ -54,3 +54,18 @@ CREATE TABLE IF NOT EXISTS user_plan_usage (
   base_session_seconds BIGINT UNSIGNED NOT NULL DEFAULT 0,
   KEY idx_cycle_started_at (cycle_started_at)
 );
+
+
+CREATE TABLE IF NOT EXISTS user_totp (
+    username varchar(64) NOT NULL,
+    enabled tinyint(1) NOT NULL DEFAULT 0,
+    secret varchar(64) DEFAULT NULL,
+    pending_secret varchar(64) DEFAULT NULL,
+    enrolled_at datetime DEFAULT NULL,
+    enrollment_code_hash varchar(255) DEFAULT NULL,
+    enrollment_expires_at datetime DEFAULT NULL,
+    created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (username),
+    KEY idx_user_totp_enabled (enabled)
+);

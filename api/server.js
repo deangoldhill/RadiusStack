@@ -20,6 +20,80 @@ app.use(cors());
 const upload = multer({ dest: '/tmp/' });
 const JWT_SECRET = 'super-secret-jwt-key-change-me';
 
+
+const TOTP_ISSUER = 'RadiusStack';
+
+function signTotpEnrollmentToken(username) {
+    return jwt.sign(
+        { username, scope: 'totp-enroll' },
+        JWT_SECRET,
+        { expiresIn: '10m' }
+    );
+}
+
+function verifyTotpEnrollmentToken(token) {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.scope !== 'totp-enroll') {
+        throw new Error('Invalid enrollment scope');
+    }
+    return decoded;
+}
+
+async function getRadiusPassword(username) {
+    const [rows] = await pool.query(
+        "SELECT value FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' LIMIT 1",
+        [username]
+    );
+    return rows[0]?.value || null;
+}
+
+async function getUserTotp(username) {
+    const [rows] = await pool.query(
+        "SELECT username, enabled, secret, pending_secret, enrolled_at FROM user_totp WHERE username = ? LIMIT 1",
+        [username]
+    );
+    return rows[0] || null;
+}
+
+async function syncUserTotpToRadius(conn, username) {
+    const [rows] = await conn.query(
+        "SELECT enabled, secret FROM user_totp WHERE username = ? LIMIT 1",
+        [username]
+    );
+    const totp = rows[0];
+
+    await conn.query(
+        "DELETE FROM radcheck WHERE username = ? AND attribute = 'TOTP-Secret'",
+        [username]
+    );
+
+    if (totp && Number(totp.enabled) === 1 && totp.secret) {
+        await conn.query(
+            "INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'TOTP-Secret', ':=', ?)",
+            [username, totp.secret]
+        );
+    }
+}
+
+async function generateEnrollmentCode(conn, username) {
+    const plainCode = crypto.randomBytes(24).toString('base64url');
+    const hash = await bcrypt.hash(plainCode, 10);
+
+    const [settings] = await conn.query("SELECT setting_value FROM settings WHERE setting_key = 'totp_enrollment_hours'");
+    const hours = settings.length > 0 ? parseInt(settings[0].setting_value, 10) : 24;
+    const expiry = new Date(Date.now() + (hours * 3600000));
+
+    await conn.query(
+        "UPDATE user_totp SET enrollment_code_hash = ?, enrollment_expires_at = ?, pending_secret = NULL WHERE username = ?",
+        [hash, expiry, username]
+    );
+
+    return {
+        code: plainCode,
+        expires_at: expiry.toISOString()
+    };
+}
+
 const pool = mysql.createPool({
     host: 'mariadb',
     user: 'radius',
@@ -637,34 +711,63 @@ app.put('/api/profiles/:name', requireApiAuth('users', 'read-write'), (req, res)
     req.method = 'POST';
     return app._router.handle(req, res);
 });
+
+app.delete('/api/profiles/:name', requireApiAuth('profiles', 'read-write'), async (req, res) => {
+    const { name } = req.params;
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?', [name]);
+        await conn.query('DELETE FROM radgroupreply WHERE groupname = ?', [name]);
+        // Remove users from this profile
+        await conn.query('DELETE FROM radusergroup WHERE groupname = ?', [name]);
+
+        await conn.commit();
+        await auditLog(req.admin.username, req.origin, `Deleted profile: ${name}`, 'success', '', req.ip);
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        console.error('Delete Profile Error:', err);
+        res.status(500).json({ error: 'Failed to delete profile' });
+    } finally {
+        conn.release();
+    }
+});
+
 // --- USERS ---
 app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => {
-  const [rows] = await pool.query(`SELECT 
-    c.username, 
-    c.value as password, 
-    u.groupname as profile,
-    up.plan_id,
-    p.name as plan_name,
-    COALESCE(a.data_30d, 0) as data_30d,
-    COALESCE(a.time_30d, 0) as time_30d
-FROM radcheck c
-LEFT JOIN radusergroup u ON c.username = u.username
-LEFT JOIN user_plans up ON c.username = up.username
-LEFT JOIN plans p ON up.plan_id = p.id
-LEFT JOIN (
-    SELECT username,
-           SUM(acctinputoctets + acctoutputoctets) as data_30d,
-           SUM(acctsessiontime) as time_30d
-    FROM radacct
-    WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-    GROUP BY username
-) a ON c.username = a.username
-WHERE c.attribute='Cleartext-Password'`);
+  const [rows] = await pool.query(`
+    SELECT
+      c.username,
+      c.value AS password,
+      u.groupname AS profile,
+      up.plan_id,
+      p.name AS plan_name,
+      COALESCE(a.data_30d, 0) AS data_30d,
+      COALESCE(a.time_30d, 0) AS time_30d,
+      COALESCE(ut.enabled, 0) AS totp_enabled,
+      CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered
+    FROM radcheck c
+    LEFT JOIN radusergroup u ON c.username = u.username
+    LEFT JOIN user_plans up ON c.username = up.username
+    LEFT JOIN plans p ON up.plan_id = p.id
+    LEFT JOIN user_totp ut ON c.username = ut.username
+    LEFT JOIN (
+        SELECT username,
+               SUM(acctinputoctets + acctoutputoctets) AS data_30d,
+               SUM(acctsessiontime) AS time_30d
+        FROM radacct
+        WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY username
+    ) a ON c.username = a.username
+    WHERE c.attribute = 'Cleartext-Password'
+  `);
   res.json(rows);
 });
 
 app.post('/api/users', requireApiAuth('users', 'read-write'), async (req, res) => {
-  const { username, password, profile, plan_id } = req.body;
+  const { username, password, profile, plan_id, totp_enabled } = req.body;
   const conn = await pool.getConnection();
 
   try {
@@ -692,9 +795,29 @@ app.post('/api/users', requireApiAuth('users', 'read-write'), async (req, res) =
       await conn.query('DELETE FROM user_plan_usage WHERE username = ?', [username]);
     }
 
+    await conn.query(
+      `INSERT INTO user_totp (username, enabled)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
+      [username, totp_enabled ? 1 : 0]
+    );
+    await syncUserTotpToRadius(conn, username);
+
+    let enrollment = null;
+    if (totp_enabled) {
+        const port = process.env.WEB_UI_PORT === '80' ? '' : `:${process.env.WEB_UI_PORT || '80'}`;
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const eData = await generateEnrollmentCode(conn, username);
+        enrollment = {
+            code: eData.code,
+            expires_at: eData.expires_at,
+            url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
+        };
+    }
+
     await conn.commit();
     await auditLog(req.admin.username, req.origin, `Created user: ${username}`, 'success', '', req.ip);
-    res.json({ success: true });
+    res.json({ success: true, enrollment });
   } catch (err) {
     await conn.rollback();
     console.error("POST User Error:", err);
@@ -725,7 +848,7 @@ app.post('/api/users/:username/reset-plan', requireApiAuth('users', 'read-write'
 
 app.put('/api/users/:username', requireApiAuth('users', 'read-write'), async (req, res) => {
   const { username } = req.params;
-  const { password, profile, plan_id } = req.body;
+  const { password, profile, plan_id, totp_enabled } = req.body;
   const conn = await pool.getConnection();
 
   try {
@@ -761,9 +884,32 @@ app.put('/api/users/:username', requireApiAuth('users', 'read-write'), async (re
       }
     }
 
+    let enrollment = null;
+    if (totp_enabled !== undefined) {
+      await conn.query(
+        `INSERT INTO user_totp (username, enabled)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
+        [username, totp_enabled ? 1 : 0]
+      );
+      await syncUserTotpToRadius(conn, username);
+
+      const [rows] = await conn.query("SELECT secret FROM user_totp WHERE username = ?", [username]);
+
+      if (totp_enabled && (!rows[0] || !rows[0].secret)) {
+          const eData = await generateEnrollmentCode(conn, username);
+          const baseUrl = `${req.protocol}://${req.hostname}`; // Behind proxy
+          enrollment = {
+              code: eData.code,
+              expires_at: eData.expires_at,
+              url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
+          };
+      }
+    }
+
     await conn.commit();
     await auditLog(req.admin.username, req.origin, `Updated user: ${username}`, 'success', '', req.ip);
-    res.json({ success: true });
+    res.json({ success: true, enrollment });
   } catch (err) {
     await conn.rollback();
     res.status(400).json({ error: err.message });
@@ -1022,6 +1168,297 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
 });
 
 // Start Server
+
+app.post('/api/users/:username/totp/reset', requireApiAuth('users', 'read-write'), async (req, res) => {
+    const { username } = req.params;
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.query(
+            `INSERT INTO user_totp (username, enabled, secret, pending_secret, enrolled_at)
+             VALUES (?, 1, NULL, NULL, NULL)
+             ON DUPLICATE KEY UPDATE secret = NULL, pending_secret = NULL, enrolled_at = NULL`,
+            [username]
+        );
+        await syncUserTotpToRadius(conn, username);
+
+        const eData = await generateEnrollmentCode(conn, username);
+        const baseUrl = `${req.protocol}://${req.hostname}`;
+        const enrollment = {
+            code: eData.code,
+            expires_at: eData.expires_at,
+            url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
+        };
+
+        await conn.commit();
+        await auditLog(req.admin.username, req.origin, `Reset TOTP for user: ${username}`, 'success', '', req.ip);
+        res.json({ success: true, enrollment });
+    } catch (err) {
+        await conn.rollback();
+        res.status(400).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+app.post('/auth/radius/totp/start', async (req, res) => {
+    const { username, password, enrollmentCode } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    try {
+        const radiusPassword = await getRadiusPassword(username);
+        if (!radiusPassword || radiusPassword !== password) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid RADIUS credentials', ip);
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const [rows] = await pool.query(
+            `SELECT username, enabled, secret, pending_secret, enrolled_at, enrollment_code_hash, enrollment_expires_at
+             FROM user_totp WHERE username = ? LIMIT 1`, [username]
+        );
+        const totp = rows[0];
+        if (!totp || Number(totp.enabled) !== 1) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP not enabled for user', ip);
+            return res.status(403).json({ error: 'TOTP is not enabled for this user' });
+        }
+        if (totp.secret) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP already enrolled', ip);
+            return res.status(403).json({ error: 'TOTP already enrolled. Contact admin to reset.' });
+        }
+
+        if (!totp.enrollment_code_hash || !totp.enrollment_expires_at) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'No pending enrollment code', ip);
+            return res.status(403).json({ error: 'No enrollment pending' });
+        }
+
+        if (new Date() > new Date(totp.enrollment_expires_at)) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Enrollment code expired', ip);
+            return res.status(403).json({ error: 'Enrollment code expired. Contact admin to reset.' });
+        }
+
+        const codeValid = await bcrypt.compare(enrollmentCode, totp.enrollment_code_hash);
+        if (!codeValid) {
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid enrollment code', ip);
+            return res.status(401).json({ error: 'Invalid enrollment code' });
+        }
+
+        let secret = totp.pending_secret;
+        if (!secret) {
+            secret = authenticator.generateSecret();
+            await pool.query(
+                `UPDATE user_totp SET pending_secret = ?, enrolled_at = NULL WHERE username = ?`,
+                [secret, username]
+            );
+        }
+
+        const otpauth = authenticator.keyuri(username, TOTP_ISSUER, secret);
+        const qrImage = await qrcode.toDataURL(otpauth);
+        const token = signTotpEnrollmentToken(username);
+
+        await auditLog(username, 'webui', 'User TOTP enrollment login', 'success', 'Enrollment session created', ip);
+        return res.json({ success: true, token, username, qrImage, manualSecret: secret });
+    } catch (err) {
+        console.error('TOTP start error:', err);
+        return res.status(500).json({ error: 'Failed to start TOTP enrollment' });
+    }
+});
+
+app.post('/auth/radius/totp/confirm', async (req, res) => {
+    const { token, code } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    try {
+        const decoded = verifyTotpEnrollmentToken(token);
+        const username = decoded.username;
+        const [rows] = await pool.query(
+            `SELECT username, enabled, secret, pending_secret FROM user_totp WHERE username = ? LIMIT 1`, [username]
+        );
+        const totp = rows[0];
+        if (!totp || Number(totp.enabled) !== 1) {
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'TOTP not enabled for user', ip);
+            return res.status(403).json({ error: 'TOTP is not enabled for this user' });
+        }
+        const secret = totp.pending_secret || totp.secret;
+        if (!secret) {
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'No pending secret', ip);
+            return res.status(400).json({ error: 'No TOTP enrollment is pending' });
+        }
+        const ok = authenticator.check(String(code || '').trim(), secret);
+        if (!ok) {
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'Invalid TOTP code', ip);
+            return res.status(400).json({ error: 'Invalid TOTP code' });
+        }
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+            await conn.query(
+                `UPDATE user_totp SET secret = ?, pending_secret = NULL, enrollment_code_hash = NULL, enrolled_at = NOW() WHERE username = ?`, [secret, username]
+            );
+            await syncUserTotpToRadius(conn, username);
+            await conn.commit();
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+        await auditLog(username, 'webui', 'User TOTP confirm', 'success', 'TOTP enrolled', ip);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('TOTP confirm error:', err);
+        return res.status(400).json({ error: 'Failed to confirm TOTP' });
+    }
+});
+
+
+// --- DATABASE BACKUP & RESTORE ---
+
+app.get('/api/system/backup', requireApiAuth('admins', 'read-only'), async (req, res) => {
+    const { type, acct, auth, audit } = req.query;
+
+    try {
+        const backup = {
+            metadata: {
+                type: type === 'full' ? 'full' : 'partial',
+                timestamp: new Date().toISOString(),
+                version: '1.0'
+            },
+            data: {}
+        };
+
+        let tablesToBackup = [];
+
+        if (type === 'full') {
+            const [tables] = await pool.query("SHOW TABLES");
+            tablesToBackup = tables.map(t => Object.values(t)[0]);
+        } else {
+            tablesToBackup = [
+                'admins', 'nas', 'plans', 'user_plans', 'user_plan_usage', 'user_totp',
+                'radcheck', 'radreply', 'radusergroup', 'radgroupcheck', 'radgroupreply', 'settings'
+            ];
+            if (acct === 'true') tablesToBackup.push('radacct');
+            if (auth === 'true') tablesToBackup.push('radpostauth');
+            if (audit === 'true') tablesToBackup.push('admin_audit_log');
+        }
+
+        for (const table of tablesToBackup) {
+            try {
+                const [rows] = await pool.query(`SELECT * FROM ??`, [table]);
+                backup.data[table] = rows;
+            } catch (e) {
+                console.warn(`Skipping missing table for backup: ${table}`);
+            }
+        }
+
+        await auditLog(req.admin.username, req.origin, `Generated ${type} database backup`, 'success', '', req.ip);
+
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="radius_${type}_backup.json"`);
+        res.send(JSON.stringify(backup));
+    } catch (err) {
+        console.error("Backup generation error:", err);
+        res.status(500).json({ error: 'Failed to generate backup' });
+    }
+});
+
+app.post('/api/system/restore', requireApiAuth('admins', 'read-write'), upload.single('backup'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No backup file provided' });
+
+    const fs = require('fs');
+    let backup;
+    try {
+        const fileContent = fs.readFileSync(req.file.path, 'utf8');
+        backup = JSON.parse(fileContent);
+        fs.unlinkSync(req.file.path);
+    } catch (e) {
+        return res.status(400).json({ error: 'Invalid JSON backup file' });
+    }
+
+    if (!backup.metadata || !backup.data) {
+        return res.status(400).json({ error: 'Unrecognized backup format' });
+    }
+
+    const type = backup.metadata.type;
+    const tables = Object.keys(backup.data);
+    const conn = await pool.getConnection();
+
+    try {
+        await conn.beginTransaction();
+
+        const [existingTablesRaw] = await conn.query("SHOW TABLES");
+        const existingTables = existingTablesRaw.map(t => Object.values(t)[0]);
+
+        let restoredCounts = {};
+        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+
+        for (const table of tables) {
+            if (!existingTables.includes(table)) {
+                console.warn(`Restore skipping table ${table}: doesn't exist in current DB`);
+                continue;
+            }
+
+            const rows = backup.data[table];
+            if (!rows || rows.length === 0) continue;
+
+            if (type === 'full') {
+                await conn.query(`TRUNCATE TABLE ??`, [table]);
+            }
+
+            // Use REPLACE to cleanly overwrite duplicates with the backup's data
+            const queryCmd = type === 'full' ? 'INSERT' : 'REPLACE';
+
+            const [columnsRaw] = await conn.query(`SHOW COLUMNS FROM ??`, [table]);
+            const validColumns = columnsRaw.map(c => c.Field);
+
+            for (const row of rows) {
+                // Filter out columns that were in the backup but no longer exist in the new schema version
+                const rowCols = Object.keys(row).filter(c => validColumns.includes(c));
+                                const rowVals = rowCols.map(c => {
+                    let val = row[c];
+                    if (typeof val === 'string' && val.length >= 19 && val[10] === 'T') {
+                        val = val.slice(0, 19).replace('T', ' ');
+                    }
+                    return val;
+                });
+
+                if (rowCols.length > 0) {
+                    const placeholders = new Array(rowCols.length).fill('?').join(',');
+                    await conn.query(
+                        `${queryCmd} INTO ?? (??) VALUES (${placeholders})`,
+                        [table, rowCols, ...rowVals]
+                    );
+                }
+            }
+            restoredCounts[table] = rows.length;
+        }
+
+        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+
+        // Reset admin password to default if admins table was truncated and restored empty?
+        // Let's assume the backup has the admin.
+
+        // Let's do a quick sync for totp secrets after restore
+        if (tables.includes('user_totp')) {
+            // Because radcheck and user_totp might have gotten out of sync
+            // Actually, REPLACE INTO radcheck would have restored the TOTP-Secret properly if it was in the backup.
+        }
+
+        await conn.commit();
+        await auditLog(req.admin.username, req.origin, `Restored ${type} database backup`, 'success', `Restored tables: ${Object.keys(restoredCounts).join(', ')}`, req.ip);
+
+        res.json({ 
+            success: true, 
+            message: `Tables processed: ${Object.keys(restoredCounts).length}` 
+        });
+
+    } catch (err) {
+        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        await conn.rollback();
+        console.error("Restore Error:", err);
+        res.status(500).json({ error: 'Failed to restore backup: ' + err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+
 app.listen(3000, '0.0.0.0', () => {
     console.log('Radius UI Server listening on port 3000');
 });

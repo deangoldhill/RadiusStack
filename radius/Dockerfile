@@ -118,6 +118,60 @@ EOF
 
 RUN awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/default > /tmp/default.tmp && mv /tmp/default.tmp /opt/etc/raddb/sites-available/default &&     awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/inner-tunnel > /tmp/inner-tunnel.tmp && mv /tmp/inner-tunnel.tmp /opt/etc/raddb/sites-available/inner-tunnel
 
+
+# --- TOTP POLICY INSTALLATION ---
+RUN [ -e /opt/etc/raddb/mods-enabled/totp ] || ln -s /opt/etc/raddb/mods-available/totp /opt/etc/raddb/mods-enabled/totp
+
+RUN cat << 'EOF' > /opt/etc/raddb/policy.d/totp_sql
+totp_sql_authorize {
+    if (&control:TOTP-Secret) {
+        if (!&User-Password) {
+            reject
+        }
+        if (User-Password !~ /^(.*)([0-9]{6})$/) {
+            update reply {
+                &Reply-Message := "TOTP code required"
+            }
+            reject
+        }
+        update request {
+            &Tmp-String-0 := "%{1}"
+            &Tmp-String-1 := "%{2}"
+            &User-Password := "%{Tmp-String-0}"
+            &TOTP-Password := "%{Tmp-String-1}"
+        }
+    }
+    ok
+}
+EOF
+
+RUN awk '\
+/^authorize \{/ { in_auth=1 } \
+/^\}/ { in_auth=0 } \
+/^[[:space:]]*-?sql[[:space:]]*$/ && in_auth && !done1 { \
+  print; \
+  print "\ttotp_sql_authorize"; \
+  done1=1; \
+  next \
+} \
+/Auth-Type PAP \{/ && !done2 { \
+  print "\tAuth-Type PAP {"; \
+  print "\t\tif (&control:TOTP-Secret) {"; \
+  print "\t\t\ttotp"; \
+  print "\t\t\tif (!ok) {"; \
+  print "\t\t\t\tupdate reply {"; \
+  print "\t\t\t\t\t&Reply-Message := \"Invalid TOTP code\""; \
+  print "\t\t\t\t}"; \
+  print "\t\t\t\treject"; \
+  print "\t\t\t}"; \
+  print "\t\t}"; \
+  done2=1; \
+  next \
+} \
+{ print } \
+' /opt/etc/raddb/sites-available/default > /tmp/default.tmp \
+ && mv /tmp/default.tmp /opt/etc/raddb/sites-available/default
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
