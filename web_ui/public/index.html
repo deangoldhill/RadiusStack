@@ -7,149 +7,178 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
-  <main class="min-h-screen pb-8">
-    <h1 class="text-3xl font-bold mb-8">Dashboard</h1>
-
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10">
-        <div onclick="window.location.href='nas.html'" class="bg-white p-6 rounded-2xl shadow hover:shadow-xl transition-all cursor-pointer border border-gray-100">
-            <div class="text-sm text-gray-500">NAS Clients</div>
-            <div id="stat-nas" class="text-5xl font-bold text-blue-600 mt-3">0</div>
-        </div>
-        <div onclick="window.location.href='users.html'" class="bg-white p-6 rounded-2xl shadow hover:shadow-xl transition-all cursor-pointer border border-gray-100">
-            <div class="text-sm text-gray-500">Total Users</div>
-            <div id="stat-users" class="text-5xl font-bold text-emerald-600 mt-3">0</div>
-        </div>
-        <div onclick="window.location.href='profiles.html'" class="bg-white p-6 rounded-2xl shadow hover:shadow-xl transition-all cursor-pointer border border-gray-100">
-            <div class="text-sm text-gray-500">Profiles</div>
-            <div id="stat-profiles" class="text-5xl font-bold text-violet-600 mt-3">0</div>
-        </div>
-        <div onclick="window.location.href='plans.html'" class="bg-white p-6 rounded-2xl shadow hover:shadow-xl transition-all cursor-pointer border border-gray-100">
-            <div class="text-sm text-gray-500">Billing Plans</div>
-            <div id="stat-plans" class="text-5xl font-bold text-amber-600 mt-3">0</div>
-        </div>
+  <main class="space-y-6">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-800">Dashboard</h1>
+        <button onclick="refreshAll()" class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors px-4 py-2 rounded-lg font-bold shadow-sm">Refresh Data</button>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[calc(100vh-280px)]">   <!-- This makes the boxes fill remaining screen -->
-        
-        <!-- Active Sessions -->
-        <div class="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden flex flex-col">
-            <div class="px-6 py-5 border-b flex justify-between items-center bg-gray-50">
-                <h2 class="text-2xl font-semibold">Active Sessions</h2>
-                <span id="active-count" class="text-sm bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full font-medium">0 sessions</span>
-            </div>
-            <div class="flex-1 min-h-0 overflow-auto">
-                <table class="w-full text-sm" id="sessions">
-                    <thead class="bg-gray-50 sticky top-0 z-10">
-                        <tr>
-                            <th class="p-4 text-left font-medium text-gray-600">User</th>
-                            <th class="p-4 text-left font-medium text-gray-600">IP Address</th>
-                            <th class="p-4 text-left font-medium text-gray-600">Start Time</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y"></tbody>
-                </table>
-            </div>
+    <!-- Grid Container for Side-by-Side Layout -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+        <!-- Active Sessions Table -->
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+          <h2 class="text-xl font-bold text-gray-800 mb-4">Active Sessions</h2>
+          <table class="w-full text-left text-sm whitespace-nowrap" id="activeSessionsTable">
+            <thead>
+              <tr class="bg-gray-50 text-gray-600 select-none">
+                <th class="p-3 rounded-tl-lg">Start Time</th>
+                <th class="p-3">Username</th>
+                <th class="p-3">Session (Hr)</th>
+                <th class="p-3 rounded-tr-lg">Data (GB)</th>
+              </tr>
+            </thead>
+            <tbody>
+                <!-- Populated by JS -->
+            </tbody>
+          </table>
         </div>
 
-        <!-- Recent Auth Logs -->
-        <div class="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden flex flex-col">
-            <div class="px-6 py-5 border-b flex justify-between items-center bg-gray-50">
-                <h2 class="text-2xl font-semibold">Recent Auth Logs</h2>
-                <span class="text-sm bg-gray-100 text-gray-600 px-4 py-1.5 rounded-full font-medium">Last 100 entries</span>
-            </div>
-            <div class="flex-1 min-h-0 overflow-auto">
-                <table class="w-full text-sm" id="logs">
-                    <thead class="bg-gray-50 sticky top-0 z-10">
-                        <tr>
-                            <th class="p-4 text-left font-medium text-gray-600">User</th>
-                            <th class="p-4 text-left font-medium text-gray-600">Reply</th>
-                            <th class="p-4 text-left font-medium text-gray-600">Date</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y"></tbody>
-                </table>
-            </div>
+        <!-- Recent Auth Table -->
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+          <h2 class="text-xl font-bold text-gray-800 mb-4">Recent Authentications</h2>
+          <table class="w-full text-left text-sm whitespace-nowrap" id="recentAuthTable">
+            <thead>
+              <tr class="bg-gray-50 text-gray-600 select-none">
+                <th class="p-3 rounded-tl-lg">Date / Time</th>
+                <th class="p-3">Username</th>
+                <th class="p-3 rounded-tr-lg">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+                <!-- Populated by JS -->
+            </tbody>
+          </table>
         </div>
+
     </div>
   </main>
 
+  <!-- Active Session Details Modal -->
+  <div id="activeDetailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex justify-between items-center p-4 border-b bg-gray-50">
+              <h2 class="text-xl font-bold text-gray-800">Active Session Details</h2>
+              <button onclick="hideActiveDetails()" class="text-gray-500 hover:text-red-500 font-bold text-2xl leading-none">&times;</button>
+          </div>
+          <div class="p-4 overflow-y-auto flex-1 bg-white">
+              <table class="w-full text-left text-sm border-collapse">
+                  <tbody id="activeModalBody"></tbody>
+              </table>
+          </div>
+          <div class="p-4 border-t bg-gray-50 flex justify-end">
+              <button onclick="hideActiveDetails()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-bold transition-colors">Close</button>
+          </div>
+      </div>
+  </div>
+
   <script src="/js/layout.js"></script>
   <script>
-    async function loadDashboard() {
-        // Load Stats
+    let activeRecords = [];
+
+    async function fetchActiveSessions() {
         try {
-            const [usersRes, nasRes, profilesRes, plansRes] = await Promise.all([
-                apiFetch('/api/users'),
-                apiFetch('/api/nas'),
-                apiFetch('/api/profiles'),
-                apiFetch('/api/plans')
-            ]);
+            if (typeof apiFetch === 'undefined') return;
+            const res = await apiFetch('/api/sessions/active');
+            if (res.ok) {
+                activeRecords = await res.json();
+                const tbody = document.querySelector('#activeSessionsTable tbody');
 
-            if (usersRes.ok) {
-                const users = await usersRes.json();
-                document.getElementById('stat-users').textContent = users.length;
-            }
-            if (nasRes.ok) {
-                const nas = await nasRes.json();
-                document.getElementById('stat-nas').textContent = nas.length;
-            }
-            if (profilesRes.ok) {
-                const profiles = await profilesRes.json();
-                document.getElementById('stat-profiles').textContent = profiles.length;
-            }
-            if (plansRes.ok) {
-                const plans = await plansRes.json();
-                document.getElementById('stat-plans').textContent = plans.length;
-            }
-        } catch (e) {
-            console.error("Failed to load stats", e);
-        }
+                if (activeRecords.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">No active sessions found.</td></tr>';
+                    return;
+                }
 
-        // Load Active Sessions (newest 100)
-        try {
-            const sessRes = await apiFetch('/api/sessions/active?limit=100');
-            if (sessRes.ok) {
-                const sessions = await sessRes.json();
-                const tbody = document.querySelector('#sessions tbody');
-                tbody.innerHTML = sessions.map(s => `
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="p-4 font-medium">${s.username}</td>
-                        <td class="p-4 font-mono text-gray-600">${s.framedipaddress || '—'}</td>
-                        <td class="p-4 text-sm text-gray-500">${new Date(s.acctstarttime).toLocaleString()}</td>
-                    </tr>
-                `).join('');
+                tbody.innerHTML = activeRecords.map((a, index) => {
+                    const start = new Date(a.acctstarttime);
+                    const diffMs = Math.max(0, new Date() - start); 
+                    const hours = (diffMs / (1000 * 60 * 60)).toFixed(2);
 
-                document.getElementById('active-count').textContent = `${sessions.length} active`;
-            }
-        } catch (e) {
-            console.error("Failed to load sessions", e);
-        }
+                    const inputBytes = parseInt(a.acctinputoctets) || 0;
+                    const outputBytes = parseInt(a.acctoutputoctets) || 0;
+                    const gbUsage = ((inputBytes + outputBytes) / 1073741824).toFixed(3);
 
-        // Load Recent Auth Logs (newest 100)
-        try {
-            const logsRes = await apiFetch('/api/logs/auth?limit=100');
-            if (logsRes.ok) {
-                const logs = await logsRes.json();
-                const tbody = document.querySelector('#logs tbody');
-                tbody.innerHTML = logs.map(l => `
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="p-4 font-medium">${l.username}</td>
-                        <td class="p-4">
-                            <span class="${l.reply === 'Access-Accept' ? 'text-green-600 bg-green-100' : 'text-red-600 bg-red-100'} px-3 py-1 rounded text-xs font-medium">
-                                ${l.reply}
-                            </span>
-                        </td>
-                        <td class="p-4 text-sm text-gray-500">${new Date(l.authdate).toLocaleString()}</td>
-                    </tr>
-                `).join('');
+                    // Removed NAS IP column to save horizontal space since tables are side-by-side
+                    return `<tr class="border-b border-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onclick="showActiveDetails(${index})">
+                        <td class="p-3 text-xs text-gray-500">${start.toLocaleString()}</td>
+                        <td class="p-3 font-bold text-gray-800">${a.username}</td>
+                        <td class="p-3 font-mono text-gray-600 text-xs">${hours} hr</td>
+                        <td class="p-3 font-mono text-blue-600 font-bold text-xs">${gbUsage} GB</td>
+                    </tr>`;
+                }).join('');
             }
-        } catch (e) {
-            console.error("Failed to load auth logs", e);
+        } catch(e) {
+            console.error("Error fetching active sessions:", e);
         }
     }
 
-    loadDashboard();
+    async function fetchRecentAuth() {
+        try {
+            if (typeof apiFetch === 'undefined') return;
+            const res = await apiFetch('/api/logs/auth?limit=50');
+            if (res.ok) {
+                const authRecords = await res.json();
+                const tbody = document.querySelector('#recentAuthTable tbody');
+
+                if (authRecords.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">No recent authentications found.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = authRecords.map(a => {
+                    const date = new Date(a.authdate).toLocaleString();
+                    const isReject = a.reply === 'Access-Reject';
+                    const statusClass = isReject ? 'text-red-600 bg-red-50 border-red-200' : 'text-green-600 bg-green-50 border-green-200';
+
+                    return `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td class="p-3 text-xs text-gray-500">${date}</td>
+                        <td class="p-3 font-bold text-gray-800">${a.username}</td>
+                        <td class="p-3">
+                            <span class="px-2 py-0.5 rounded font-bold border text-xs ${statusClass}">${a.reply}</span>
+                        </td>
+                    </tr>`;
+                }).join('');
+            }
+        } catch(e) {
+            console.error("Error fetching recent auth:", e);
+        }
+    }
+
+    function showActiveDetails(index) {
+        const record = activeRecords[index];
+        const tbody = document.getElementById('activeModalBody');
+
+        tbody.innerHTML = Object.entries(record).map(([key, val]) => {
+            let displayVal = val !== null ? val : '<span class="text-gray-400 italic">null</span>';
+            if (val && typeof val === 'string' && val.includes('T') && val.includes('Z')) {
+                displayVal = new Date(val).toLocaleString();
+            }
+            return `
+                <tr class="border-b hover:bg-gray-50 transition-colors">
+                    <td class="p-2 font-bold text-gray-700 w-1/3 capitalize">${key.replace(/acct/g, 'Acct ')}</td>
+                    <td class="p-2 text-gray-800 break-all font-mono text-xs">${displayVal}</td>
+                </tr>
+            `;
+        }).join('');
+
+        document.getElementById('activeDetailsModal').classList.remove('hidden');
+    }
+
+    function hideActiveDetails() {
+        document.getElementById('activeDetailsModal').classList.add('hidden');
+    }
+
+    function refreshAll() {
+        fetchActiveSessions();
+        fetchRecentAuth();
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        setTimeout(() => {
+            refreshAll();
+        }, 100);
+        setInterval(refreshAll, 60000);
+    });
   </script>
 </body>
 </html>

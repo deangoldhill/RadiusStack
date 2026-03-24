@@ -1,3 +1,4 @@
+<DOCUMENT filename="profiles.html">
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,15 +10,18 @@
 <body>
   <main>
     <h1 class="text-3xl font-bold mb-6">Manage Profiles</h1>
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
 
-      <!-- List Profiles -->
+      <!-- Left: Existing Profiles -->
       <div class="bg-white p-6 rounded-xl shadow border border-gray-100">
         <h2 class="text-xl font-bold mb-4 border-b pb-2">Existing Profiles</h2>
         <table class="w-full text-left text-sm" id="profilesTable">
           <thead>
             <tr class="bg-gray-50">
               <th class="p-3">Profile Name</th>
+              <th class="p-3">VLAN</th>
+              <th class="p-3">NAS Check</th>
               <th class="p-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -25,7 +29,7 @@
         </table>
       </div>
 
-      <!-- Create/Edit Form -->
+      <!-- Right: Create/Edit Form -->
       <div class="bg-white p-6 rounded-xl shadow border border-gray-100">
         <h2 class="text-xl font-bold mb-4 border-b pb-2" id="formTitle">Create New Profile</h2>
         
@@ -37,7 +41,23 @@
 
           <div>
             <label class="block text-sm font-bold text-gray-700 mb-2">NAS IP Restriction (Optional)</label>
-            <div id="nasCheckboxes" class="w-full border border-gray-300 p-4 rounded-xl bg-gray-50 max-h-48 overflow-y-auto space-y-2 text-sm"></div>
+            <div class="space-y-4">
+              <label class="flex items-center space-x-3 cursor-pointer font-medium text-green-700">
+                <input type="checkbox" id="nasAllowAll" onchange="toggleNasRestriction()" class="h-4 w-4">
+                <span>-- No Restriction (Allow from all NAS) --</span>
+              </label>
+
+              <div id="nasIpInputs" class="hidden pl-8 border-l-2 border-gray-200">
+                <div class="flex justify-between items-baseline mb-3">
+                  <label class="text-sm font-medium text-gray-700">Allowed NAS IP Addresses (supports CIDR subnets)</label>
+                  <button type="button" onclick="addNasIpField()" 
+                          class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1 rounded text-xs font-bold transition-colors">
+                    + Add IP Field
+                  </button>
+                </div>
+                <div id="nasIpList" class="space-y-2"></div>
+              </div>
+            </div>
           </div>
 
           <div>
@@ -82,43 +102,45 @@
       const allAttrs = [...baseAttributes, ...customAttributes];
       document.getElementById('newAttrKey').innerHTML = allAttrs.map(a => `<option value="${a}">${a}</option>`).join('');
 
-      const nasRes = await apiFetch('/api/nas');
-      if (nasRes.ok) {
-        const nasList = await nasRes.json();
-        const container = document.getElementById('nasCheckboxes');
-        
-        container.innerHTML = `
-          <label class="flex items-center space-x-3 cursor-pointer font-medium text-green-700">
-            <input type="checkbox" id="nasAllowAll" onchange="toggleAllNas(this.checked)" class="h-4 w-4">
-            <span>-- No Restriction (Allow from all NAS) --</span>
-          </label>`;
-
-        nasList.forEach(n => {
-          container.innerHTML += `
-            <label class="flex items-center space-x-3 cursor-pointer text-gray-700 ml-6 nas-item">
-              <input type="checkbox" name="nas_ips" value="${n.nasname}" class="nas-checkbox h-4 w-4">
-              <span>${n.shortname} (${n.nasname})</span>
-            </label>`;
-        });
-      }
-
       loadProfiles();
     }
 
     async function loadProfiles() {
-      const res = await apiFetch('/api/profiles');
-      if (res.ok) {
-        const profiles = await res.json();
-        document.querySelector('#profilesTable tbody').innerHTML = profiles.map(p => `
+      const res = await apiFetch('/api/profiles/data');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const checks = data.checks || [];
+      const replies = data.replies || [];
+
+      const profileSet = new Set();
+      [...checks, ...replies].forEach(item => { if (item.groupname) profileSet.add(item.groupname); });
+      const profiles = Array.from(profileSet).sort();
+
+      let html = '';
+      for (const p of profiles) {
+        const vlanReply = replies.find(r => r.groupname === p && r.attribute === 'Tunnel-Private-Group-ID');
+        const vlanDisplay = vlanReply 
+          ? `<span class="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded">${vlanReply.value}</span>`
+          : `<span class="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-bold rounded">None</span>`;
+
+        const hasNasRestriction = checks.some(c => c.groupname === p && c.attribute === 'NAS-IP-Address');
+        const nasDisplay = hasNasRestriction
+          ? `<span class="px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded">Yes</span>`
+          : `<span class="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded">No</span>`;
+
+        html += `
           <tr class="border-b hover:bg-gray-50">
             <td onclick="editProfile('${p}')" class="p-3 font-medium text-blue-600 cursor-pointer hover:underline">${p}</td>
-            <td class="p-3 text-right">
-              <button onclick="editProfile('${p}')" class="text-blue-600 hover:text-blue-700 mr-4">Edit</button>
+            <td class="p-3">${vlanDisplay}</td>
+            <td class="p-3">${nasDisplay}</td>
+            <td class="p-3 text-right space-x-3">
+              <button onclick="editProfile('${p}')" class="text-blue-600 hover:text-blue-700">Edit</button>
               <button onclick="deleteProfile('${p}')" class="text-red-600 hover:text-red-700">Delete</button>
             </td>
-          </tr>
-        `).join('');
+          </tr>`;
       }
+      document.querySelector('#profilesTable tbody').innerHTML = html;
     }
 
     function addReplyAttr() {
@@ -137,8 +159,24 @@
       document.getElementById('newAttrValue').value = '';
     }
 
-    function toggleAllNas(checked) {
-      document.querySelectorAll('.nas-checkbox').forEach(cb => cb.checked = !checked);
+    function toggleNasRestriction() {
+      const allowAll = document.getElementById('nasAllowAll').checked;
+      const section = document.getElementById('nasIpInputs');
+      section.classList.toggle('hidden', allowAll);
+      if (!allowAll && document.getElementById('nasIpList').children.length === 0) addNasIpField();
+    }
+
+    function addNasIpField(value = '') {
+      const container = document.getElementById('nasIpList');
+      const div = document.createElement('div');
+      div.className = 'flex gap-2 items-center';
+      div.innerHTML = `
+        <input type="text" class="nas-ip-input flex-1 border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" 
+               placeholder="Single IP address -  e.g. 192.168.1.100" value="${value}">
+        <button type="button" onclick="this.parentElement.remove()" 
+                class="bg-red-100 hover:bg-red-200 text-red-700 px-4 py-2 rounded-lg font-bold text-sm">Remove</button>
+      `;
+      container.appendChild(div);
     }
 
     async function editProfile(name) {
@@ -152,7 +190,6 @@
 
       const res = await apiFetch('/api/profiles/data');
       if (!res.ok) return;
-
       const data = await res.json();
 
       const checks = data.checks.filter(c => c.groupname === name);
@@ -160,27 +197,32 @@
 
       // NAS
       const nasChecks = checks.filter(c => c.attribute === 'NAS-IP-Address');
-      const nasAllowAll = document.getElementById('nasAllowAll');
+      const nasAllowAllEl = document.getElementById('nasAllowAll');
+      const nasIpList = document.getElementById('nasIpList');
+      nasIpList.innerHTML = '';
       if (nasChecks.length === 0) {
-        nasAllowAll.checked = true;
-        toggleAllNas(true);
+        nasAllowAllEl.checked = true;
       } else {
-        nasAllowAll.checked = false;
-        toggleAllNas(false);
-        const allowedIps = nasChecks.map(c => c.value);
-        document.querySelectorAll('.nas-checkbox').forEach(cb => {
-          cb.checked = allowedIps.includes(cb.value);
-        });
+        nasAllowAllEl.checked = false;
+        nasChecks.forEach(c => addNasIpField(c.value));
       }
+      toggleNasRestriction();
 
       // VLAN
-      const vlanReply = replies.find(r => r.attribute === 'Tunnel-Private-Group-Id');
+      const vlanReply = replies.find(r => r.attribute === 'Tunnel-Private-Group-ID');
       if (vlanReply) document.getElementById('vlanId').value = vlanReply.value;
 
       // Reply Attributes
       replies.forEach(r => {
-        if (!['Tunnel-Type', 'Tunnel-Medium-Type', 'Tunnel-Private-Group-Id'].includes(r.attribute)) {
-          addReplyAttr(r.attribute, r.value);   // Note: we pass key and value directly
+        if (!['Tunnel-Type', 'Tunnel-Medium-Type', 'Tunnel-Private-Group-ID'].includes(r.attribute)) {
+          const div = document.createElement('div');
+          div.className = "flex gap-2 items-center attr-row";
+          div.innerHTML = `
+            <input type="text" readonly value="${r.attribute}" class="attr-k flex-1 border p-3 rounded-lg bg-gray-100 text-sm">
+            <input type="text" readonly value="${r.value}" class="attr-v flex-1 border p-3 rounded-lg bg-gray-100 text-sm">
+            <button type="button" onclick="this.parentElement.remove()" class="bg-red-100 hover:bg-red-200 text-red-700 px-4 py-2 rounded-lg font-bold">Remove</button>
+          `;
+          document.getElementById('replyAttrs').appendChild(div);
         }
       });
     }
@@ -188,15 +230,9 @@
     async function deleteProfile(name) {
       if (!confirm(`Delete profile "${name}"?`)) return;
       const res = await apiFetch(`/api/profiles/${name}`, { method: 'DELETE' });
-      if (res.ok) {
-        alert('Profile deleted');
-        loadProfiles();
-      } else {
-        alert('Failed to delete profile');
-      }
+      if (res.ok) { alert('Profile deleted'); loadProfiles(); }
     }
 
-    // ==================== FIXED SUBMIT ====================
     document.getElementById('profileForm').onsubmit = async (e) => {
       e.preventDefault();
 
@@ -206,15 +242,25 @@
       const payload = {
         nas_ips: document.getElementById('nasAllowAll').checked 
           ? [] 
-          : Array.from(document.querySelectorAll('.nas-checkbox:checked')).map(cb => cb.value),
+          : Array.from(document.querySelectorAll('.nas-ip-input'))
+              .map(input => input.value.trim())
+              .filter(v => v !== ''),
         vlan_id: document.getElementById('vlanId').value.trim() || '',
         reply_attributes: Array.from(document.querySelectorAll('.attr-row')).map(row => ({
-          attribute: row.querySelector('.attr-k').value,   // <-- This must match backend
+          attribute: row.querySelector('.attr-k').value,
           value: row.querySelector('.attr-v').value
         }))
       };
 
-      // Always use POST - backend handles both create and update
+      // === AUTO ADD Reply-Message ===
+      const alreadyHasReplyMsg = payload.reply_attributes.some(a => a.attribute === 'Reply-Message');
+      if (!alreadyHasReplyMsg) {
+        payload.reply_attributes.push({
+          attribute: 'Reply-Message',
+          value: `Assigned to ${profileName} profile`
+        });
+      }
+
       const res = await apiFetch(`/api/profiles/${profileName}`, {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -236,11 +282,14 @@
       document.getElementById('profileName').readOnly = false;
       document.getElementById('profileName').classList.remove('bg-gray-100');
       document.getElementById('formTitle').textContent = 'Create New Profile';
+      
       document.getElementById('nasAllowAll').checked = true;
-      toggleAllNas(true);
+      document.getElementById('nasIpList').innerHTML = '';
+      toggleNasRestriction();
     }
 
     init();
   </script>
 </body>
 </html>
+</DOCUMENT>

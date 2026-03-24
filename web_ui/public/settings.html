@@ -6,7 +6,6 @@
     <h1 class="text-3xl font-bold mb-6 text-gray-800">System Settings</h1>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <!-- Global Config -->
         <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
             <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-700">Global Configuration</h2>
             <div class="space-y-4">
@@ -47,7 +46,6 @@
             </div>
         </div>
 
-        <!-- EAP Certificates -->
         <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
             <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-700">EAP Certificates Manager</h2>
 
@@ -70,6 +68,30 @@
                 </form>
             </div>
 
+            <div class="mb-4 border-t pt-4">
+                <h3 class="font-bold text-sm mb-2 text-blue-600 flex items-center">
+                    Upload Custom Certificate
+                    <span class="ml-2 text-gray-400 cursor-help" data-tooltip="Upload your own .pem and .key files">&#9432;</span>
+                </h3>
+                <form id="uploadCertForm" class="space-y-3 mb-4">
+                    <div class="grid grid-cols-1 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-600 mb-1">Public Certificate (.pem)</label>
+                            <input type="file" id="uploadCertFile" accept=".pem,.crt" class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" required>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-600 mb-1">Private Key (.key)</label>
+                            <input type="file" id="uploadKeyFile" accept=".key" class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" required>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-600 mb-1">Private Key Password (Optional)</label>
+                            <input type="password" id="uploadKeyPassword" placeholder="Leave blank if not encrypted" class="border p-2 w-full rounded text-sm bg-gray-50 outline-none focus:ring-1 focus:ring-blue-400">
+                        </div>
+                    </div>
+                    <button type="submit" id="uploadBtn" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded w-full text-sm font-bold shadow-sm">Upload & Restart RADIUS</button>
+                </form>
+            </div>
+
             <div class="border-t pt-4">
                 <div class="flex justify-between items-center mb-2">
                     <h3 class="font-bold text-sm text-gray-700">Active Certificate Public Key</h3>
@@ -80,7 +102,6 @@
         </div>
     </div>
 
-    <!-- System Health -->
     <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
         <div class="flex justify-between items-center mb-4 border-b pb-2">
             <h2 class="text-xl font-bold text-gray-700">System Health & Containers</h2>
@@ -93,7 +114,6 @@
     </div>
   </main>
 
-  <!-- Logs Modal -->
   <div id="logsModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
     <div class="bg-gray-900 w-full max-w-6xl rounded-xl shadow-2xl overflow-hidden flex flex-col h-[85vh] border border-gray-700">
         <div class="flex justify-between items-center p-4 bg-gray-800 text-white border-b border-gray-700">
@@ -253,6 +273,46 @@
               alert('New certificate generated successfully.'); 
               loadCertDetails(); 
               loadHealth(); 
+          }
+      };
+
+      document.getElementById('uploadCertForm').onsubmit = async (e) => {
+          e.preventDefault();
+          if(!confirm('Uploading new certificates will replace current ones and restart RADIUS. Continue?')) return;
+
+          const formData = new FormData();
+          formData.append('cert', document.getElementById('uploadCertFile').files[0]);
+          formData.append('key', document.getElementById('uploadKeyFile').files[0]);
+          
+          const pwd = document.getElementById('uploadKeyPassword').value;
+          if (pwd) formData.append('password', pwd);
+
+          const btn = document.getElementById('uploadBtn');
+          btn.disabled = true;
+          btn.textContent = "Uploading...";
+
+          try {
+              const res = await fetch('/api/certs/upload', {
+                  method: 'POST',
+                  headers: { 'X-API-Key': localStorage.getItem('apiKey') },
+                  body: formData
+              });
+
+              if (res.ok) {
+                  alert('Certificate uploaded and RADIUS restarted successfully.');
+                  document.getElementById('uploadCertForm').reset();
+                  loadCertDetails();
+                  loadHealth();
+              } else {
+                  const err = await res.json();
+                  alert('Upload failed: ' + (err.error || 'Unknown error'));
+              }
+          } catch (err) {
+              alert('An error occurred during upload.');
+              console.error(err);
+          } finally {
+              btn.disabled = false;
+              btn.textContent = "Upload & Restart RADIUS";
           }
       };
 

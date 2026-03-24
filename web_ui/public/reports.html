@@ -1,20 +1,29 @@
 <!DOCTYPE html>
-<html lang="en"><head><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta charset="UTF-8"><title>Reports & Analytics</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head><body>
+<html lang="en">
+<head>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta charset="UTF-8">
+  <title>Reports & Analytics</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
   <main>
     <h1 class="text-3xl font-bold mb-6">Reports & Analytics</h1>
 
     <!-- Dashboard Charts -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-      <div class="bg-white p-4 rounded shadow">
-        <h2 class="text-lg font-bold mb-2">Authentications (Last 7 Days)</h2>
-        <canvas id="authChart" height="200"></canvas>
+      <div class="bg-white p-4 rounded shadow flex flex-col">
+        <h2 class="text-lg font-bold mb-4 text-gray-800">Top 20 Users by Sessions (Last 7 Days)</h2>
+        <div class="relative flex-1 min-h-[250px]">
+            <canvas id="topSessionsChart"></canvas>
+        </div>
       </div>
-      <div class="bg-white p-4 rounded shadow">
-        <h2 class="text-lg font-bold mb-2">Top Users by Data Usage (MB)</h2>
-        <canvas id="dataChart" height="200"></canvas>
+      <div class="bg-white p-4 rounded shadow flex flex-col">
+        <h2 class="text-lg font-bold mb-4 text-gray-800">Top 20 Users by Data Usage (Last 7 Days)</h2>
+        <div class="relative flex-1 min-h-[250px]">
+            <canvas id="topDataChart"></canvas>
+        </div>
       </div>
     </div>
 
@@ -22,7 +31,13 @@
     <div class="bg-white p-4 rounded shadow mb-6">
       <h2 class="text-lg font-bold mb-4">Active RADIUS Sessions</h2>
       <table class="w-full text-left text-sm" id="activeTable">
-        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">NAS Client</th><th class="p-3">IP Address</th><th class="p-3 rounded-tr-lg">Active Sessions</th></tr></thead>
+        <thead>
+          <tr class="bg-gray-50 text-gray-600">
+            <th class="p-3 rounded-tl-lg">NAS IP</th>
+            <th class="p-3">Framed IP Address</th>
+            <th class="p-3 rounded-tr-lg">Username</th>
+          </tr>
+        </thead>
         <tbody></tbody>
       </table>
     </div>
@@ -61,48 +76,80 @@
       </div>
     </div>
   </main>
+
   <script src="/js/layout.js"></script>
   <script>
     async function loadDashboard() {
-      const res = await apiFetch('/api/reports/stats');
-      if (res.ok) {
-        const data = await res.json();
+      // 1. Load the new Top 20 Bar Charts
+      try {
+        const statsRes = await apiFetch('/api/reports/dashboard-stats');
+        if (statsRes.ok) {
+          const { topSessions, topData } = await statsRes.json();
 
-        // Active Sessions Table
-        document.querySelector('#activeTable tbody').innerHTML = data.activeSessions.length ? data.activeSessions.map(a => `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors"><td class="p-3 font-bold text-gray-800">${a.shortname || 'Unknown NAS'}</td><td class="p-3 text-xs text-gray-500 font-mono">${a.nasipaddress}</td><td class="p-3 font-bold text-green-600">${a.count}</td></tr>`).join('') : '<tr><td colspan="3" class="p-3 text-center text-gray-500">No active sessions</td></tr>';
+          // Top 20 Sessions Chart
+          new Chart(document.getElementById('topSessionsChart'), {
+            type: 'bar',
+            data: {
+              labels: topSessions.map(u => u.username),
+              datasets: [{
+                label: 'Total Sessions',
+                data: topSessions.map(u => u.session_count),
+                backgroundColor: '#3b82f6', // Tailwind blue-500
+                borderRadius: 4
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+            }
+          });
 
-        // Data Chart
-        new Chart(document.getElementById('dataChart'), {
-          type: 'doughnut',
-          data: {
-            labels: data.topUsers.map(u => u.username),
-            datasets: [{
-              data: data.topUsers.map(u => (u.total_bytes / 1048576).toFixed(2)),
-              backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
-            }]
-          }
-        });
+          // Top 20 Data Chart (Updated to GB)
+          new Chart(document.getElementById('topDataChart'), {
+            type: 'bar',
+            data: {
+              labels: topData.map(u => u.username),
+              datasets: [{
+                label: 'Data Usage (GB)', // Changed label to GB
+                // Divide the MB value by 1024 to convert to GB
+                data: topData.map(u => (parseFloat(u.data_mb) / 1024).toFixed(2)),
+                backgroundColor: '#10b981', 
+                borderRadius: 4
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: { y: { beginAtZero: true } }
+            }
+          });        }
+      } catch (e) {
+        console.error("Failed to load top 20 charts", e);
+      }
 
-        // Auth Chart (Group by Date and Reply type)
-        const dates = [...new Set(data.recentAuths.map(a => a.date.split('T')[0]))];
-        const accepts = dates.map(d => { const x = data.recentAuths.find(a => a.date.startsWith(d) && a.reply==='Access-Accept'); return x ? x.count : 0; });
-        const rejects = dates.map(d => { const x = data.recentAuths.find(a => a.date.startsWith(d) && a.reply==='Access-Reject'); return x ? x.count : 0; });
-
-        new Chart(document.getElementById('authChart'), {
-          type: 'bar',
-          data: {
-            labels: dates,
-            datasets: [
-              { label: 'Accepts', data: accepts, backgroundColor: '#10b981' },
-              { label: 'Rejects', data: rejects, backgroundColor: '#ef4444' }
-            ]
-          },
-          options: { scales: { x: { stacked: true }, y: { stacked: true } } }
-        });
+      // 2. Load the Active Sessions Table
+      try {
+        const activeRes = await apiFetch('/api/sessions/active?limit=100');
+        if (activeRes.ok) {
+          const activeSessions = await activeRes.json();
+          document.querySelector('#activeTable tbody').innerHTML = activeSessions.length 
+            ? activeSessions.map(a => `
+                <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                  <td class="p-3 font-bold text-gray-800">${a.nasipaddress || 'Unknown NAS'}</td>
+                  <td class="p-3 text-xs text-gray-500 font-mono">${a.framedipaddress || '-'}</td>
+                  <td class="p-3 font-bold text-green-600">${a.username}</td>
+                </tr>`).join('') 
+            : '<tr><td colspan="3" class="p-3 text-center text-gray-500">No active sessions</td></tr>';
+        }
+      } catch (e) {
+        console.error("Failed to load active sessions", e);
       }
     }
 
-    // HTML only reports (removed Puppeteer to prevent silent Docker failures)
+    // HTML only reports
     let userChart = null;
 
     document.getElementById('userReportForm').onsubmit = async (e) => {
@@ -173,21 +220,25 @@
 
         // Render Line Chart
         if(userChart) userChart.destroy();
-        const dates = data.timeseries.map(t => t.date.split('T')[0]);
-        const uploads = data.timeseries.map(t => (t.upload / 1048576).toFixed(2));
-        const downloads = data.timeseries.map(t => (t.download / 1048576).toFixed(2));
+        
+        // Ensure timeseries data exists before trying to map it
+        if(data.timeseries) {
+            const dates = data.timeseries.map(t => t.date.split('T')[0]);
+            const uploads = data.timeseries.map(t => (t.upload / 1048576).toFixed(2));
+            const downloads = data.timeseries.map(t => (t.download / 1048576).toFixed(2));
 
-        userChart = new Chart(document.getElementById('userLineChart'), {
-            type: 'line',
-            data: {
-                labels: dates,
-                datasets: [
-                    { label: 'Download (MB)', data: downloads, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4 },
-                    { label: 'Upload (MB)', data: uploads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.4 }
-                ]
-            },
-            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false } }
-        });
+            userChart = new Chart(document.getElementById('userLineChart'), {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [
+                        { label: 'Download (MB)', data: downloads, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4 },
+                        { label: 'Upload (MB)', data: uploads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.4 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false } }
+            });
+        }
       }
     };
 
@@ -207,4 +258,5 @@
 
     loadDashboard();
   </script>
-</body></html>
+</body>
+</html>

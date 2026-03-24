@@ -342,6 +342,26 @@ app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.f
     }
 });
 
+// === CERT DETAILS & DOWNLOAD (fixes "Loading..." and Download button) ===
+app.get('/api/certs/details', requireApiAuth('settings', 'read-only'), (req, res) => {
+    exec('openssl x509 -in /certs_shared/server.pem -text -noout', (error, stdout, stderr) => {
+        if (error) {
+            return res.json({ 
+                details: 'Certificate file not found or invalid.\n\n' +
+                         'Click "Generate New 10-Year Certificate" above to create one.' 
+            });
+        }
+        res.json({ details: stdout.trim() || 'Certificate exists but has no readable details.' });
+    });
+});
+
+app.get('/api/certs/download', requireApiAuth('settings', 'read-only'), (req, res) => {
+    const filePath = '/certs_shared/server.pem';
+    res.download(filePath, 'radius-server.pem', (err) => {
+        if (err) res.status(404).json({ error: 'Certificate not found' });
+    });
+});
+
 // --- ADMINS ---
 app.get('/api/admins', requireApiAuth('admins', 'read-only'), async (req, res) => {
     const [rows] = await pool.query('SELECT id, username, require_password_change, two_factor_enabled, two_factor_setup_complete, api_key, permissions FROM admins');
@@ -528,7 +548,7 @@ app.post('/api/profiles/nas', requireApiAuth('users', 'read-write'), async (req,
     if (!nas.length) return res.status(404).json({error: 'NAS not found'});
     
     const ip = nas[0].nasname.split('/')[0];
-    await pool.query(`INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (?, 'NAS-IP-Address', '==', ?)`, [profile, ip]);
+    await pool.query(`INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (?, 'NAS-IP-Address', '+=', ?)`, [profile, ip]);
     await auditLog(req.admin.username, req.origin, `Added NAS-IP-Address check to profile ${profile}`, 'success', `NAS: ${ip}`, req.ip);
     res.json({ success: true });
 });
@@ -565,7 +585,7 @@ app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (re
             for (const ip of nas_ips) {
                 await conn.query(
                     `INSERT INTO radgroupcheck (groupname, attribute, op, value) 
-                     VALUES (?, 'NAS-IP-Address', '==', ?)`,
+                     VALUES (?, 'NAS-IP-Address', '+=', ?)`,
                     [name, ip]
                 );
             }
@@ -891,6 +911,40 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=FailedAuthReport.pdf`);
     res.send(pdf);
+});
+
+// Add this under the --- REPORTS --- section in server.js
+app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    try {
+        // 1. Top 20 Users by Session Count (Last 7 Days)
+        const [topSessions] = await pool.query(`
+            SELECT 
+                username, 
+                COUNT(*) as session_count,
+                SUM(acctinputoctets + acctoutputoctets) / 1073741824 as data_gb
+            FROM radacct 
+            WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY username 
+            ORDER BY session_count DESC 
+            LIMIT 20
+        `);
+
+        // 2. Top 20 Users by Data Usage (Last 7 Days)
+        const [topData] = await pool.query(`
+            SELECT 
+                username, 
+                SUM(acctinputoctets + acctoutputoctets) / 1048576 as data_mb
+            FROM radacct 
+            WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY username 
+            ORDER BY data_mb DESC 
+            LIMIT 20
+        `);
+
+        res.json({ topSessions, topData });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // === ACCOUNTING HISTORY API ===
