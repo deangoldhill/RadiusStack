@@ -145,6 +145,7 @@ async function snapshotUserPlanUsage(db, username) {
 
 async function initDb() {
     await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_debug', 'false')");
+    await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mask_user_passwords', 'false')");
     
     const [rows] = await pool.query('SELECT COUNT(*) as count FROM admins');
     if (rows[0].count === 0) {
@@ -322,7 +323,7 @@ app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, re
 });
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
-    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme } = req.body;
+    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords } = req.body;
 
     if (enforce_2fa !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', ?) ON DUPLICATE KEY UPDATE setting_value=?", [enforce_2fa, enforce_2fa]);
     if (radius_debug !== undefined) {
@@ -331,6 +332,8 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
     }
     if (custom_reply_attributes !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('custom_reply_attributes', ?) ON DUPLICATE KEY UPDATE setting_value=?", [custom_reply_attributes, custom_reply_attributes]);
     if (ui_theme !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('ui_theme', ?) ON DUPLICATE KEY UPDATE setting_value=?", [ui_theme, ui_theme]);
+    if (totp_enrollment_hours !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('totp_enrollment_hours', ?) ON DUPLICATE KEY UPDATE setting_value=?", [totp_enrollment_hours, totp_enrollment_hours]);
+    if (mask_user_passwords !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mask_user_passwords', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mask_user_passwords, mask_user_passwords]);
 
     await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug})`, 'success', '', req.ip);
     res.json({ success: true });

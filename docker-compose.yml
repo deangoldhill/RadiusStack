@@ -3,11 +3,13 @@ services:
     image: mariadb:10.11
     container_name: radius_db
     restart: unless-stopped
+    env_file:
+      - container_config.env
     environment:
-      MYSQL_ROOT_PASSWORD: radiusdbrootpass
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: radius
-      MYSQL_USER: radius
-      MYSQL_PASSWORD: radiusdbpass
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mariadb_data:/var/lib/mysql
       - ./db-init:/docker-entrypoint-initdb.d
@@ -27,6 +29,7 @@ services:
     environment:
       RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
       RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
+      DB_PASSWORD: ${DB_PASSWORD}
     ports:
       - "${RADIUS_AUTH_PORT:-1812}:1812/udp"
       - "${RADIUS_ACCT_PORT:-1813}:1813/udp"
@@ -42,11 +45,14 @@ services:
     restart: unless-stopped
     depends_on:
       - mariadb
+    env_file:
+      - container_config.env
     environment:
       - DB_HOST=mariadb
-      - DB_USER=radius
-      - DB_PASS=radiusdbpass
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASSWORD}
       - DB_NAME=radius
+      - JWT_SECRET=${JWT_SECRET}
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
@@ -75,10 +81,12 @@ services:
     restart: unless-stopped
     depends_on:
       - mariadb
+    env_file:
+      - container_config.env
     environment:
       PMA_HOST: mariadb
       PMA_USER: root
-      PMA_PASSWORD: radiusdbrootpass
+      PMA_PASSWORD: ${DB_ROOT_PASSWORD}
     ports:
       - "${PHPMYADMIN_PORT:-8080}:80"
     networks:

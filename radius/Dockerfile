@@ -12,7 +12,7 @@ sql {
     server = "mariadb"
     port = 3306
     login = "radius"
-    password = "radiusdbpass"
+    password = "$ENV{DB_PASSWORD}"
     radius_db = "radius"
     read_clients = yes
     read_groups = yes

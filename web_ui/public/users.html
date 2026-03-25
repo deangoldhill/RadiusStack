@@ -6,6 +6,39 @@
       <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add User</button>
     </div>
 
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search Users</label>
+          <input type="text" id="userSearch" placeholder="Type username, profile or plan..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Plan</label>
+          <select id="planFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+            <option value="">All Plans</option>
+            <option value="__NO_PLAN__">No Plan</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Profile</label>
+          <select id="profileFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+            <option value="">All Profiles</option>
+            <option value="__NO_PROFILE__">No Profile</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">TOTP</label>
+          <select id="totpFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+            <option value="">All</option>
+            <option value="enabled">Enabled</option>
+            <option value="disabled">Disabled</option>
+            <option value="registered">Registered</option>
+            <option value="pending">Pending Setup</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
       <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
         <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Username</th><th class="p-3">Password</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
@@ -76,31 +109,53 @@
       await loadData();
     }
 
-    async function loadData() {
-      const plRes = await apiFetch('/api/plans');
-      if (plRes.ok) { 
-          const pl = await plRes.json(); 
-          document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + pl.map(x => `<option value="${x.id}">${x.name}</option>`).join(''); 
-      }
+    let allUsers = [];
+    let userSettings = { mask_user_passwords: 'false' };
 
-      const pRes = await apiFetch('/api/profiles');
-      if (pRes.ok) { 
-          const p = await pRes.json(); 
-          document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + p.map(x => `<option value="${x}">${x}</option>`).join(''); 
-      }
+    function maskPassword(value) {
+      if (!value) return '';
+      return '•'.repeat(Math.max(8, String(value).length));
+    }
 
-      const res = await apiFetch('/api/users');
-      if (res.ok) {
-        const users = await res.json();
-        document.querySelector('#usersTable tbody').innerHTML = users.map(u => `
+    // Escape string safely for javascript inline onClick parameters
+    function escapeJS(str) {
+      if (!str) return '';
+      return String(str).replace(/'/g, "\\'");
+    }
+
+    function renderUsers() {
+      const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
+      const planFilter = document.getElementById('planFilter')?.value || '';
+      const profileFilter = document.getElementById('profileFilter')?.value || '';
+      const totpFilter = document.getElementById('totpFilter')?.value || '';
+      const maskPasswords = userSettings.mask_user_passwords === 'true';
+
+      const filtered = allUsers.filter(u => {
+        const planName = u.plan_name || '';
+        const profileName = u.profile || '';
+        const totpEnabled = Number(u.totp_enabled) === 1;
+        const totpRegistered = Number(u.totp_registered) === 1;
+
+        const matchesSearch = !search || [u.username, u.password, planName, profileName].filter(Boolean).some(v => String(v).toLowerCase().includes(search));
+        const matchesPlan = !planFilter || (planFilter === '__NO_PLAN__' ? !u.plan_id : String(u.plan_id) === planFilter);
+        const matchesProfile = !profileFilter || (profileFilter === '__NO_PROFILE__' ? !profileName : profileName === profileFilter);
+        const matchesTotp = !totpFilter
+          || (totpFilter === 'enabled' && totpEnabled)
+          || (totpFilter === 'disabled' && !totpEnabled)
+          || (totpFilter === 'registered' && totpEnabled && totpRegistered)
+          || (totpFilter === 'pending' && totpEnabled && !totpRegistered);
+
+        return matchesSearch && matchesPlan && matchesProfile && matchesTotp;
+      });
+
+      document.querySelector('#usersTable tbody').innerHTML = filtered.map(u => `
         <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
           <td class="p-3 font-bold text-gray-800">${u.username}</td>
-          <td class="p-3 text-gray-500 font-mono text-xs">${u.password}</td>
+          <td class="p-3 text-gray-500 font-mono text-xs">${maskPasswords ? maskPassword(u.password) : (u.password || '')}</td>
           <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
           <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
           <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d||0)/1048576).toFixed(2)} MB</td>
           <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d||0)/3600).toFixed(1)} hrs</td>
-          
           <td class="p-3">
             <div class="flex items-center gap-2">
               <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp('${u.username}', this.checked)" class="h-4 w-4 text-blue-600 rounded">
@@ -110,10 +165,10 @@
             </div>
             ${Number(u.totp_enabled) === 1 ? `<div class="text-[10px] text-blue-600 mt-1 cursor-pointer hover:underline uppercase tracking-wider font-bold" onclick="resetTotp('${u.username}')">Reset Key</div>` : ''}
           </td>
-<td class="p-3 text-right space-x-2">
-            ${u.plan_id ? `<button onclick="resetPlan('${u.username}')" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
-            <button onclick="editUser('${u.username}', '${u.password}', '${u.profile||''}', '${u.plan_id||''}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-            <button onclick="deleteUser('${u.username}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+          <td class="p-3 text-right space-x-2">
+            ${u.plan_id ? `<button onclick="resetPlan(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
+            <button onclick="editUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+            <button onclick="deleteUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
           </td>
         </tr>
         ${window.totpEnrollments?.[u.username] ? `
@@ -145,9 +200,47 @@
               </div>
             </td>
           </tr>` : ''}`).join('');
-      }
     }
 
+    function populateFilters(plans, profiles) {
+      const planFilter = document.getElementById('planFilter');
+      const profileFilter = document.getElementById('profileFilter');
+      const currentPlan = planFilter.value;
+      const currentProfile = profileFilter.value;
+      planFilter.innerHTML = '<option value="">All Plans</option><option value="__NO_PLAN__">No Plan</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+      profileFilter.innerHTML = '<option value="">All Profiles</option><option value="__NO_PROFILE__">No Profile</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+      planFilter.value = currentPlan;
+      profileFilter.value = currentProfile;
+    }
+
+    async function loadData() {
+      const settingsRes = await apiFetch('/api/settings');
+      if (settingsRes.ok) {
+        userSettings = await settingsRes.json();
+      }
+
+      let plans = [];
+      const plRes = await apiFetch('/api/plans');
+      if (plRes.ok) {
+          plans = await plRes.json();
+          document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+      }
+
+      let profiles = [];
+      const pRes = await apiFetch('/api/profiles');
+      if (pRes.ok) {
+          profiles = await pRes.json();
+          document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+      }
+
+      populateFilters(plans, profiles);
+
+      const res = await apiFetch('/api/users');
+      if (res.ok) {
+        allUsers = await res.json();
+        renderUsers();
+      }
+    }
     async function resetPlan(username) {
         if(!confirm(`Manually reset plan usage limits for ${username}?`)) return;
         const res = await apiFetch(`/api/users/${username}/reset-plan`, { method: 'POST' });
@@ -164,15 +257,18 @@
 
     function closeModal() { document.getElementById('userModal').classList.add('hidden'); }
 
-    function editUser(username, password, profile, plan_id) {
+    function editUser(username) {
+      const u = allUsers.find(x => x.username === username);
+      if (!u) return;
+
       originalUsername = username;
       document.getElementById('userModal').classList.remove('hidden');
-      document.getElementById('uname').value = username;
+      document.getElementById('uname').value = u.username || '';
       document.getElementById('uname').readOnly = true;
       document.getElementById('uname').classList.add('bg-gray-100');
-      document.getElementById('upass').value = password;
-      document.getElementById('uprofile').value = profile;
-      document.getElementById('uplan').value = plan_id;
+      document.getElementById('upass').value = u.password || '';
+      document.getElementById('uprofile').value = u.profile || '';
+      document.getElementById('uplan').value = u.plan_id || '';
     }
 
     async function deleteUser(username) {
@@ -198,6 +294,11 @@
         if(res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
       }
     };
+
+    ['userSearch','planFilter','profileFilter','totpFilter'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', renderUsers);
+    });
 
     loadData();
   </script>
