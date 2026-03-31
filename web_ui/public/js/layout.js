@@ -27,6 +27,11 @@ document.head.insertAdjacentHTML('beforeend', `<style>
     z-index: 100;
     transform: translateY(-100%); margin-top: -5px;
   }
+  .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
 </style>`);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -52,7 +57,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const theme = colors[themeColor] || colors.blue;
 
   const sidebar = `
-    <div class="w-64 bg-gray-900 text-white min-h-screen p-5 flex flex-col shadow-2xl rounded-r-3xl border-r border-gray-800 relative z-20">
+    <div class="w-64 bg-gray-900 text-white h-screen p-5 flex flex-col shadow-2xl rounded-r-3xl border-r border-gray-800 relative z-20">
       <div class="flex items-center mb-10 space-x-3 bg-gray-800 p-3 rounded-2xl border border-gray-700">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="w-10 h-10 drop-shadow-md">
           <defs>
@@ -73,12 +78,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         </svg>
         <h1 class="text-2xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-gray-400">Radius<span class="${theme.text}">Stack</span></h1>
       </div>
-      <nav class="flex-1 space-y-2 font-medium" id="sideNav">
+      <nav class="flex-1 space-y-2 font-medium overflow-y-auto pr-2 custom-scrollbar" id="sideNav">
         <a href="index.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group">
             <span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4CA;</span> Dashboard
         </a>
         <a href="users.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group">
             <span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F465;</span> Users
+        </a>
+        <a href="mac-auth.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group">
+            <span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F5A5;</span> MAC Auth
         </a>
         <a href="plans.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4CB;</span> Plans</a>
         <a href="profiles.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group">

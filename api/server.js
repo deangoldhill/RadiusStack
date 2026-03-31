@@ -752,6 +752,7 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
       COALESCE(ut.enabled, 0) AS totp_enabled,
       CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered
     FROM radcheck c
+    LEFT JOIN mac_auth_devices m ON c.username = m.mac_address
     LEFT JOIN radusergroup u ON c.username = u.username
     LEFT JOIN user_plans up ON c.username = up.username
     LEFT JOIN plans p ON up.plan_id = p.id
@@ -764,7 +765,7 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
         WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
         GROUP BY username
     ) a ON c.username = a.username
-    WHERE c.attribute = 'Cleartext-Password'
+    WHERE c.attribute = 'Cleartext-Password' AND m.mac_address IS NULL
   `);
   res.json(rows);
 });
@@ -847,6 +848,53 @@ app.post('/api/users/:username/reset-plan', requireApiAuth('users', 'read-write'
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+
+app.post('/api/users/bulk', requireApiAuth('users', 'read-write'), async (req, res) => {
+    const users = req.body;
+    if (!Array.isArray(users)) return res.status(400).json({ error: 'Expected array of users' });
+
+    const conn = await pool.getConnection();
+    let successCount = 0;
+    let errors = [];
+
+    try {
+        await conn.beginTransaction();
+        for (let i = 0; i < users.length; i++) {
+            const { username, password, profile, plan_id, totp_enabled } = users[i];
+            if (!username || !password) {
+                errors.push(`Row ${i+1}: Missing username or password`);
+                continue;
+            }
+            try {
+                await conn.query('INSERT INTO radcheck (username, attribute, op, value) VALUES (?, "Cleartext-Password", ":=", ?)', [username, password]);
+                if (profile && profile !== '') {
+                    await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [username, profile]);
+                }
+                if (plan_id && plan_id !== '') {
+                    await conn.query('INSERT INTO user_plans (username, plan_id, manual_reset_date) VALUES (?, ?, NOW())', [username, parseInt(plan_id, 10)]);
+                }
+                if (totp_enabled) {
+                    await conn.query('INSERT INTO user_totp (username, enabled) VALUES (?, 1)', [username]);
+                }
+                successCount++;
+            } catch (err) {
+                if (err.code === 'ER_DUP_ENTRY') {
+                    errors.push(`Row ${i+1} (${username}): Already exists`);
+                } else {
+                    errors.push(`Row ${i+1} (${username}): ${err.message}`);
+                }
+            }
+        }
+        await conn.commit();
+        res.json({ message: `Imported ${successCount} users.`, errors });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: 'Bulk import failed completely' });
+    } finally {
+        conn.release();
+    }
 });
 
 app.put('/api/users/:username', requireApiAuth('users', 'read-write'), async (req, res) => {
@@ -939,7 +987,7 @@ app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (r
     const queryLimit = Math.min(parseInt(limit) || 100, 500);
 
     const [rows] = await pool.query(
-        'SELECT * FROM radacct WHERE acctstoptime IS NULL ORDER BY acctstarttime DESC LIMIT ?',
+        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.acctstoptime IS NULL ORDER BY a.acctstarttime DESC LIMIT ?',
         [queryLimit]
     );
     
@@ -949,12 +997,12 @@ app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (r
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username, limit = 100 } = req.query;
     
-    let query = 'SELECT * FROM radpostauth';
+    let query = 'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
     const params = [];
 
     if (username) {
-        query += ' WHERE username = ?';
-        params.push(username);
+        query += ' WHERE (p.username = ? OR m.mac_id = ?)';
+        params.push(username, username);
     }
 
     // Always order by newest first
@@ -971,19 +1019,25 @@ app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, re
 // USER EXECUTIVE REPORT
 app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
-    const [acct] = await pool.query('SELECT * FROM radacct WHERE username = ? ORDER BY acctstarttime DESC', [username]);
-    const [auth] = await pool.query('SELECT * FROM radpostauth WHERE username = ? ORDER BY authdate DESC LIMIT 100', [username]);
+
+    // Resolve alias if it is a MAC ID
+    const [macMapping] = await pool.query('SELECT mac_address FROM mac_auth_devices WHERE mac_id = ? OR mac_address = ? LIMIT 1', [username, username]);
+    const realUsername = macMapping.length > 0 ? macMapping[0].mac_address : username;
+
+    const [acct] = await pool.query('SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.username = ? ORDER BY a.acctstarttime DESC', [realUsername]);
+    const [auth] = await pool.query('SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.username = ? ORDER BY p.authdate DESC LIMIT 100', [realUsername]);
     const [stats] = await pool.query(
         'SELECT COUNT(*) as total_sessions, SUM(acctinputoctets) as total_input, SUM(acctoutputoctets) as total_output, SUM(acctsessiontime) as total_time FROM radacct WHERE username = ?',
-        [username]
+        [realUsername]
     );
-    res.json({ username, accounting: acct, postauth: auth, stats: stats[0] });
+
+    res.json({ username: username, accounting: acct, postauth: auth, stats: stats[0] });
 });
 
 // FAILED AUTH REPORT
 app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const [details] = await pool.query("SELECT * FROM radpostauth WHERE reply = 'Access-Reject' ORDER BY authdate DESC LIMIT 500");
-    const [summary] = await pool.query("SELECT username, COUNT(*) as fail_count FROM radpostauth WHERE reply = 'Access-Reject' GROUP BY username ORDER BY fail_count DESC");
+    const [details] = await pool.query("SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' ORDER BY p.authdate DESC LIMIT 500");
+    const [summary] = await pool.query("SELECT COALESCE(m.mac_id, p.username) AS username, COUNT(*) as fail_count FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' GROUP BY COALESCE(m.mac_id, p.username) ORDER BY fail_count DESC");
     res.json({ details, summary });
 });
 
@@ -1081,11 +1135,12 @@ app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), 
         // 2. Top 20 Users by Data Usage (Last 7 Days)
         const [topData] = await pool.query(`
             SELECT 
-                username, 
-                SUM(acctinputoctets + acctoutputoctets) / 1048576 as data_mb
-            FROM radacct 
-            WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            GROUP BY username 
+                COALESCE(m.mac_id, a.username) AS username, 
+                SUM(a.acctinputoctets + a.acctoutputoctets) / 1048576 as data_mb
+            FROM radacct a
+            LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
+            WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY COALESCE(m.mac_id, a.username) 
             ORDER BY data_mb DESC 
             LIMIT 20
         `);
@@ -1102,16 +1157,18 @@ app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, r
 
     let query = `
         SELECT 
-            radacct.*,
-            (acctinputoctets + acctoutputoctets) AS total_data
-        FROM radacct
+            a.*,
+            (a.acctinputoctets + a.acctoutputoctets) AS total_data,
+            COALESCE(m.mac_id, a.username) AS username
+        FROM radacct a
+        LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
         WHERE 1=1
     `;
     const params = [];
 
     if (username) {
-        query += ' AND username = ?';
-        params.push(username);
+        query += ' AND (a.username = ? OR m.mac_id = ?)';
+        params.push(username, username);
     }
     if (nasip) {
         query += ' AND nasipaddress = ?';
@@ -1461,6 +1518,168 @@ app.post('/api/system/restore', requireApiAuth('admins', 'read-write'), upload.s
     }
 });
 
+
+
+// --- MAC AUTH ---
+app.get('/api/mac-auth', requireApiAuth('users', 'read-only'), async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT
+                m.mac_id,
+                m.mac_address,
+                g.groupname AS profile,
+                up.plan_id,
+                p.name AS plan_name,
+                COALESCE(a.data_30d, 0) AS data_30d,
+                COALESCE(a.time_30d, 0) AS time_30d
+            FROM mac_auth_devices m
+            LEFT JOIN radusergroup g ON g.username = m.mac_address
+            LEFT JOIN user_plans up ON up.username = m.mac_address
+            LEFT JOIN plans p ON p.id = up.plan_id
+            LEFT JOIN (
+                SELECT username,
+                       SUM(acctinputoctets + acctoutputoctets) AS data_30d,
+                       SUM(acctsessiontime) AS time_30d
+                FROM radacct
+                WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY username
+            ) a ON a.username = m.mac_address
+            ORDER BY m.mac_id ASC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error("GET /api/mac-auth Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/mac-auth', requireApiAuth('users', 'read-write'), async (req, res) => {
+    let { mac_id, mac_address, profile, plan_id } = req.body;
+    if (!mac_id || !mac_address) return res.status(400).json({ error: 'MAC ID and Address required' });
+
+    mac_address = mac_address.trim().toLowerCase().replace(/-/g, ':');
+    if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac_address)) return res.status(400).json({ error: 'Invalid MAC address format' });
+
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id) VALUES (?, ?)', [mac_address, mac_id]);
+        await conn.query(`DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password'`, [mac_address]);
+        await conn.query(`INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)`, [mac_address, mac_address]);
+        await conn.query('DELETE FROM radusergroup WHERE username = ?', [mac_address]);
+        if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [mac_address, profile]);
+        if (plan_id) await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [mac_address, plan_id]);
+        else await conn.query('DELETE FROM user_plans WHERE username = ?', [mac_address]);
+        await conn.query('DELETE FROM user_totp WHERE username = ?', [mac_address]);
+        await conn.commit();
+        res.json({ message: 'MAC authenticated device created' });
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'MAC ID or Address already exists' });
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+
+app.post('/api/mac-auth/bulk', requireApiAuth('users', 'read-write'), async (req, res) => {
+    const devices = req.body;
+    if (!Array.isArray(devices)) return res.status(400).json({ error: 'Expected array of devices' });
+
+    const conn = await pool.getConnection();
+    let successCount = 0;
+    let errors = [];
+
+    try {
+        await conn.beginTransaction();
+        for (let i = 0; i < devices.length; i++) {
+            let { mac_id, mac_address, profile, plan_id } = devices[i];
+            if (!mac_id || !mac_address) {
+                errors.push(`Row ${i+1}: Missing MAC ID or Address`);
+                continue;
+            }
+
+            mac_address = mac_address.trim().toLowerCase().replace(/-/g, ':');
+            if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac_address)) {
+                errors.push(`Row ${i+1}: Invalid MAC address format (${mac_address})`);
+                continue;
+            }
+
+            try {
+                await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id) VALUES (?, ?)', [mac_address, mac_id]);
+                await conn.query(`DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password'`, [mac_address]);
+                await conn.query(`INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)`, [mac_address, mac_address]);
+                await conn.query('DELETE FROM radusergroup WHERE username = ?', [mac_address]);
+                if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [mac_address, profile]);
+
+                if (plan_id) await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [mac_address, plan_id]);
+                else await conn.query('DELETE FROM user_plans WHERE username = ?', [mac_address]);
+
+                await conn.query('DELETE FROM user_totp WHERE username = ?', [mac_address]);
+                successCount++;
+            } catch (err) {
+                if (err.code === 'ER_DUP_ENTRY') {
+                    errors.push(`Row ${i+1} (${mac_address}): MAC ID or Address already exists`);
+                } else {
+                    errors.push(`Row ${i+1} (${mac_address}): ${err.message}`);
+                }
+            }
+        }
+        await conn.commit();
+        res.json({ message: `Imported ${successCount} MAC devices.`, errors });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: 'Bulk import failed completely' });
+    } finally {
+        conn.release();
+    }
+});
+
+app.put('/api/mac-auth/:macAddress', requireApiAuth('users', 'read-write'), async (req, res) => {
+    const { macAddress } = req.params;
+    const { mac_id, profile, plan_id } = req.body;
+    if (!mac_id) return res.status(400).json({ error: 'MAC ID required' });
+
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [existing] = await conn.query('SELECT * FROM mac_auth_devices WHERE mac_address = ?', [macAddress]);
+        if (existing.length === 0) throw new Error('MAC device not found');
+        await conn.query('UPDATE mac_auth_devices SET mac_id = ? WHERE mac_address = ?', [mac_id, macAddress]);
+        await conn.query('DELETE FROM radusergroup WHERE username = ?', [macAddress]);
+        if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [macAddress, profile]);
+        if (plan_id) await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [macAddress, plan_id]);
+        else await conn.query('DELETE FROM user_plans WHERE username = ?', [macAddress]);
+        await conn.commit();
+        res.json({ message: 'MAC authenticated device updated' });
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'MAC ID already exists' });
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+app.delete('/api/mac-auth/:macAddress', requireApiAuth('users', 'read-write'), async (req, res) => {
+    const { macAddress } = req.params;
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.query('DELETE FROM mac_auth_devices WHERE mac_address = ?', [macAddress]);
+        await conn.query('DELETE FROM radcheck WHERE username = ?', [macAddress]);
+        await conn.query('DELETE FROM radusergroup WHERE username = ?', [macAddress]);
+        await conn.query('DELETE FROM user_plans WHERE username = ?', [macAddress]);
+        await conn.commit();
+        res.json({ message: 'MAC device deleted' });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
 
 app.listen(3000, '0.0.0.0', () => {
     console.log('Radius UI Server listening on port 3000');

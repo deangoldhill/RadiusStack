@@ -3,7 +3,14 @@
   <main>
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-3xl font-bold text-gray-800">User Management</h1>
-      <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add User</button>
+      <div class="flex space-x-3 items-center">
+        <a href="data:text/csv;charset=utf-8,username%2Cpassword%2Cprofile%2Cplan_id%2Ctotp_enabled%0Aalice%2CSecretPass123%2CStaff%2C%2C0%0Abob%2CPassword%21456%2CGuest%2C2%2C1" download="users_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
+        <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
+            <input type="file" accept=".csv" class="hidden" onchange="handleBulkImport(event)">
+            <span class="mr-2">📁</span> Bulk Import CSV
+        </label>
+        <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add User</button>
+      </div>
     </div>
 
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
@@ -301,5 +308,61 @@
     });
 
     loadData();
+  
+    function parseCSV(text) {
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) return [];
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const data = [];
+        for (let i = 1; i < lines.length; i++) {
+            // Very basic CSV split ignoring quoted commas for now, usually safe for Radius auth
+            const values = lines[i].split(',').map(v => v.trim());
+            const row = {};
+            headers.forEach((header, index) => {
+                row[header] = values[index] !== undefined ? values[index] : '';
+            });
+            data.push(row);
+        }
+        return data;
+    }
+
+    async function handleBulkImport(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        event.target.value = '';
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const text = e.target.result;
+            const records = parseCSV(text);
+            if (records.length === 0) {
+                alert("No records found in CSV. Make sure it has a header row like: username,password,profile,plan_id,totp_enabled");
+                return;
+            }
+
+            if(!confirm(`Found ${records.length} user records to import. Proceed?`)) return;
+
+            try {
+                const res = await apiFetch('/api/users/bulk', {
+                    method: 'POST',
+                    body: JSON.stringify(records)
+                });
+                const data = await res.json();
+
+                let msg = data.message || "Import completed.";
+                if (data.errors && data.errors.length > 0) {
+                    msg += `\n\nErrors (${data.errors.length}):\n` + data.errors.slice(0, 10).join('\n');
+                    if (data.errors.length > 10) msg += '\n...and more.';
+                }
+                alert(msg);
+                loadData();
+            } catch (err) {
+                alert("An error occurred during bulk import.");
+                console.error(err);
+            }
+        };
+        reader.readAsText(file);
+    }
+
   </script>
 </body></html>

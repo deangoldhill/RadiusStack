@@ -38,6 +38,9 @@ sql {
 }
 EOF
 
+# Patch the MySQL queries to include extra post-auth logging
+RUN sed -i 's/(username, pass, reply, authdate ${..class.column_name})/(username, pass, reply, authdate ${..class.column_name}, nasipaddress, callingstationid, replymessage)/' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf && \
+    sed -i 's/${..class.reply_xlat})"/${..class.reply_xlat}, '"'"'%{NAS-IP-Address}'"'"', '"'"'%{Calling-Station-Id}'"'"', '"'"'%{reply:Reply-Message}'"'"')"/g' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
 
 RUN sed -i 's/^[[:space:]]*#[[:space:]]*sql[[:space:]]*$/\tsql/g' /opt/etc/raddb/sites-available/default && \
     sed -i 's/^[[:space:]]*#[[:space:]]*sql[[:space:]]*$/\tsql/g' /opt/etc/raddb/sites-available/inner-tunnel && \

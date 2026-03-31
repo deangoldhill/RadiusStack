@@ -11,7 +11,7 @@
 
     <div class="bg-white p-4 rounded shadow overflow-x-auto">
       <table class="w-full text-left text-sm" id="logsTable">
-        <thead><tr class="bg-gray-100"><th class="p-2">Username</th><th class="p-2">Reply</th><th class="p-2">Date/Time</th><th class="p-2">Class</th></tr></thead>
+        <thead><tr class="bg-gray-100"><th class="p-2">Username</th><th class="p-2">Reply</th><th class="p-2">NAS IP</th><th class="p-2">Calling Station ID</th><th class="p-2">Reply Message</th><th class="p-2">Date/Time</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -28,11 +28,13 @@
         const data = await res.json();
         document.querySelector('#logsTable tbody').innerHTML = data.map(l => {
           const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
-          return `<tr>
+          return `<tr class="hover:bg-gray-50 transition-colors">
             <td class="p-2 border-b font-bold">${l.username}</td>
             <td class="p-2 border-b"><span class="px-2 py-1 text-xs rounded text-white ${badge}">${l.reply}</span></td>
+            <td class="p-2 border-b text-xs text-gray-600">${l.nasipaddress || ''}</td>
+            <td class="p-2 border-b text-xs font-mono text-gray-600">${l.callingstationid || ''}</td>
+            <td class="p-2 border-b text-xs text-gray-600 truncate max-w-xs" title="${l.replymessage || ''}">${l.replymessage || ''}</td>
             <td class="p-2 border-b text-xs">${l.authdate}</td>
-            <td class="p-2 border-b text-xs">${l.class}</td>
           </tr>`;
         }).join('');
       }

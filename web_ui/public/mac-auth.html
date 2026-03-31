@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>MAC Authentication</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-gray-800">MAC Authentication</h1>
+      <div class="flex space-x-3 items-center">
+        <a href="data:text/csv;charset=utf-8,mac_address%2Cmac_id%2Cprofile%2Cplan_id%0A1a%3A2b%3A3c%3A4d%3A5e%3A6f%2CAlices-Phone%2CStaff%2C%0Aaa%3Abb%3Acc%3Add%3Aee%3Aff%2CLobby-Printer%2C%2C1" download="mac_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
+        <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
+            <input type="file" accept=".csv" class="hidden" onchange="handleBulkImport(event)">
+            <span class="mr-2">📁</span> Bulk Import CSV
+        </label>
+        <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add MAC</button>
+      </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search Users</label>
+          <input type="text" id="userSearch" placeholder="Type username, profile or plan..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Plan</label>
+          <select id="planFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+            <option value="">All Plans</option>
+            <option value="__NO_PLAN__">No Plan</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Profile</label>
+          <select id="profileFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+            <option value="">All Profiles</option>
+            <option value="__NO_PROFILE__">No Profile</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">TOTP</label>
+          
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+      <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">MAC ID</th><th class="p-3">MAC Address</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="userModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border border-gray-100">
+      <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Create / Edit User</h2>
+      <form id="userForm" class="space-y-4">
+        <div><label class="block text-sm font-bold text-gray-700">MAC ID (Label)</label>
+        <input type="text" id="mac_id" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" placeholder="e.g. Printer 1" required></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">MAC Address</label>
+        <input type="text" id="mac_address" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" placeholder="aa:bb:cc:dd:ee:ff" required></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Billing Plan</label>
+        <select id="uplan" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- No Plan (Unlimited) --</option></select></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Profile</label>
+        <select id="uprofile" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- None --</option></select></div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t">
+          <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  
+  <script src="/js/layout.js"></script>
+  <script>
+    let macList = [];
+    let originalMac = null;
+
+    function openModal(mac = '', mac_id = '', plan = '', profile = '') {
+      originalMac = mac || null;
+      document.getElementById('modalTitle').innerText = mac ? 'Edit MAC' : 'Add MAC';
+
+      document.getElementById('mac_id').value = mac_id;
+      document.getElementById('mac_address').value = mac;
+      document.getElementById('mac_address').readOnly = !!mac;
+      if (mac) {
+          document.getElementById('mac_address').classList.add('bg-gray-100');
+      } else {
+          document.getElementById('mac_address').classList.remove('bg-gray-100');
+      }
+
+      document.getElementById('uplan').value = plan;
+      document.getElementById('uprofile').value = profile;
+      document.getElementById('userModal').classList.remove('hidden');
+    }
+
+    function closeModal() { 
+      document.getElementById('userModal').classList.add('hidden'); 
+    }
+
+    async function deleteMac(mac) {
+      if(!confirm(`Delete MAC ${mac}?`)) return;
+      try {
+        const res = await apiFetch(`/api/mac-auth/${encodeURIComponent(mac)}`, { method: 'DELETE' });
+        if(res.ok) { loadData(); } else { alert('Error deleting MAC'); }
+      } catch(e) { alert('Error deleting MAC'); }
+    }
+
+    
+    async function resetPlan(mac_address) {
+        if(!confirm(`Manually reset plan usage limits for ${mac_address}?`)) return;
+        try {
+            const res = await apiFetch(`/api/users/${encodeURIComponent(mac_address)}/reset-plan`, { method: 'POST' });
+            if(res.ok) { alert('Limits reset successfully'); loadData(); } else { alert('Failed to reset limits'); }
+        } catch(e) {
+            alert('Error resetting limits');
+        }
+    }
+
+    function renderUsers() {
+      const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
+      const planFilter = document.getElementById('planFilter')?.value || '';
+      const profileFilter = document.getElementById('profileFilter')?.value || '';
+
+      const filtered = macList.filter(u => {
+        const planName = u.plan_name || '';
+        const profileName = u.profile || '';
+
+        const matchesSearch = !search || [u.mac_id, u.mac_address, planName, profileName].filter(Boolean).some(v => String(v).toLowerCase().includes(search));
+        const matchesPlan = !planFilter || (planFilter === '__NO_PLAN__' ? !u.plan_id : String(u.plan_id) === planFilter);
+        const matchesProfile = !profileFilter || (profileFilter === '__NO_PROFILE__' ? !profileName : profileName === profileFilter);
+
+        return matchesSearch && matchesPlan && matchesProfile;
+      });
+
+      document.querySelector('#usersTable tbody').innerHTML = filtered.map(u => `
+        <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+          <td class="p-3 font-bold text-gray-800">${u.mac_id}</td>
+          <td class="p-3 text-gray-500 font-mono text-xs">${u.mac_address}</td>
+          <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
+          <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
+          <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d||0)/1048576).toFixed(2)} MB</td>
+          <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d||0)/3600).toFixed(1)} hrs</td>
+          <td class="p-3 text-right space-x-2">
+            ${u.plan_id ? `<button onclick="resetPlan(decodeURIComponent('${encodeURIComponent(u.mac_address)}'))" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
+            <button onclick="openModal(decodeURIComponent('${encodeURIComponent(u.mac_address)}'), decodeURIComponent('${encodeURIComponent(u.mac_id)}'), '${u.plan_id||''}', '${u.profile||''}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+            <button onclick="deleteMac(decodeURIComponent('${encodeURIComponent(u.mac_address)}'))" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    function populateFilters(plans, profiles) {
+      const planFilter = document.getElementById('planFilter');
+      const profileFilter = document.getElementById('profileFilter');
+      const currentPlan = planFilter?.value || '';
+      const currentProfile = profileFilter?.value || '';
+
+      if(planFilter) {
+          planFilter.innerHTML = '<option value="">All Plans</option><option value="__NO_PLAN__">No Plan</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+          planFilter.value = currentPlan;
+      }
+
+      if(profileFilter) {
+          profileFilter.innerHTML = '<option value="">All Profiles</option><option value="__NO_PROFILE__">No Profile</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+          profileFilter.value = currentProfile;
+      }
+    }
+
+    async function loadData() {
+      let plans = [];
+      const plRes = await apiFetch('/api/plans');
+      if (plRes.ok) {
+          plans = await plRes.json();
+          document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+      }
+
+      let profiles = [];
+      const pRes = await apiFetch('/api/profiles');
+      if (pRes.ok) {
+          profiles = await pRes.json();
+          document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+      }
+
+      populateFilters(plans, profiles);
+
+      const res = await apiFetch('/api/mac-auth');
+      if (res.ok) {
+        macList = await res.json();
+        renderUsers();
+      }
+    }
+
+    document.getElementById('userForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        mac_id: document.getElementById('mac_id').value,
+        mac_address: document.getElementById('mac_address').value,
+        plan_id: document.getElementById('uplan').value || null,
+        profile: document.getElementById('uprofile').value || null
+      };
+
+      try {
+        let res;
+        if(originalMac) {
+          res = await apiFetch(`/api/mac-auth/${encodeURIComponent(originalMac)}`, { method: 'PUT', body: JSON.stringify(payload) });
+        } else {
+          res = await apiFetch('/api/mac-auth', { method: 'POST', body: JSON.stringify(payload) });
+        }
+
+        const data = await res.json().catch(()=>({}));
+        if(!res.ok) { alert(data.error || 'Failed to save'); return; }
+
+        closeModal();
+        loadData();
+      } catch(err) {
+        alert('Request failed');
+      }
+    };
+
+    ['userSearch','planFilter','profileFilter'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', renderUsers);
+    });
+
+    loadData();
+  
+    function parseCSV(text) {
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) return [];
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const data = [];
+        for (let i = 1; i < lines.length; i++) {
+            // Very basic CSV split ignoring quoted commas for now, usually safe for Radius auth
+            const values = lines[i].split(',').map(v => v.trim());
+            const row = {};
+            headers.forEach((header, index) => {
+                row[header] = values[index] !== undefined ? values[index] : '';
+            });
+            data.push(row);
+        }
+        return data;
+    }
+
+    async function handleBulkImport(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        event.target.value = '';
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const text = e.target.result;
+            const records = parseCSV(text);
+            if (records.length === 0) {
+                alert("No records found in CSV. Make sure it has a header row like: mac_address,mac_id,profile,plan_id");
+                return;
+            }
+
+            if(!confirm(`Found ${records.length} MAC devices to import. Proceed?`)) return;
+
+            try {
+                const res = await apiFetch('/api/mac-auth/bulk', {
+                    method: 'POST',
+                    body: JSON.stringify(records)
+                });
+                const data = await res.json();
+
+                let msg = data.message || "Import completed.";
+                if (data.errors && data.errors.length > 0) {
+                    msg += `\n\nErrors (${data.errors.length}):\n` + data.errors.slice(0, 10).join('\n');
+                    if (data.errors.length > 10) msg += '\n...and more.';
+                }
+                alert(msg);
+                loadData();
+            } catch (err) {
+                alert("An error occurred during bulk import.");
+                console.error(err);
+            }
+        };
+        reader.readAsText(file);
+    }
+
+  </script>
+</body></html>

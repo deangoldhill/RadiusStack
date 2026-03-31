@@ -42,6 +42,9 @@
               <tr class="bg-gray-50 text-gray-600 select-none">
                 <th class="p-3 rounded-tl-lg">Date / Time</th>
                 <th class="p-3">Username</th>
+                <th class="p-3">NAS IP</th>
+                <th class="p-3">Calling Station ID</th>
+                <th class="p-3">Reply Message</th>
                 <th class="p-3 rounded-tr-lg">Status</th>
               </tr>
             </thead>
@@ -121,7 +124,7 @@
                 const tbody = document.querySelector('#recentAuthTable tbody');
 
                 if (authRecords.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-500">No recent authentications found.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">No recent authentications found.</td></tr>';
                     return;
                 }
 
@@ -133,9 +136,10 @@
                     return `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                         <td class="p-3 text-xs text-gray-500">${date}</td>
                         <td class="p-3 font-bold text-gray-800">${a.username}</td>
-                        <td class="p-3">
-                            <span class="px-2 py-0.5 rounded font-bold border text-xs ${statusClass}">${a.reply}</span>
-                        </td>
+                        <td class="p-3 text-xs text-gray-600">${a.nasipaddress || ''}</td>
+                        <td class="p-3 text-xs font-mono text-gray-500">${a.callingstationid || ''}</td>
+                        <td class="p-3 text-xs text-gray-600 truncate max-w-[150px]" title="${a.replymessage || ''}">${a.replymessage || ''}</td>
+                        <td class="p-3"><span class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border ${statusClass}">${a.reply}</span></td>
                     </tr>`;
                 }).join('');
             }
