@@ -53,6 +53,7 @@ services:
       - DB_PASS=${DB_PASSWORD}
       - DB_NAME=radius
       - JWT_SECRET=${JWT_SECRET}
+      - TOTP_ISSUER=${TOTP_ISSUER}
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:

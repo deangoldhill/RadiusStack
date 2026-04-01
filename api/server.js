@@ -18,10 +18,16 @@ app.use(express.json());
 app.use(cors());
 
 const upload = multer({ dest: '/tmp/' });
-const JWT_SECRET = 'super-secret-jwt-key-change-me';
+// Read from environment — with sensible fallbacks for local development
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-container_config.env';
+const TOTP_ISSUER = process.env.TOTP_ISSUER || 'RadiusStack';
 
-
-const TOTP_ISSUER = 'RadiusStack';
+if (!process.env.JWT_SECRET) {
+    console.warn('[WARN] JWT_SECRET not set in environment — using insecure default. Set it in container_config.env.');
+}
+if (!process.env.DB_PASS) {
+    console.warn('[WARN] DB_PASS not set in environment — DB connections may fail.');
+}
 
 function signTotpEnrollmentToken(username) {
     return jwt.sign(
@@ -95,10 +101,10 @@ async function generateEnrollmentCode(conn, username) {
 }
 
 const pool = mysql.createPool({
-    host: 'mariadb',
-    user: 'radius',
-    password: 'radiusdbpass',
-    database: 'radius'
+    host: process.env.DB_HOST || 'mariadb',
+    user: process.env.DB_USER || 'radius',
+    password: process.env.DB_PASS || '',
+    database: process.env.DB_NAME || 'radius'
 });
 
 // Audit Logger
@@ -108,15 +114,15 @@ async function auditLog(admin_username, origin, action, result, details = '', ip
             'INSERT INTO admin_audit_log (admin_username, origin, action, result, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
             [admin_username, origin, action, result, details, ip]
         );
-    } catch(err) {
+    } catch (err) {
         console.error('Audit log failed:', err);
     }
 }
 
 async function snapshotUserPlanUsage(db, username) {
-  const executor = db && typeof db.query === 'function' ? db : pool;
+    const executor = db && typeof db.query === 'function' ? db : pool;
 
-  const [rows] = await executor.query(`
+    const [rows] = await executor.query(`
     SELECT
       COALESCE(SUM(acctinputoctets), 0) AS input_octets,
       COALESCE(SUM(acctoutputoctets), 0) AS output_octets,
@@ -125,13 +131,13 @@ async function snapshotUserPlanUsage(db, username) {
     WHERE username = ?
   `, [username]);
 
-  const totals = rows[0] || {
-    input_octets: 0,
-    output_octets: 0,
-    session_seconds: 0
-  };
+    const totals = rows[0] || {
+        input_octets: 0,
+        output_octets: 0,
+        session_seconds: 0
+    };
 
-  await executor.query(`
+    await executor.query(`
     INSERT INTO user_plan_usage
       (username, cycle_started_at, base_input_octets, base_output_octets, base_session_seconds)
     VALUES (?, NOW(), ?, ?, ?)
@@ -146,7 +152,7 @@ async function snapshotUserPlanUsage(db, username) {
 async function initDb() {
     await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_debug', 'false')");
     await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mask_user_passwords', 'false')");
-    
+
     const [rows] = await pool.query('SELECT COUNT(*) as count FROM admins');
     if (rows[0].count === 0) {
         const hash = await bcrypt.hash('admin', 10);
@@ -286,6 +292,18 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     next();
 };
 
+// --- CURRENT ADMIN (self) ---
+app.get('/api/auth/me', async (req, res) => {
+    const apiKey = req.header('X-API-Key');
+    if (!apiKey) return res.status(401).json({ error: 'API Key missing' });
+    const [admins] = await pool.query(
+        'SELECT id, username, permissions FROM admins WHERE api_key = ?',
+        [apiKey]
+    );
+    if (!admins.length) return res.status(401).json({ error: 'Invalid API Key' });
+    res.json(admins[0]);
+});
+
 // --- AUDIT LOG API ---
 app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) => {
     const { search, result, start_date, end_date, limit = 100 } = req.query;
@@ -319,7 +337,7 @@ app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) =>
 // --- SETTINGS ---
 app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM settings');
-    res.json(rows.reduce((acc, row) => ({...acc, [row.setting_key]: row.setting_value}), {}));
+    res.json(rows.reduce((acc, row) => ({ ...acc, [row.setting_key]: row.setting_value }), {}));
 });
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
@@ -353,21 +371,21 @@ app.get('/api/system/status', requireApiAuth('settings', 'read-only'), (req, res
 
 app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-write'), (req, res) => {
     const { container } = req.params;
-    if (!container.startsWith('radius_')) return res.status(403).json({error: 'Invalid container'});
-    
+    if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
+
     exec(`docker restart ${container}`, async (error) => {
         if (error) {
             await auditLog(req.admin.username, req.origin, `Restart container ${container}`, 'failed', error.message, req.ip);
-            return res.status(500).json({error: error.message});
+            return res.status(500).json({ error: error.message });
         }
         await auditLog(req.admin.username, req.origin, `Restarted container ${container}`, 'success', '', req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     });
 });
 
 app.get('/api/system/logs/:container', requireApiAuth('settings', 'read-only'), (req, res) => {
     const { container } = req.params;
-    if (!container.startsWith('radius_')) return res.status(403).json({error: 'Invalid container'});
+    if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
 
     exec(`docker logs --tail 200 ${container}`, (error, stdout, stderr) => {
         res.json({ logs: stdout + stderr });
@@ -383,25 +401,25 @@ app.post('/api/certs/generate', requireApiAuth('settings', 'read-write'), (req, 
     exec(cmd, async (error) => {
         if (error) {
             await auditLog(req.admin.username, req.origin, 'Generate EAP certificate', 'failed', error.message, req.ip);
-            return res.status(500).json({error: error.message});
+            return res.status(500).json({ error: error.message });
         }
         exec('docker restart radius_server');
         await auditLog(req.admin.username, req.origin, 'Generated new 10-year EAP certificate', 'success', `Subject: ${subj}`, req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     });
 });
 
-app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.fields([{name:'cert'}, {name:'key'}]), async (req, res) => {
+app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.fields([{ name: 'cert' }, { name: 'key' }]), async (req, res) => {
     try {
         const certPath = req.files['cert'][0].path;
         const keyPath = req.files['key'][0].path;
         const pwd = req.body.password;
 
         await fs.copyFile(certPath, '/certs_shared/server.pem');
-        
+
         if (pwd) {
             await new Promise((resolve, reject) => {
-                exec(`openssl rsa -in ${keyPath} -passin env:PK_PASS -out /certs_shared/server.key`, 
+                exec(`openssl rsa -in ${keyPath} -passin env:PK_PASS -out /certs_shared/server.key`,
                     { env: { ...process.env, PK_PASS: pwd } },
                     (err) => err ? reject(err) : resolve()
                 );
@@ -412,10 +430,10 @@ app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.f
 
         exec('docker restart radius_server');
         await auditLog(req.admin.username, req.origin, 'Uploaded custom EAP certificate', 'success', 'Radius restarted', req.ip);
-        res.json({success: true});
-    } catch(err) {
+        res.json({ success: true });
+    } catch (err) {
         await auditLog(req.admin.username, req.origin, 'Upload EAP certificate', 'failed', err.message, req.ip);
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -423,9 +441,9 @@ app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.f
 app.get('/api/certs/details', requireApiAuth('settings', 'read-only'), (req, res) => {
     exec('openssl x509 -in /certs_shared/server.pem -text -noout', (error, stdout, stderr) => {
         if (error) {
-            return res.json({ 
+            return res.json({
                 details: 'Certificate file not found or invalid.\n\n' +
-                         'Click "Generate New 10-Year Certificate" above to create one.' 
+                    'Click "Generate New 10-Year Certificate" above to create one.'
             });
         }
         res.json({ details: stdout.trim() || 'Certificate exists but has no readable details.' });
@@ -447,24 +465,24 @@ app.get('/api/admins', requireApiAuth('admins', 'read-only'), async (req, res) =
 
 const crypto = require('crypto');
 
-app.post('/api/admins', requireApiAuth('settings', 'read-write'), async (req, res) => {
-  const { username, password, permissions, enable_2fa } = req.body;
-  const hash = await bcrypt.hash(password, 10);
-  const apikey = crypto.randomBytes(32).toString('hex');
-  try {
-    const [settingRows] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'enforce_2fa'");
-    const enforce2fa = settingRows.length > 0 && settingRows[0].setting_value === 'true';
-    const is2faEnabled = enforce2fa || !!enable_2fa;
+app.post('/api/admins', requireApiAuth('admins', 'read-write'), async (req, res) => {
+    const { username, password, permissions, enable_2fa } = req.body;
+    const hash = await bcrypt.hash(password, 10);
+    const apikey = crypto.randomBytes(32).toString('hex');
+    try {
+        const [settingRows] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'enforce_2fa'");
+        const enforce2fa = settingRows.length > 0 && settingRows[0].setting_value === 'true';
+        const is2faEnabled = enforce2fa || !!enable_2fa;
 
-    await pool.query('INSERT INTO admins (username, password_hash, api_key, permissions, two_factor_enabled, two_factor_setup_complete) VALUES (?, ?, ?, ?, ?, false)', [username, hash, apikey, JSON.stringify(permissions), is2faEnabled]);
-    await auditLog(req.admin.username, req.origin, `Created admin: ${username}`, 'success', '', req.ip);
-    res.json({success: true});
-  } catch (err) {
-    res.status(400).json({error: err.message});
-  }
+        await pool.query('INSERT INTO admins (username, password_hash, api_key, permissions, two_factor_enabled, two_factor_setup_complete) VALUES (?, ?, ?, ?, ?, false)', [username, hash, apikey, JSON.stringify(permissions), is2faEnabled]);
+        await auditLog(req.admin.username, req.origin, `Created admin: ${username}`, 'success', '', req.ip);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
-app.put('/api/admins/:id', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.put('/api/admins/:id', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
     const { username, password, permissions } = req.body;
     try {
@@ -475,20 +493,20 @@ app.put('/api/admins/:id', requireApiAuth('settings', 'read-write'), async (req,
             await pool.query('UPDATE admins SET username = ?, permissions = ? WHERE id = ?', [username, JSON.stringify(permissions), id]);
         }
         await auditLog(req.admin.username, req.origin, `Updated admin: ${username}`, 'success', '', req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     } catch (err) {
-        res.status(400).json({error: err.message});
+        res.status(400).json({ error: err.message });
     }
 });
 
-app.delete('/api/admins/:id', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.delete('/api/admins/:id', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
     await pool.query('DELETE FROM administrators WHERE id = ?', [id]);
     await auditLog(req.admin.username, req.origin, `Deleted admin ID: ${id}`, 'success', '', req.ip);
-    res.json({success: true});
+    res.json({ success: true });
 });
 
-app.post('/api/admins/:id/generate-key', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.post('/api/admins/:id/generate-key', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
     const newKey = crypto.randomBytes(32).toString('hex');
     try {
@@ -496,26 +514,26 @@ app.post('/api/admins/:id/generate-key', requireApiAuth('settings', 'read-write'
         await auditLog(req.admin.username, req.origin, `Generated new API key for admin ID: ${id}`, 'success', '', req.ip);
         res.json({ success: true, apiKey: newKey });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
-app.post('/api/admins/:id/enable-2fa', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.post('/api/admins/:id/enable-2fa', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
     try {
         const [admins] = await pool.query('SELECT * FROM admins WHERE id = ?', [id]);
         const admin = admins[0];
-        if (!admin) return res.status(404).json({error: 'Admin not found'});
+        if (!admin) return res.status(404).json({ error: 'Admin not found' });
 
         const secret = authenticator.generateSecret();
         await pool.query('UPDATE admins SET two_factor_enabled = true, two_factor_setup_complete = true, two_factor_secret = ? WHERE id = ?', [secret, id]);
-        
+
         const qrImage = await qrcode.toDataURL(authenticator.keyuri(admin.username, 'RadiusFullStack', secret));
-        
+
         await auditLog(req.admin.username, req.origin, `Enabled 2FA for admin: ${admin.username}`, 'success', '', req.ip);
         res.json({ success: true, qrImage, secret });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -526,7 +544,7 @@ app.post('/api/admins/:id/disable-2fa', requireApiAuth('settings', 'read-write')
         await auditLog(req.admin.username, req.origin, `Disabled 2FA for admin ID: ${id}`, 'success', '', req.ip);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -539,12 +557,12 @@ app.get('/api/plans', requireApiAuth('plans', 'read-only'), async (req, res) => 
 app.post('/api/plans', requireApiAuth('plans', 'read-write'), async (req, res) => {
     const { name, data_limit_mb, time_limit_seconds, reset_period } = req.body;
     try {
-        await pool.query('INSERT INTO plans (name, data_limit_mb, time_limit_seconds, reset_period) VALUES (?, ?, ?, ?)', 
+        await pool.query('INSERT INTO plans (name, data_limit_mb, time_limit_seconds, reset_period) VALUES (?, ?, ?, ?)',
             [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never']);
         await auditLog(req.admin.username, req.origin, `Created plan: ${name}`, 'success', '', req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -552,12 +570,12 @@ app.put('/api/plans/:id', requireApiAuth('plans', 'read-write'), async (req, res
     const { id } = req.params;
     const { name, data_limit_mb, time_limit_seconds, reset_period } = req.body;
     try {
-        await pool.query('UPDATE plans SET name=?, data_limit_mb=?, time_limit_seconds=?, reset_period=? WHERE id=?', 
+        await pool.query('UPDATE plans SET name=?, data_limit_mb=?, time_limit_seconds=?, reset_period=? WHERE id=?',
             [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never', id]);
         await auditLog(req.admin.username, req.origin, `Updated plan ID: ${id}`, 'success', '', req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -566,9 +584,9 @@ app.delete('/api/plans/:id', requireApiAuth('plans', 'read-write'), async (req, 
     try {
         await pool.query('DELETE FROM plans WHERE id = ?', [id]);
         await auditLog(req.admin.username, req.origin, `Deleted plan ID: ${id}`, 'success', '', req.ip);
-        res.json({success: true});
+        res.json({ success: true });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -593,7 +611,7 @@ app.put('/api/nas/:id', requireApiAuth('nas', 'read-write'), async (req, res) =>
         await auditLog(req.admin.username, req.origin, `Updated NAS: ${nasname}`, 'success', '', req.ip);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({error: err.message});
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -622,8 +640,8 @@ app.post('/api/profiles/attributes', requireApiAuth('users', 'read-write'), asyn
 app.post('/api/profiles/nas', requireApiAuth('users', 'read-write'), async (req, res) => {
     const { profile, nas_id } = req.body;
     const [nas] = await pool.query('SELECT nasname FROM nas WHERE id = ?', [nas_id]);
-    if (!nas.length) return res.status(404).json({error: 'NAS not found'});
-    
+    if (!nas.length) return res.status(404).json({ error: 'NAS not found' });
+
     const ip = nas[0].nasname.split('/')[0];
     await pool.query(`INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (?, 'NAS-IP-Address', '+=', ?)`, [profile, ip]);
     await auditLog(req.admin.username, req.origin, `Added NAS-IP-Address check to profile ${profile}`, 'success', `NAS: ${ip}`, req.ip);
@@ -715,7 +733,7 @@ app.put('/api/profiles/:name', requireApiAuth('users', 'read-write'), (req, res)
     return app._router.handle(req, res);
 });
 
-app.delete('/api/profiles/:name', requireApiAuth('profiles', 'read-write'), async (req, res) => {
+app.delete('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (req, res) => {
     const { name } = req.params;
     const conn = await pool.getConnection();
     try {
@@ -740,7 +758,7 @@ app.delete('/api/profiles/:name', requireApiAuth('profiles', 'read-write'), asyn
 
 // --- USERS ---
 app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => {
-  const [rows] = await pool.query(`
+    const [rows] = await pool.query(`
     SELECT
       c.username,
       c.value AS password,
@@ -767,87 +785,87 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
     ) a ON c.username = a.username
     WHERE c.attribute = 'Cleartext-Password' AND m.mac_address IS NULL
   `);
-  res.json(rows);
+    res.json(rows);
 });
 
 app.post('/api/users', requireApiAuth('users', 'read-write'), async (req, res) => {
-  const { username, password, profile, plan_id, totp_enabled } = req.body;
-  const conn = await pool.getConnection();
+    const { username, password, profile, plan_id, totp_enabled } = req.body;
+    const conn = await pool.getConnection();
 
-  try {
-    await conn.beginTransaction();
+    try {
+        await conn.beginTransaction();
 
-    await conn.query(
-      'INSERT INTO radcheck (username, attribute, op, value) VALUES (?, "Cleartext-Password", ":=", ?)',
-      [username, password]
-    );
+        await conn.query(
+            'INSERT INTO radcheck (username, attribute, op, value) VALUES (?, "Cleartext-Password", ":=", ?)',
+            [username, password]
+        );
 
-    if (profile && profile !== '') {
-      await conn.query(
-        'INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)',
-        [username, profile]
-      );
-    }
+        if (profile && profile !== '') {
+            await conn.query(
+                'INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)',
+                [username, profile]
+            );
+        }
 
-    if (plan_id && plan_id !== '') {
-      await conn.query(
-        'INSERT INTO user_plans (username, plan_id, manual_reset_date) VALUES (?, ?, NOW())',
-        [username, parseInt(plan_id, 10)]
-      );
-      await snapshotUserPlanUsage(conn, username);
-    } else {
-      await conn.query('DELETE FROM user_plan_usage WHERE username = ?', [username]);
-    }
+        if (plan_id && plan_id !== '') {
+            await conn.query(
+                'INSERT INTO user_plans (username, plan_id, manual_reset_date) VALUES (?, ?, NOW())',
+                [username, parseInt(plan_id, 10)]
+            );
+            await snapshotUserPlanUsage(conn, username);
+        } else {
+            await conn.query('DELETE FROM user_plan_usage WHERE username = ?', [username]);
+        }
 
-    await conn.query(
-      `INSERT INTO user_totp (username, enabled)
+        await conn.query(
+            `INSERT INTO user_totp (username, enabled)
        VALUES (?, ?)
        ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
-      [username, totp_enabled ? 1 : 0]
-    );
-    await syncUserTotpToRadius(conn, username);
+            [username, totp_enabled ? 1 : 0]
+        );
+        await syncUserTotpToRadius(conn, username);
 
-    let enrollment = null;
-    if (totp_enabled) {
-        const port = process.env.WEB_UI_PORT === '80' ? '' : `:${process.env.WEB_UI_PORT || '80'}`;
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-        const eData = await generateEnrollmentCode(conn, username);
-        enrollment = {
-            code: eData.code,
-            expires_at: eData.expires_at,
-            url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
-        };
+        let enrollment = null;
+        if (totp_enabled) {
+            const port = process.env.WEB_UI_PORT === '80' ? '' : `:${process.env.WEB_UI_PORT || '80'}`;
+            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const eData = await generateEnrollmentCode(conn, username);
+            enrollment = {
+                code: eData.code,
+                expires_at: eData.expires_at,
+                url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
+            };
+        }
+
+        await conn.commit();
+        await auditLog(req.admin.username, req.origin, `Created user: ${username}`, 'success', '', req.ip);
+        res.json({ success: true, enrollment });
+    } catch (err) {
+        await conn.rollback();
+        console.error("POST User Error:", err);
+        res.status(400).json({ error: err.message });
+    } finally {
+        conn.release();
     }
-
-    await conn.commit();
-    await auditLog(req.admin.username, req.origin, `Created user: ${username}`, 'success', '', req.ip);
-    res.json({ success: true, enrollment });
-  } catch (err) {
-    await conn.rollback();
-    console.error("POST User Error:", err);
-    res.status(400).json({ error: err.message });
-  } finally {
-    conn.release();
-  }
 });
 
 app.post('/api/users/:username/reset-plan', requireApiAuth('users', 'read-write'), async (req, res) => {
-  const { username } = req.params;
+    const { username } = req.params;
 
-  try {
-    const [plans] = await pool.query('SELECT plan_id FROM user_plans WHERE username = ?', [username]);
-    if (!plans.length) {
-      return res.status(404).json({ error: 'User has no plan assigned' });
+    try {
+        const [plans] = await pool.query('SELECT plan_id FROM user_plans WHERE username = ?', [username]);
+        if (!plans.length) {
+            return res.status(404).json({ error: 'User has no plan assigned' });
+        }
+
+        await snapshotUserPlanUsage(pool, username);
+        await pool.query('UPDATE user_plans SET manual_reset_date = NOW() WHERE username = ?', [username]);
+
+        await auditLog(req.admin.username, req.origin, `Reset limits for user: ${username}`, 'success', '', req.ip);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    await snapshotUserPlanUsage(pool, username);
-    await pool.query('UPDATE user_plans SET manual_reset_date = NOW() WHERE username = ?', [username]);
-
-    await auditLog(req.admin.username, req.origin, `Reset limits for user: ${username}`, 'success', '', req.ip);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 
@@ -864,7 +882,7 @@ app.post('/api/users/bulk', requireApiAuth('users', 'read-write'), async (req, r
         for (let i = 0; i < users.length; i++) {
             const { username, password, profile, plan_id, totp_enabled } = users[i];
             if (!username || !password) {
-                errors.push(`Row ${i+1}: Missing username or password`);
+                errors.push(`Row ${i + 1}: Missing username or password`);
                 continue;
             }
             try {
@@ -881,9 +899,9 @@ app.post('/api/users/bulk', requireApiAuth('users', 'read-write'), async (req, r
                 successCount++;
             } catch (err) {
                 if (err.code === 'ER_DUP_ENTRY') {
-                    errors.push(`Row ${i+1} (${username}): Already exists`);
+                    errors.push(`Row ${i + 1} (${username}): Already exists`);
                 } else {
-                    errors.push(`Row ${i+1} (${username}): ${err.message}`);
+                    errors.push(`Row ${i + 1} (${username}): ${err.message}`);
                 }
             }
         }
@@ -898,140 +916,180 @@ app.post('/api/users/bulk', requireApiAuth('users', 'read-write'), async (req, r
 });
 
 app.put('/api/users/:username', requireApiAuth('users', 'read-write'), async (req, res) => {
-  const { username } = req.params;
-  const { password, profile, plan_id, totp_enabled } = req.body;
-  const conn = await pool.getConnection();
+    const { username } = req.params;
+    const { password, profile, plan_id, totp_enabled } = req.body;
+    const conn = await pool.getConnection();
 
-  try {
-    await conn.beginTransaction();
+    try {
+        await conn.beginTransaction();
 
-    if (password && password.trim() !== '') {
-      await conn.query(
-        "UPDATE radcheck SET value = ? WHERE username = ? AND attribute = 'Cleartext-Password'",
-        [password, username]
-      );
-    }
+        if (password && password.trim() !== '') {
+            await conn.query(
+                "UPDATE radcheck SET value = ? WHERE username = ? AND attribute = 'Cleartext-Password'",
+                [password, username]
+            );
+        }
 
-    if (profile !== undefined) {
-      await conn.query("DELETE FROM radusergroup WHERE username = ?", [username]);
-      if (profile) {
-        await conn.query(
-          "INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)",
-          [username, profile]
-        );
-      }
-    }
+        if (profile !== undefined) {
+            await conn.query("DELETE FROM radusergroup WHERE username = ?", [username]);
+            if (profile) {
+                await conn.query(
+                    "INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)",
+                    [username, profile]
+                );
+            }
+        }
 
-    if (plan_id !== undefined) {
-      await conn.query("DELETE FROM user_plans WHERE username = ?", [username]);
-      await conn.query("DELETE FROM user_plan_usage WHERE username = ?", [username]);
+        if (plan_id !== undefined) {
+            await conn.query("DELETE FROM user_plans WHERE username = ?", [username]);
+            await conn.query("DELETE FROM user_plan_usage WHERE username = ?", [username]);
 
-      if (plan_id && plan_id !== '') {
-        await conn.query(
-          "INSERT INTO user_plans (username, plan_id, manual_reset_date) VALUES (?, ?, NOW())",
-          [username, parseInt(plan_id, 10)]
-        );
-        await snapshotUserPlanUsage(conn, username);
-      }
-    }
+            if (plan_id && plan_id !== '') {
+                await conn.query(
+                    "INSERT INTO user_plans (username, plan_id, manual_reset_date) VALUES (?, ?, NOW())",
+                    [username, parseInt(plan_id, 10)]
+                );
+                await snapshotUserPlanUsage(conn, username);
+            }
+        }
 
-    let enrollment = null;
-    if (totp_enabled !== undefined) {
-      await conn.query(
-        `INSERT INTO user_totp (username, enabled)
+        let enrollment = null;
+        if (totp_enabled !== undefined) {
+            await conn.query(
+                `INSERT INTO user_totp (username, enabled)
          VALUES (?, ?)
          ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
-        [username, totp_enabled ? 1 : 0]
-      );
-      await syncUserTotpToRadius(conn, username);
+                [username, totp_enabled ? 1 : 0]
+            );
+            await syncUserTotpToRadius(conn, username);
 
-      const [rows] = await conn.query("SELECT secret FROM user_totp WHERE username = ?", [username]);
+            const [rows] = await conn.query("SELECT secret FROM user_totp WHERE username = ?", [username]);
 
-      if (totp_enabled && (!rows[0] || !rows[0].secret)) {
-          const eData = await generateEnrollmentCode(conn, username);
-          const baseUrl = `${req.protocol}://${req.hostname}`; // Behind proxy
-          enrollment = {
-              code: eData.code,
-              expires_at: eData.expires_at,
-              url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
-          };
-      }
+            if (totp_enabled && (!rows[0] || !rows[0].secret)) {
+                const eData = await generateEnrollmentCode(conn, username);
+                const baseUrl = `${req.protocol}://${req.hostname}`; // Behind proxy
+                enrollment = {
+                    code: eData.code,
+                    expires_at: eData.expires_at,
+                    url: `${baseUrl}/totp-setup.html?username=${encodeURIComponent(username)}`
+                };
+            }
+        }
+
+        await conn.commit();
+        await auditLog(req.admin.username, req.origin, `Updated user: ${username}`, 'success', '', req.ip);
+        res.json({ success: true, enrollment });
+    } catch (err) {
+        await conn.rollback();
+        res.status(400).json({ error: err.message });
+    } finally {
+        conn.release();
     }
-
-    await conn.commit();
-    await auditLog(req.admin.username, req.origin, `Updated user: ${username}`, 'success', '', req.ip);
-    res.json({ success: true, enrollment });
-  } catch (err) {
-    await conn.rollback();
-    res.status(400).json({ error: err.message });
-  } finally {
-    conn.release();
-  }
 });
 
 app.delete('/api/users/:username', requireApiAuth('users', 'read-write'), async (req, res) => {
-  const { username } = req.params;
-  await pool.query('DELETE FROM radcheck WHERE username = ?', [username]);
-  await pool.query('DELETE FROM radusergroup WHERE username = ?', [username]);
-  await pool.query('DELETE FROM user_plans WHERE username = ?', [username]);
-  await pool.query('DELETE FROM user_plan_usage WHERE username = ?', [username]);
-  await auditLog(req.admin.username, req.origin, `Deleted user: ${username}`, 'success', '', req.ip);
-  res.json({ success: true });
+    const { username } = req.params;
+    await pool.query('DELETE FROM radcheck WHERE username = ?', [username]);
+    await pool.query('DELETE FROM radusergroup WHERE username = ?', [username]);
+    await pool.query('DELETE FROM user_plans WHERE username = ?', [username]);
+    await pool.query('DELETE FROM user_plan_usage WHERE username = ?', [username]);
+    await auditLog(req.admin.username, req.origin, `Deleted user: ${username}`, 'success', '', req.ip);
+    res.json({ success: true });
 });
 
 // --- REPORTS ---
 app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const { limit = 100 } = req.query;
-    
-    // Cap the limit for performance and security (max 500)
-    const queryLimit = Math.min(parseInt(limit) || 100, 500);
-
+    const { limit = 200, username, nasip, callingstationid, framedip } = req.query;
+    const queryLimit = Math.min(parseInt(limit) || 200, 1000);
+    const conditions = ['a.acctstoptime IS NULL'];
+    const params = [];
+    if (username) { conditions.push('(a.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+    if (nasip) { conditions.push('a.nasipaddress = ?'); params.push(nasip); }
+    if (callingstationid) { conditions.push('a.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
+    if (framedip) { conditions.push('a.framedipaddress LIKE ?'); params.push('%' + framedip + '%'); }
+    const where = conditions.join(' AND ');
     const [rows] = await pool.query(
-        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.acctstoptime IS NULL ORDER BY a.acctstarttime DESC LIMIT ?',
-        [queryLimit]
+        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE ' + where + ' ORDER BY a.acctstarttime DESC LIMIT ?',
+        [...params, queryLimit]
     );
-    
     res.json(rows);
 });
 
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const { username, limit = 100 } = req.query;
-    
+    const { username, nasip, callingstationid, date_from, date_to, limit = 100 } = req.query;
     let query = 'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
-    const params = [];
-
-    if (username) {
-        query += ' WHERE (p.username = ? OR m.mac_id = ?)';
-        params.push(username, username);
-    }
-
-    // Always order by newest first
+    const conditions = [], params = [];
+    if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+    if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
+    if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
+    if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
+    if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
+    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
     query += ' ORDER BY authdate DESC';
-
-    // Cap the limit (max 500)
-    const queryLimit = Math.min(parseInt(limit) || 100, 500);
+    const queryLimit = Math.min(parseInt(limit) || 100, 10000);
     query += ' LIMIT ?';
     params.push(queryLimit);
-
     const [rows] = await pool.query(query, params);
     res.json(rows);
 });
+
+// LIVE STATS DASHBOARD
+app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    try {
+        const [[{ active_sessions }]] = await pool.query("SELECT COUNT(*) AS active_sessions FROM radacct WHERE acctstoptime IS NULL");
+        const [[{ accepts_1h }]] = await pool.query("SELECT COUNT(*) AS accepts_1h FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+        const [[{ rejects_1h }]] = await pool.query("SELECT COUNT(*) AS rejects_1h FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+        const [[{ accepts_24h }]] = await pool.query("SELECT COUNT(*) AS accepts_24h FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+        const [[{ rejects_24h }]] = await pool.query("SELECT COUNT(*) AS rejects_24h FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+        const [[{ unique_users_24h }]] = await pool.query("SELECT COUNT(DISTINCT username) AS unique_users_24h FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+        const [nas_breakdown] = await pool.query("SELECT nasipaddress, COUNT(*) AS session_count FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY session_count DESC LIMIT 8");
+        const [hourly_trend] = await pool.query("SELECT DATE_FORMAT(authdate,'%H:00') AS hour_label, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY DATE_FORMAT(authdate,'%Y-%m-%d %H:00:00') ORDER BY MIN(authdate)");
+        const [[{ avg_session_min }]] = await pool.query("SELECT ROUND(AVG(acctsessiontime)/60,1) AS avg_session_min FROM radacct WHERE acctstoptime IS NOT NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+        res.json({ active_sessions: Number(active_sessions), accepts_1h: Number(accepts_1h), rejects_1h: Number(rejects_1h), accepts_24h: Number(accepts_24h), rejects_24h: Number(rejects_24h), unique_users_24h: Number(unique_users_24h), avg_session_min: Number(avg_session_min) || 0, nas_breakdown, hourly_trend });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // USER EXECUTIVE REPORT
 app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
+    const { start_date, end_date } = req.query;
 
-    // Resolve alias if it is a MAC ID
     const [macMapping] = await pool.query('SELECT mac_address FROM mac_auth_devices WHERE mac_id = ? OR mac_address = ? LIMIT 1', [username, username]);
     const realUsername = macMapping.length > 0 ? macMapping[0].mac_address : username;
 
-    const [acct] = await pool.query('SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.username = ? ORDER BY a.acctstarttime DESC', [realUsername]);
-    const [auth] = await pool.query('SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.username = ? ORDER BY p.authdate DESC LIMIT 100', [realUsername]);
+    const dateCondition = (start_date ? ' AND a.acctstarttime >= ?' : '') + (end_date ? ' AND a.acctstarttime <= ?' : '');
+    const dateParams = [...(start_date ? [start_date] : []), ...(end_date ? [end_date] : [])];
+
+    const [acct] = await pool.query(
+        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.username = ?' + dateCondition + ' ORDER BY a.acctstarttime DESC',
+        [realUsername, ...dateParams]
+    );
+    const [auth] = await pool.query(
+        'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.username = ? ORDER BY p.authdate DESC LIMIT 200',
+        [realUsername]
+    );
     const [stats] = await pool.query(
-        'SELECT COUNT(*) as total_sessions, SUM(acctinputoctets) as total_input, SUM(acctoutputoctets) as total_output, SUM(acctsessiontime) as total_time FROM radacct WHERE username = ?',
+        'SELECT COUNT(*) as total_sessions, SUM(acctinputoctets) as total_input, SUM(acctoutputoctets) as total_output, SUM(acctsessiontime) as total_time, MAX(acctstarttime) as last_seen, MIN(acctstarttime) as first_seen, AVG(acctsessiontime) as avg_session_time, MAX(acctsessiontime) as longest_session FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, ''),
+        [realUsername, ...dateParams]
+    );
+    const [nasStats] = await pool.query(
+        'SELECT nasipaddress, COUNT(*) as session_count, SUM(acctinputoctets+acctoutputoctets) as total_bytes, AVG(acctsessiontime) as avg_duration FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY nasipaddress ORDER BY session_count DESC',
+        [realUsername, ...dateParams]
+    );
+    const [daily] = await pool.query(
+        'SELECT DATE(acctstarttime) as day, COUNT(*) as sessions, SUM(acctinputoctets) as upload, SUM(acctoutputoctets) as download, SUM(acctsessiontime) as duration FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY DATE(acctstarttime) ORDER BY day ASC',
+        [realUsername, ...dateParams]
+    );
+    const [hourly] = await pool.query(
+        'SELECT HOUR(acctstarttime) as hour, COUNT(*) as sessions FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY HOUR(acctstarttime) ORDER BY hour ASC',
+        [realUsername, ...dateParams]
+    );
+    const [authStats] = await pool.query(
+        "SELECT reply, COUNT(*) as count FROM radpostauth WHERE username = ? GROUP BY reply",
         [realUsername]
     );
 
-    res.json({ username: username, accounting: acct, postauth: auth, stats: stats[0] });
+    res.json({ username, accounting: acct, postauth: auth, stats: stats[0], nasStats, daily, hourly, authStats });
 });
 
 // FAILED AUTH REPORT
@@ -1056,17 +1114,17 @@ app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only
             <h2>Summary</h2>
             <table>
                 <tr><th>Total Sessions</th><th>Total Upload (bytes)</th><th>Total Download (bytes)</th><th>Total Time (sec)</th></tr>
-                <tr><td>${data.stats.total_sessions}</td><td>${data.stats.total_input||0}</td><td>${data.stats.total_output||0}</td><td>${data.stats.total_time||0}</td></tr>
+                <tr><td>${data.stats.total_sessions}</td><td>${data.stats.total_input || 0}</td><td>${data.stats.total_output || 0}</td><td>${data.stats.total_time || 0}</td></tr>
             </table>
             <h2>Recent Accounting</h2>
             <table>
                 <tr><th>Session ID</th><th>NAS IP</th><th>Start</th><th>Stop</th><th>Duration</th></tr>
-                ${data.accounting.slice(0,20).map(a => `<tr><td>${a.acctsessionid}</td><td>${a.nasipaddress}</td><td>${a.acctstarttime||'N/A'}</td><td>${a.acctstoptime||'Active'}</td><td>${a.acctsessiontime||0}s</td></tr>`).join('')}
+                ${data.accounting.slice(0, 20).map(a => `<tr><td>${a.acctsessionid}</td><td>${a.nasipaddress}</td><td>${a.acctstarttime || 'N/A'}</td><td>${a.acctstoptime || 'Active'}</td><td>${a.acctsessiontime || 0}s</td></tr>`).join('')}
             </table>
             <h2>Recent Authentications</h2>
             <table>
                 <tr><th>Date</th><th>Reply</th><th>Class</th></tr>
-                ${data.postauth.slice(0,20).map(p => `<tr><td>${p.authdate}</td><td>${p.reply}</td><td>${p.class}</td></tr>`).join('')}
+                ${data.postauth.slice(0, 20).map(p => `<tr><td>${p.authdate}</td><td>${p.reply}</td><td>${p.class}</td></tr>`).join('')}
             </table>
         </body></html>
     `;
@@ -1095,12 +1153,12 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
             <h2>Most Failures</h2>
             <table>
                 <tr><th>Username</th><th>Failed Attempts</th></tr>
-                ${data.summary.slice(0,20).map(s => `<tr><td>${s.username}</td><td>${s.fail_count}</td></tr>`).join('')}
+                ${data.summary.slice(0, 20).map(s => `<tr><td>${s.username}</td><td>${s.fail_count}</td></tr>`).join('')}
             </table>
             <h2>Recent Failures</h2>
             <table>
                 <tr><th>Username</th><th>Date/Time</th><th>Class</th></tr>
-                ${data.details.slice(0,50).map(d => `<tr><td>${d.username}</td><td>${d.authdate}</td><td>${d.class}</td></tr>`).join('')}
+                ${data.details.slice(0, 50).map(d => `<tr><td>${d.username}</td><td>${d.authdate}</td><td>${d.class}</td></tr>`).join('')}
             </table>
         </body></html>
     `;
@@ -1149,6 +1207,32 @@ app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// === DASHBOARD OVERVIEW ===
+app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    try {
+        const [[users]] = await pool.query("SELECT COUNT(*) AS cnt FROM radcheck WHERE username NOT IN (SELECT mac_address FROM mac_auth_devices)");
+        const [[macs]] = await pool.query("SELECT COUNT(*) AS cnt FROM mac_auth_devices");
+        const [[nas]] = await pool.query("SELECT COUNT(*) AS cnt FROM nas");
+        const [[plans]] = await pool.query("SELECT COUNT(*) AS cnt FROM plans");
+        const [[activeSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct WHERE acctstoptime IS NULL");
+        const [[totalSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct");
+        const [[authToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE authdate >= CURDATE()");
+        const [[rejectToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply='Access-Reject' AND authdate >= CURDATE()");
+        const [[dataToday]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE DATE(acctstarttime)=CURDATE()");
+        const [[dataWeek]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(),INTERVAL 7 DAY)");
+        const [recentAuths] = await pool.query("SELECT p.reply, COALESCE(m.mac_id,p.username) AS username, p.nasipaddress, p.authdate FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username ORDER BY p.authdate DESC LIMIT 8");
+        const [authTrend7d] = await pool.query("SELECT DATE(authdate) AS day, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(authdate) ORDER BY day ASC");
+        const [nasLoad] = await pool.query("SELECT nasipaddress, COUNT(*) AS active FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY active DESC LIMIT 6");
+        const [profileDist] = await pool.query("SELECT groupname, COUNT(*) AS cnt FROM radusergroup GROUP BY groupname ORDER BY cnt DESC LIMIT 8");
+        const [planDist] = await pool.query("SELECT p.name, COUNT(up.plan_id) AS cnt FROM plans p LEFT JOIN user_plans up ON up.plan_id=p.id GROUP BY p.id ORDER BY cnt DESC LIMIT 8");
+        res.json({
+            counts: { users: Number(users.cnt), macs: Number(macs.cnt), nas: Number(nas.cnt), plans: Number(plans.cnt), activeSessions: Number(activeSess.cnt), totalSessions: Number(totalSess.cnt), authToday: Number(authToday.cnt), rejectToday: Number(rejectToday.cnt) },
+            data: { today: Number(dataToday.bytes), week: Number(dataWeek.bytes) },
+            recentAuths, authTrend7d, nasLoad, profileDist, planDist
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // === ACCOUNTING HISTORY API ===
@@ -1217,9 +1301,9 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
 
     try {
         const [result] = await pool.query(query, params);
-        await auditLog(req.admin.username, req.origin, 'Deleted accounting records', 'success', 
-            `Filters: ${JSON.stringify({username, nasip, start_date, end_date})}`, req.ip);
-        
+        await auditLog(req.admin.username, req.origin, 'Deleted accounting records', 'success',
+            `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip);
+
         res.json({ success: true, deleted: result.affectedRows });
     } catch (err) {
         console.error(err);
@@ -1470,7 +1554,7 @@ app.post('/api/system/restore', requireApiAuth('admins', 'read-write'), upload.s
             for (const row of rows) {
                 // Filter out columns that were in the backup but no longer exist in the new schema version
                 const rowCols = Object.keys(row).filter(c => validColumns.includes(c));
-                                const rowVals = rowCols.map(c => {
+                const rowVals = rowCols.map(c => {
                     let val = row[c];
                     if (typeof val === 'string' && val.length >= 19 && val[10] === 'T') {
                         val = val.slice(0, 19).replace('T', ' ');
@@ -1503,9 +1587,9 @@ app.post('/api/system/restore', requireApiAuth('admins', 'read-write'), upload.s
         await conn.commit();
         await auditLog(req.admin.username, req.origin, `Restored ${type} database backup`, 'success', `Restored tables: ${Object.keys(restoredCounts).join(', ')}`, req.ip);
 
-        res.json({ 
-            success: true, 
-            message: `Tables processed: ${Object.keys(restoredCounts).length}` 
+        res.json({
+            success: true,
+            message: `Tables processed: ${Object.keys(restoredCounts).length}`
         });
 
     } catch (err) {
@@ -1596,13 +1680,13 @@ app.post('/api/mac-auth/bulk', requireApiAuth('users', 'read-write'), async (req
         for (let i = 0; i < devices.length; i++) {
             let { mac_id, mac_address, profile, plan_id } = devices[i];
             if (!mac_id || !mac_address) {
-                errors.push(`Row ${i+1}: Missing MAC ID or Address`);
+                errors.push(`Row ${i + 1}: Missing MAC ID or Address`);
                 continue;
             }
 
             mac_address = mac_address.trim().toLowerCase().replace(/-/g, ':');
             if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac_address)) {
-                errors.push(`Row ${i+1}: Invalid MAC address format (${mac_address})`);
+                errors.push(`Row ${i + 1}: Invalid MAC address format (${mac_address})`);
                 continue;
             }
 
@@ -1620,9 +1704,9 @@ app.post('/api/mac-auth/bulk', requireApiAuth('users', 'read-write'), async (req
                 successCount++;
             } catch (err) {
                 if (err.code === 'ER_DUP_ENTRY') {
-                    errors.push(`Row ${i+1} (${mac_address}): MAC ID or Address already exists`);
+                    errors.push(`Row ${i + 1} (${mac_address}): MAC ID or Address already exists`);
                 } else {
-                    errors.push(`Row ${i+1} (${mac_address}): ${err.message}`);
+                    errors.push(`Row ${i + 1} (${mac_address}): ${err.message}`);
                 }
             }
         }

@@ -7,449 +7,783 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .endpoint {
-            transition: all 0.2s;
+            transition: all 0.18s;
         }
-        .endpoint:hover {
-            background-color: #f3f4f6;
-            transform: translateX(4px);
-        }
+
+            .endpoint:hover {
+                background-color: #eff6ff;
+                transform: translateX(3px);
+            }
+
         .endpoint-clickable {
             cursor: pointer;
         }
+
         .request-panel {
             font-family: ui-monospace, monospace;
+        }
+
+        .method-GET {
+            color: #16a34a;
+        }
+
+        .method-POST {
+            color: #2563eb;
+        }
+
+        .method-PUT {
+            color: #d97706;
+        }
+
+        .method-DELETE {
+            color: #dc2626;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            font-family: monospace;
+            min-width: 52px;
+            text-align: center;
+        }
+
+        .badge-GET {
+            background: #dcfce7;
+            color: #15803d;
+        }
+
+        .badge-POST {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .badge-PUT {
+            background: #fef3c7;
+            color: #b45309;
+        }
+
+        .badge-DELETE {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .section-header {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: #6b7280;
+            padding: 8px 0 4px;
+            border-top: 1px solid #f3f4f6;
+            margin-top: 8px;
+        }
+
+        .desc {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 2px;
+        }
+
+        .param-tag {
+            display: inline-block;
+            font-size: 10px;
+            background: #f3f4f6;
+            color: #6b7280;
+            border-radius: 3px;
+            padding: 1px 5px;
+            margin-left: 4px;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
-  <main>
-    <div class="mb-6">
-      <h1 class="text-3xl font-bold text-gray-800">API Documentation</h1>
-      <p class="text-gray-500 mt-2">Click any endpoint below to load it into the API Tester with example data.</p>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Documentation Side -->
-        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 h-[calc(100vh-140px)] overflow-y-auto">
-            <h2 class="text-xl font-bold mb-4 border-b pb-2">Available Endpoints</h2>
-<div class="space-y-8">
-    <!-- Auth & Security -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Auth & Security</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('POST', '/auth/login', '{ &quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: &quot;admin123&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /auth/login
-            </div>
-            <div onclick="loadEndpoint('POST', '/auth/verify-2fa', '{ &quot;token&quot;: &quot;jwt_token_here&quot;, &quot;code&quot;: &quot;123456&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /auth/verify-2fa
-            </div>
-            <div onclick="loadEndpoint('POST', '/auth/change-pwd', '{ &quot;oldPassword&quot;: &quot;admin123&quot;, &quot;newPassword&quot;: &quot;newadmin123&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /auth/change-pwd
-            </div>
-            <div onclick="loadEndpoint('POST', '/auth/radius/totp/start', '{ &quot;username&quot;: &quot;testuser&quot;, &quot;password&quot;: &quot;radiuspass&quot;, &quot;enrollmentCode&quot;: &quot;xyz123&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /auth/radius/totp/start
-            </div>
-            <div onclick="loadEndpoint('POST', '/auth/radius/totp/confirm', '{ &quot;token&quot;: &quot;jwt_enroll_token&quot;, &quot;code&quot;: &quot;123456&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /auth/radius/totp/confirm
-            </div>
-        </div>
-    </div>
-    <!-- Users -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Users</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/users')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/users
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/users', '{ &quot;username&quot;: &quot;testuser&quot;, &quot;password&quot;: &quot;pass123&quot;, &quot;profile&quot;: &quot;premium&quot;, &quot;plan_id&quot;: 1, &quot;totp_enabled&quot;: false }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/users
-            </div>
-            <div onclick="loadEndpoint('PUT', '/api/users/testuser', '{ &quot;password&quot;: &quot;newpass123&quot;, &quot;profile&quot;: &quot;basic&quot;, &quot;plan_id&quot;: 2, &quot;totp_enabled&quot;: true }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-yellow-600 inline-block w-16">PUT</span> /api/users/testuser
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/users/testuser')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/users/testuser
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/users/testuser/reset-plan')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/users/testuser/reset-plan
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/users/testuser/totp/reset')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/users/testuser/totp/reset
-            </div>
-        </div>
-    </div>
-    <!-- Billing Plans -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Billing Plans</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/plans')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/plans
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/plans', '{ &quot;name&quot;: &quot;Premium&quot;, &quot;data_limit_mb&quot;: 10000, &quot;time_limit_seconds&quot;: 2592000, &quot;reset_period&quot;: &quot;monthly&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/plans
-            </div>
-            <div onclick="loadEndpoint('PUT', '/api/plans/1', '{ &quot;name&quot;: &quot;Premium Plus&quot;, &quot;data_limit_mb&quot;: 20000, &quot;time_limit_seconds&quot;: 0, &quot;reset_period&quot;: &quot;never&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-yellow-600 inline-block w-16">PUT</span> /api/plans/1
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/plans/1')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/plans/1
-            </div>
-        </div>
-    </div>
-    <!-- Profiles -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Profiles</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/profiles')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/profiles
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/profiles/data')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/profiles/data
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/profiles/premium', '{ &quot;attributes&quot;: [ { &quot;attribute&quot;: &quot;Mikrotik-Rate-Limit&quot;, &quot;type&quot;: &quot;reply&quot;, &quot;value&quot;: &quot;20M/10M&quot; } ], &quot;nas_ips&quot;: [ &quot;192.168.1.50&quot; ] }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/profiles/premium
-            </div>
-            <div onclick="loadEndpoint('PUT', '/api/profiles/premium', '{ &quot;attributes&quot;: [ { &quot;attribute&quot;: &quot;Mikrotik-Rate-Limit&quot;, &quot;type&quot;: &quot;reply&quot;, &quot;value&quot;: &quot;50M/20M&quot; } ], &quot;nas_ips&quot;: [ &quot;192.168.1.50&quot; ] }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-yellow-600 inline-block w-16">PUT</span> /api/profiles/premium
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/profiles/premium')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/profiles/premium
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/profiles/attributes', '{ &quot;profile&quot;: &quot;premium&quot;, &quot;attribute&quot;: &quot;Mikrotik-Rate-Limit&quot;, &quot;type&quot;: &quot;reply&quot;, &quot;value&quot;: &quot;20M/10M&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/profiles/attributes
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/profiles/nas', '{ &quot;profile&quot;: &quot;premium&quot;, &quot;nas_id&quot;: 1 }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/profiles/nas
-            </div>
-        </div>
-    </div>
-    <!-- NAS Clients -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">NAS Clients</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/nas')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/nas
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/nas', '{ &quot;nasname&quot;: &quot;192.168.1.50&quot;, &quot;shortname&quot;: &quot;AP-01&quot;, &quot;secret&quot;: &quot;Secret123!&quot;, &quot;description&quot;: &quot;Main Office&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/nas
-            </div>
-            <div onclick="loadEndpoint('PUT', '/api/nas/1', '{ &quot;nasname&quot;: &quot;192.168.1.50&quot;, &quot;shortname&quot;: &quot;AP-01-Updated&quot;, &quot;secret&quot;: &quot;Secret123!&quot;, &quot;description&quot;: &quot;Main Office&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-yellow-600 inline-block w-16">PUT</span> /api/nas/1
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/nas/1')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/nas/1
-            </div>
-        </div>
-    </div>
-    <!-- Administrators -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Administrators</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/admins')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/admins
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/admins', '{ &quot;username&quot;: &quot;newadmin&quot;, &quot;password&quot;: &quot;admin123&quot;, &quot;permissions&quot;: { &quot;users&quot;: &quot;read-write&quot; }, &quot;enable_2fa&quot;: false }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/admins
-            </div>
-            <div onclick="loadEndpoint('PUT', '/api/admins/1', '{ &quot;permissions&quot;: { &quot;users&quot;: &quot;read-write&quot;, &quot;admins&quot;: &quot;read-write&quot; } }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-yellow-600 inline-block w-16">PUT</span> /api/admins/1
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/admins/1')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/admins/1
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/admins/1/generate-key')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/admins/1/generate-key
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/admins/1/enable-2fa')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/admins/1/enable-2fa
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/admins/1/disable-2fa')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/admins/1/disable-2fa
-            </div>
-        </div>
-    </div>
-    <!-- Sessions & Logs -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Sessions & Logs</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/sessions/active')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/sessions/active
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/logs/auth')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/logs/auth
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/audit')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/audit
-            </div>
-        </div>
-    </div>
-    <!-- Reports -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Reports</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/reports/dashboard-stats')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/reports/dashboard-stats
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/reports/user/testuser')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/reports/user/testuser
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/reports/failed-auth')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/reports/failed-auth
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/reports/pdf/user/testuser')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/reports/pdf/user/testuser
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/reports/pdf/failed-auth')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/reports/pdf/failed-auth
-            </div>
-        </div>
-    </div>
-    <!-- Accounting -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Accounting</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/accounting?limit=100')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/accounting?limit=100
-            </div>
-            <div onclick="loadEndpoint('DELETE', '/api/accounting', '{ &quot;username&quot;: &quot;testuser&quot; }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-red-600 inline-block w-16">DELETE</span> /api/accounting
-            </div>
-        </div>
-    </div>
-    <!-- System & Settings -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">System & Settings</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/settings')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/settings
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/settings', '{ &quot;ui_theme&quot;: &quot;purple&quot;, &quot;radius_debug&quot;: &quot;true&quot;, &quot;enforce_2fa&quot;: &quot;false&quot;, &quot;totp_enrollment_hours&quot;: 24 }')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/settings
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/system/status')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/system/status
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/system/restart/radius')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/system/restart/radius
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/system/logs/radius')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/system/logs/radius
-            </div>
-        </div>
-    </div>
-    <!-- Certificates -->
-    <div>
-        <h3 class="font-bold text-gray-800 mb-3">Certificates</h3>
-        <div class="space-y-2">
-            <div onclick="loadEndpoint('GET', '/api/certs/details')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/certs/details
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/certs/generate')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/certs/generate
-            </div>
-            <div onclick="loadEndpoint('POST', '/api/certs/upload')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-blue-600 inline-block w-16">POST</span> /api/certs/upload
-            </div>
-            <div onclick="loadEndpoint('GET', '/api/certs/download')" class="endpoint endpoint-clickable bg-gray-50 p-3 rounded border border-gray-200 font-mono text-sm hover:border-blue-300 cursor-pointer transition-colors shadow-sm">
-                <span class="font-bold text-green-600 inline-block w-16">GET</span> /api/certs/download
-            </div>
-        </div>
-    </div>
-</div>
+    <main>
+        <div class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">API Documentation</h1>
+            <p class="text-gray-500 mt-2">Click any endpoint to load it into the API Tester with example data. All <code class="bg-gray-100 px-1 rounded">/api/*</code> routes require <code class="bg-gray-100 px-1 rounded">X-API-Key</code> header.</p>
         </div>
 
-        <!-- API Tester Side -->
-        <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 h-[calc(100vh-140px)] flex flex-col">
-            <h2 class="text-xl font-bold text-white mb-4 border-b border-gray-700 pb-2">API Tester</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-            <form id="testerForm" class="space-y-4 flex-shrink-0">
-                <div class="flex space-x-2">
-                    <select id="reqMethod" class="bg-gray-700 text-white border border-gray-600 p-2 rounded outline-none w-1/4 focus:ring-1 focus:ring-blue-500 font-bold">
-                        <option value="GET">GET</option>
-                        <option value="POST">POST</option>
-                        <option value="PUT">PUT</option>
-                        <option value="DELETE">DELETE</option>
-                    </select>
-                    <input type="text" id="reqPath" value="/api/users" placeholder="/api/endpoint" class="bg-gray-700 text-white border border-gray-600 p-2 rounded outline-none w-3/4 focus:ring-1 focus:ring-blue-500 font-mono" required>
-                </div>
+            <!-- ── DOCS PANEL ───────────────────────────────────────────────────── -->
+            <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 h-[calc(100vh-140px)] overflow-y-auto">
+                <h2 class="text-xl font-bold mb-4 border-b pb-2">Available Endpoints</h2>
+                <div class="space-y-1">
 
-                <div>
-                    
-                <!-- cURL Command -->
-                <div>
-                    <div class="flex justify-between items-center mb-2">
-                        <label class="block text-xs font-bold text-gray-400">cURL Command</label>
-                        <div class="space-x-2">
-                            <button type="button" onclick="updateCurl()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition-colors border border-blue-700">Generate cURL</button>
-                            <button type="button" onclick="copyCurl(event)" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded transition-colors border border-gray-600">Copy</button>
-                        </div>
+
+                    <!-- AUTH & SECURITY -->
+                    <div class="section-header">Auth &amp; Security</div>
+
+                    <div onclick="loadEndpoint('POST','/auth/login',{username:'admin',password:'admin123'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/auth/login</span>
+                        <div class="desc ml-1">Authenticate and receive JWT token</div>
                     </div>
-                    <pre id="curlOutput" class="bg-gray-900 text-green-400 p-3 rounded border border-gray-700 font-mono text-xs overflow-x-auto whitespace-pre-wrap select-all block w-full outline-none focus:ring-2 focus:ring-blue-500 max-h-32 overflow-y-auto mb-4">curl ...</pre>
-                </div>
-                    <label class="block text-xs font-bold text-gray-400 mb-1">JSON Request Body</label>
-                    <textarea id="reqBody" class="w-full bg-gray-700 text-green-400 border border-gray-600 p-2 rounded outline-none h-48 font-mono text-sm focus:ring-1 focus:ring-blue-500" placeholder="{}"></textarea>
-                </div>
 
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold transition-colors">Send Request</button>
-            </form>
+                    <div onclick="loadEndpoint('POST','/auth/verify-2fa',{token:'jwt_token_here',code:'123456'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/auth/verify-2fa</span>
+                        <div class="desc ml-1">Verify TOTP code after login</div>
+                    </div>
 
-            <!-- Full Request Sent -->
-            <div id="requestContainer" class="mt-6 hidden">
-                <label class="block text-xs font-bold text-gray-400 mb-2">Full Request Sent</label>
-                <div class="bg-gray-900 rounded border border-gray-700 p-4 text-sm overflow-auto max-h-64 request-panel">
-                    <div id="requestDisplay" class="text-gray-300 whitespace-pre font-mono text-xs leading-relaxed"></div>
+                    <div onclick="loadEndpoint('POST','/auth/change-pwd',{oldPassword:'admin123',newPassword:'newadmin123'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/auth/change-pwd</span>
+                        <div class="desc ml-1">Change own admin password</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/auth/radius/totp/start',{username:'testuser',password:'radiuspass',enrollmentCode:'xyz123'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/auth/radius/totp/start</span>
+                        <div class="desc ml-1">Begin TOTP enrollment for RADIUS user</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/auth/radius/totp/confirm',{token:'jwt_enroll_token',code:'123456'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/auth/radius/totp/confirm</span>
+                        <div class="desc ml-1">Confirm TOTP enrollment with code</div>
+                    </div>
+
+                    <!-- USERS -->
+                    <div class="section-header">Users</div>
+
+                    <div onclick="loadEndpoint('GET','/api/users')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/users</span>
+                        <div class="desc ml-1">List all RADIUS users with plan &amp; profile info</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/users',{username:'testuser',password:'pass123',profile:'premium',plan_id:1,totp_enabled:false})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/users</span>
+                        <div class="desc ml-1">Create a new RADIUS user</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/users/testuser',{password:'newpass123',profile:'basic',plan_id:2,totp_enabled:true})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/users/testuser</span>
+                        <div class="desc ml-1">Update user password, profile or plan</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/users/testuser')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/users/testuser</span>
+                        <div class="desc ml-1">Delete a user and all associated data</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/users/testuser/reset-plan')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/users/testuser/reset-plan</span>
+                        <div class="desc ml-1">Reset usage counters for user plan</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/users/testuser/totp/reset')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/users/testuser/totp/reset</span>
+                        <div class="desc ml-1">Reset TOTP enrollment for a user</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/users/bulk',[{username:'user1',password:'pass1',profile:'basic',plan_id:1,totp_enabled:false},{username:'user2',password:'pass2',profile:'premium',plan_id:2,totp_enabled:false}])"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/users/bulk</span>
+                        <div class="desc ml-1">Bulk create users — body is array of user objects</div>
+                    </div>
+
+                    <!-- MAC AUTH -->
+                    <div class="section-header">MAC Authentication</div>
+
+                    <div onclick="loadEndpoint('GET','/api/mac-auth')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/mac-auth</span>
+                        <div class="desc ml-1">List all MAC auth devices</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/mac-auth',{mac_id:'printer-01',mac_address:'aa:bb:cc:dd:ee:ff',profile:'devices',plan_id:1})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/mac-auth</span>
+                        <div class="desc ml-1">Register a new MAC auth device</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/mac-auth/aa:bb:cc:dd:ee:ff',{mac_id:'printer-01-updated',profile:'premium',plan_id:2})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/mac-auth/aa:bb:cc:dd:ee:ff</span>
+                        <div class="desc ml-1">Update MAC device label, profile or plan</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/mac-auth/aa:bb:cc:dd:ee:ff')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/mac-auth/aa:bb:cc:dd:ee:ff</span>
+                        <div class="desc ml-1">Delete a MAC auth device</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/mac-auth/bulk',[{mac_id:'device-01',mac_address:'11:22:33:44:55:66',profile:'devices',plan_id:1},{mac_id:'device-02',mac_address:'aa:bb:cc:11:22:33',profile:'devices',plan_id:1}])"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/mac-auth/bulk</span>
+                        <div class="desc ml-1">Bulk import MAC devices — body is array</div>
+                    </div>
+
+                    <!-- PLANS -->
+                    <div class="section-header">Billing Plans</div>
+
+                    <div onclick="loadEndpoint('GET','/api/plans')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/plans</span>
+                        <div class="desc ml-1">List all billing plans</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/plans',{name:'Premium',data_limit_mb:51200,time_limit_seconds:2592000,reset_period:'monthly'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/plans</span>
+                        <div class="desc ml-1">Create a new plan. reset_period: monthly | weekly | never</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/plans/1',{name:'Premium Plus',data_limit_mb:102400,time_limit_seconds:0,reset_period:'never'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/plans/1</span>
+                        <div class="desc ml-1">Update plan limits (0 = unlimited)</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/plans/1')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/plans/1</span>
+                        <div class="desc ml-1">Delete a plan by ID</div>
+                    </div>
+
+                    <!-- PROFILES -->
+                    <div class="section-header">Profiles</div>
+
+                    <div onclick="loadEndpoint('GET','/api/profiles')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles</span>
+                        <div class="desc ml-1">List all profile names</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/profiles/data')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/data</span>
+                        <div class="desc ml-1">Full profile data including attributes and NAS assignments</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/profiles/premium',{attributes:[{attribute:'Mikrotik-Rate-Limit',type:'reply',value:'20M/10M'},{attribute:'Session-Timeout',type:'reply',value:'86400'}],nas_ips:['192.168.1.50']})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/:name</span>
+                        <div class="desc ml-1">Create profile with attributes array and NAS IPs</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/profiles/premium',{attributes:[{attribute:'Mikrotik-Rate-Limit',type:'reply',value:'50M/20M'}],nas_ips:['192.168.1.50','192.168.1.51']})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/:name</span>
+                        <div class="desc ml-1">Replace all attributes for a profile</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/profiles/premium')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/:name</span>
+                        <div class="desc ml-1">Delete profile and all its attributes</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/profiles/attributes',{profile:'premium',attribute:'Idle-Timeout',type:'reply',value:'300'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/attributes</span>
+                        <div class="desc ml-1">Add a single attribute to a profile. type: reply | check</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/profiles/nas',{profile:'premium',nas_id:1})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/profiles/nas</span>
+                        <div class="desc ml-1">Assign a NAS client to a profile by nas_id</div>
+                    </div>
+
+                    <!-- NAS CLIENTS -->
+                    <div class="section-header">NAS Clients</div>
+
+                    <div onclick="loadEndpoint('GET','/api/nas')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/nas</span>
+                        <div class="desc ml-1">List all NAS clients</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/nas',{nasname:'192.168.1.1',shortname:'router-01',type:'other',secret:'radiussecret',description:'Main gateway router'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/nas</span>
+                        <div class="desc ml-1">Add a NAS client</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/nas/1',{nasname:'192.168.1.1',shortname:'router-01-updated',type:'other',secret:'newsecret',description:'Updated gateway'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/nas/1</span>
+                        <div class="desc ml-1">Update NAS client details</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/nas/1')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/nas/1</span>
+                        <div class="desc ml-1">Delete a NAS client</div>
+                    </div>
+
+                    <!-- SESSIONS & LOGS -->
+                    <div class="section-header">Sessions &amp; Logs</div>
+
+                    <div onclick="loadEndpoint('GET','/api/sessions/active?limit=100')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/sessions/active</span>
+                        <span class="param-tag">?limit</span><span class="param-tag">?username</span><span class="param-tag">?nasip</span><span class="param-tag">?callingstationid</span><span class="param-tag">?framedip</span>
+                        <div class="desc ml-1">All currently active RADIUS sessions with optional filters</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/logs/auth?limit=100')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/logs/auth</span>
+                        <span class="param-tag">?username</span><span class="param-tag">?nasip</span><span class="param-tag">?callingstationid</span><span class="param-tag">?date_from</span><span class="param-tag">?date_to</span><span class="param-tag">?limit</span>
+                        <div class="desc ml-1">Authentication log with multi-field filtering</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/audit')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/audit</span>
+                        <div class="desc ml-1">Admin audit log of all configuration changes</div>
+                    </div>
+
+                    <!-- ACCOUNTING -->
+                    <div class="section-header">Accounting</div>
+
+                    <div onclick="loadEndpoint('GET','/api/accounting?limit=100')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/accounting</span>
+                        <span class="param-tag">?username</span><span class="param-tag">?nasip</span><span class="param-tag">?start_date</span><span class="param-tag">?end_date</span><span class="param-tag">?sort</span><span class="param-tag">?order</span><span class="param-tag">?limit</span>
+                        <div class="desc ml-1">Accounting history records (radacct table)</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/accounting',{username:'testuser',start_date:'2025-01-01',end_date:'2025-12-31'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/accounting</span>
+                        <div class="desc ml-1">Delete accounting records matching filters. At least one filter required.</div>
+                    </div>
+
+                    <!-- REPORTS -->
+                    <div class="section-header">Reports</div>
+
+                    <div onclick="loadEndpoint('GET','/api/reports/dashboard-overview')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/dashboard-overview</span>
+                        <div class="desc ml-1">Dashboard KPIs: user counts, session counts, data totals, trends, NAS load</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/reports/dashboard-stats')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/dashboard-stats</span>
+                        <div class="desc ml-1">Top 20 users by sessions and data usage (last 7 days)</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/reports/live-stats')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/live-stats</span>
+                        <div class="desc ml-1">Live KPIs: active sessions, 1h/24h accepts/rejects, hourly trend, NAS breakdown</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/reports/user/testuser?start_date=2025-01-01&end_date=2025-12-31')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/user/:username</span>
+                        <span class="param-tag">?start_date</span><span class="param-tag">?end_date</span>
+                        <div class="desc ml-1">Full user report: sessions, data, auth events, NAS breakdown, daily/hourly trends</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/reports/failed-auth')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/failed-auth</span>
+                        <div class="desc ml-1">Summary + detail of all Access-Reject events</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/reports/pdf/user/testuser')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/pdf/user/:username</span>
+                        <div class="desc ml-1">Generate PDF report for a user</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/reports/pdf/failed-auth')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/reports/pdf/failed-auth</span>
+                        <div class="desc ml-1">Generate PDF report of failed authentications</div>
+                    </div>
+
+                    <!-- ADMINISTRATORS -->
+                    <div class="section-header">Administrators</div>
+
+                    <div onclick="loadEndpoint('GET','/api/admins')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/admins</span>
+                        <div class="desc ml-1">List all admin accounts</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/admins',{username:'newadmin',password:'securepass',permissions:{users:'read-write',reports:'read-only',settings:'none',nas:'read-only',admins:'none'}})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/admins</span>
+                        <div class="desc ml-1">Create admin. Permissions levels: read-write | read-only | none</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('PUT','/api/admins/1',{username:'adminupdated',password:'newpass',permissions:{users:'read-write',reports:'read-write',settings:'read-only',nas:'read-write',admins:'none'}})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-PUT">PUT</span>
+                        <span class="font-mono text-sm ml-2">/api/admins/1</span>
+                        <div class="desc ml-1">Update admin username, password or permissions</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('DELETE','/api/admins/1')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-DELETE">DELETE</span>
+                        <span class="font-mono text-sm ml-2">/api/admins/1</span>
+                        <div class="desc ml-1">Delete an admin account</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/admins/1/generate-key')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/admins/1/generate-key</span>
+                        <div class="desc ml-1">Generate a new API key for an admin</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/admins/1/enable-2fa')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/admins/1/enable-2fa</span>
+                        <div class="desc ml-1">Enable TOTP 2FA for an admin — returns QR code URI</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/admins/1/disable-2fa')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/admins/1/disable-2fa</span>
+                        <div class="desc ml-1">Disable TOTP 2FA for an admin</div>
+                    </div>
+
+                    <!-- SYSTEM & SETTINGS -->
+                    <div class="section-header">System &amp; Settings</div>
+
+                    <div onclick="loadEndpoint('GET','/api/settings')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/settings</span>
+                        <div class="desc ml-1">Get all application settings</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/settings',{ui_theme:'blue',radius_debug:'false',enforce_2fa:'false',totp_enrollment_hours:24})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/settings</span>
+                        <div class="desc ml-1">Save settings. ui_theme: blue | red | green | purple | gray</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/system/status')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/system/status</span>
+                        <div class="desc ml-1">Docker container health for all radius_* containers</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/system/restart/radius_freeradius')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/system/restart/:container</span>
+                        <div class="desc ml-1">Restart a container by name (must start with radius_)</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/system/logs/radius_freeradius')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/system/logs/:container</span>
+                        <div class="desc ml-1">Stream last 200 lines of container logs</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/system/backup?type=full')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/system/backup</span>
+                        <span class="param-tag">?type=full|partial</span><span class="param-tag">?acct</span><span class="param-tag">?auth</span><span class="param-tag">?audit</span>
+                        <div class="desc ml-1">Export database backup as JSON. type=full exports all tables.</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/system/restore')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/system/restore</span>
+                        <div class="desc ml-1">Restore from backup — multipart/form-data with backup JSON file</div>
+                    </div>
+
+                    <!-- CERTIFICATES -->
+                    <div class="section-header">Certificates</div>
+
+                    <div onclick="loadEndpoint('GET','/api/certs/details')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/certs/details</span>
+                        <div class="desc ml-1">Current TLS certificate details (expiry, subject, SANs)</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/certs/generate',{commonName:'radius.example.com',country:'GB',state:'England',locality:'London',organisation:'Example Ltd',organisationalUnit:'IT',days:825,san:'DNS:radius.example.com,IP:192.168.1.10'})"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/certs/generate</span>
+                        <div class="desc ml-1">Generate a new self-signed certificate</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('POST','/api/certs/upload')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-POST">POST</span>
+                        <span class="font-mono text-sm ml-2">/api/certs/upload</span>
+                        <div class="desc ml-1">Upload cert/key — multipart/form-data: certFile + keyFile</div>
+                    </div>
+
+                    <div onclick="loadEndpoint('GET','/api/certs/download')"
+                         class="endpoint endpoint-clickable bg-gray-50 p-2.5 rounded border border-gray-200 hover:border-blue-300 shadow-sm">
+                        <span class="badge badge-GET">GET</span>
+                        <span class="font-mono text-sm ml-2">/api/certs/download</span>
+                        <div class="desc ml-1">Download current certificate as .zip</div>
+                    </div>
+
                 </div>
             </div>
 
-            <!-- Response -->
-            <div class="mt-6 flex-grow flex flex-col min-h-0">
-                <label class="block text-xs font-bold text-gray-400 mb-1 flex justify-between">
-                    <span>Response</span>
-                    <span id="resStatus" class="font-mono"></span>
-                </label>
-                <div class="bg-black rounded border border-gray-700 flex-grow relative overflow-hidden">
-                    <pre id="resOutput" class="absolute inset-0 p-4 overflow-auto font-mono text-sm text-gray-300 whitespace-pre-wrap break-all"></pre>
+            <!-- API Tester Side -->
+            <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 h-[calc(100vh-140px)] flex flex-col">
+                <h2 class="text-xl font-bold text-white mb-4 border-b border-gray-700 pb-2">API Tester</h2>
+
+                <form id="testerForm" class="space-y-4 flex-shrink-0">
+                    <div class="flex space-x-2">
+                        <select id="reqMethod" class="bg-gray-700 text-white border border-gray-600 p-2 rounded outline-none w-1/4 focus:ring-1 focus:ring-blue-500 font-bold">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                        <input type="text" id="reqPath" value="/api/users" placeholder="/api/endpoint" class="bg-gray-700 text-white border border-gray-600 p-2 rounded outline-none w-3/4 focus:ring-1 focus:ring-blue-500 font-mono" required>
+                    </div>
+
+                    <div>
+
+                        <!-- cURL Command -->
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="block text-xs font-bold text-gray-400">cURL Command</label>
+                                <div class="space-x-2">
+                                    <button type="button" onclick="updateCurl()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition-colors border border-blue-700">Generate cURL</button>
+                                    <button type="button" onclick="copyCurl(event)" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded transition-colors border border-gray-600">Copy</button>
+                                </div>
+                            </div>
+                            <pre id="curlOutput" class="bg-gray-900 text-green-400 p-3 rounded border border-gray-700 font-mono text-xs overflow-x-auto whitespace-pre-wrap select-all block w-full outline-none focus:ring-2 focus:ring-blue-500 max-h-32 overflow-y-auto mb-4">curl ...</pre>
+                        </div>
+                        <label class="block text-xs font-bold text-gray-400 mb-1">JSON Request Body</label>
+                        <textarea id="reqBody" class="w-full bg-gray-700 text-green-400 border border-gray-600 p-2 rounded outline-none h-48 font-mono text-sm focus:ring-1 focus:ring-blue-500" placeholder="{}"></textarea>
+                    </div>
+
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold transition-colors">Send Request</button>
+                </form>
+
+                <!-- Full Request Sent -->
+                <div id="requestContainer" class="mt-6 hidden">
+                    <label class="block text-xs font-bold text-gray-400 mb-2">Full Request Sent</label>
+                    <div class="bg-gray-900 rounded border border-gray-700 p-4 text-sm overflow-auto max-h-64 request-panel">
+                        <div id="requestDisplay" class="text-gray-300 whitespace-pre font-mono text-xs leading-relaxed"></div>
+                    </div>
+                </div>
+
+                <!-- Response -->
+                <div class="mt-6 flex-grow flex flex-col min-h-0">
+                    <label class="block text-xs font-bold text-gray-400 mb-1 flex justify-between">
+                        <span>Response</span>
+                        <span id="resStatus" class="font-mono"></span>
+                    </label>
+                    <div class="bg-black rounded border border-gray-700 flex-grow relative overflow-hidden">
+                        <pre id="resOutput" class="absolute inset-0 p-4 overflow-auto font-mono text-sm text-gray-300 whitespace-pre-wrap break-all"></pre>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-  </main>
+    </main>
 
-  <script src="/js/layout.js"></script>
-  <script>
-    function updateCurl() {
-        try {
-            const method = document.getElementById('reqMethod').value || 'GET';
-            const path = document.getElementById('reqPath').value || '/api/';
-            const body = document.getElementById('reqBody').value.trim();
-            const token = localStorage.getItem('radius_jwt') || 'YOUR_JWT_TOKEN';
-            const baseUrl = window.location.origin;
-
-            let curl = `curl -X ${method} "${baseUrl}${path}"`;
-
-            if (!path.startsWith('/auth/')) {
-                curl += ` \\
-  -H "X-API-Key: [YOUR_API_KEY]"`;
-            }
-
-            if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && body && body !== '{}') {
-                curl += ` \\
-  -H "Content-Type: application/json"`;
-
-                // Remove formatting newlines/spaces if we want a cleaner curl, 
-                // but let's just safely escape single quotes for Bash:
-                const escapedBody = body.replace(/'/g, "'\\''");
-                curl += ` \\
-  -d '${escapedBody}'`;
-            }
-
-            document.getElementById('curlOutput').textContent = curl;
-        } catch (e) {
-            console.error("cURL generation error:", e);
-            document.getElementById('curlOutput').textContent = "Error generating cURL: " + e.message;
-        }
-    }
-
-    function copyCurl(event) {
-        event.preventDefault();
-        const curlText = document.getElementById('curlOutput').textContent;
-        navigator.clipboard.writeText(curlText).then(() => {
-            const btn = event.target;
-            const orig = btn.textContent;
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = orig, 2000);
-        });
-    }
-
-
-
-    function loadEndpoint(method, path, body = null) {
-        document.getElementById('reqMethod').value = method;
-        document.getElementById('reqPath').value = path;
-
-        const bodyTextarea = document.getElementById('reqBody');
-        if (body) {
+    <script src="/js/layout.js"></script>
+    <script>
+        function updateCurl() {
             try {
-                // Parse it so we can stringify it beautifully
-                const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-                bodyTextarea.value = JSON.stringify(parsed, null, 2);
+                const method = document.getElementById('reqMethod').value || 'GET';
+                const path = document.getElementById('reqPath').value || '/api/';
+                const body = document.getElementById('reqBody').value.trim();
+                const token = localStorage.getItem('radius_jwt') || 'YOUR_JWT_TOKEN';
+                const baseUrl = window.location.origin;
+
+                let curl = `curl -X ${method} "${baseUrl}${path}"`;
+
+                if (!path.startsWith('/auth/')) {
+                    curl += ` \\
+      -H "X-API-Key: [YOUR_API_KEY]"`;
+                }
+
+                if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && body && body !== '{}') {
+                    curl += ` \\
+      -H "Content-Type: application/json"`;
+
+                    // Remove formatting newlines/spaces if we want a cleaner curl,
+                    // but let's just safely escape single quotes for Bash:
+                    const escapedBody = body.replace(/'/g, "'\\''");
+                    curl += ` \\
+      -d '${escapedBody}'`;
+                }
+
+                document.getElementById('curlOutput').textContent = curl;
             } catch (e) {
-                // Fallback to raw string
-                bodyTextarea.value = body;
+                console.error("cURL generation error:", e);
+                document.getElementById('curlOutput').textContent = "Error generating cURL: " + e.message;
             }
-        } else {
-            bodyTextarea.value = '';
         }
 
-        document.getElementById('resStatus').textContent = '-';
-        document.getElementById('resStatus').className = 'ml-2 text-sm text-gray-500';
-        document.getElementById('resBody').textContent = 'Hit Send Request to see the response...';
+        function copyCurl(event) {
+            event.preventDefault();
+            const curlText = document.getElementById('curlOutput').textContent;
+            navigator.clipboard.writeText(curlText).then(() => {
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = orig, 2000);
+            });
+        }
 
-        document.querySelector('.bg-gray-800').scrollIntoView({ behavior: 'smooth' });
-    }
 
-    document.getElementById('testerForm').onsubmit = async (e) => {
-        e.preventDefault();
-        const method = document.getElementById('reqMethod').value;
-        const path = document.getElementById('reqPath').value;
-        const bodyStr = document.getElementById('reqBody').value.trim();
-        const out = document.getElementById('resOutput');
-        const statusLabel = document.getElementById('resStatus');
-        const requestContainer = document.getElementById('requestContainer');
-        const requestDisplay = document.getElementById('requestDisplay');
 
-        out.textContent = 'Sending request...';
-        statusLabel.textContent = '';
-        statusLabel.className = 'font-mono';
-        requestContainer.classList.add('hidden');
+        function loadEndpoint(method, path, body = null) {
+            document.getElementById('reqMethod').value = method;
+            document.getElementById('reqPath').value = path;
 
-        try {
-            const opts = { method };
-
-            if (['POST', 'PUT', 'DELETE'].includes(method) && bodyStr) {
-                JSON.parse(bodyStr);
-                opts.body = bodyStr;
+            const bodyTextarea = document.getElementById('reqBody');
+            if (body) {
+                try {
+                    // Parse it so we can stringify it beautifully
+                    const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+                    bodyTextarea.value = JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    // Fallback to raw string
+                    bodyTextarea.value = body;
+                }
+            } else {
+                bodyTextarea.value = '';
             }
 
-            // Build full request display
-            const fullRequest = [];
-            fullRequest.push(`${method} ${path} HTTP/1.1`);
-            fullRequest.push(`Host: localhost:3000`);
-            fullRequest.push(`X-API-Key: [YOUR_API_KEY]`);
-            fullRequest.push(`Content-Type: application/json`);
-            fullRequest.push(`Accept: application/json`);
+            document.getElementById('resStatus').textContent = '-';
+            document.getElementById('resStatus').className = 'ml-2 text-sm text-gray-500';
+            document.getElementById('resBody').textContent = 'Hit Send Request to see the response...';
 
-            if (opts.body) {
-                fullRequest.push('');
-                fullRequest.push(bodyStr);
-            }
+            document.querySelector('.bg-gray-800').scrollIntoView({ behavior: 'smooth' });
+        }
 
-            requestDisplay.textContent = fullRequest.join('\n');
-            requestContainer.classList.remove('hidden');
+        document.getElementById('testerForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const method = document.getElementById('reqMethod').value;
+            const path = document.getElementById('reqPath').value;
+            const bodyStr = document.getElementById('reqBody').value.trim();
+            const out = document.getElementById('resOutput');
+            const statusLabel = document.getElementById('resStatus');
+            const requestContainer = document.getElementById('requestContainer');
+            const requestDisplay = document.getElementById('requestDisplay');
 
-            const start = performance.now();
-            const res = await apiFetch(path, opts);
-            const time = Math.round(performance.now() - start);
+            out.textContent = 'Sending request...';
+            statusLabel.textContent = '';
+            statusLabel.className = 'font-mono';
+            requestContainer.classList.add('hidden');
 
-            statusLabel.textContent = `${res.status} ${res.statusText} � ${time}ms`;
-            statusLabel.classList.add(res.ok ? 'text-green-400' : 'text-red-400');
-
-            let data;
             try {
-                data = await res.json();
-            } catch (e) {
-                data = { raw: await res.text() || '(No body)' };
+                const opts = { method };
+
+                if (['POST', 'PUT', 'DELETE'].includes(method) && bodyStr) {
+                    JSON.parse(bodyStr);
+                    opts.body = bodyStr;
+                }
+
+                // Build full request display
+                const fullRequest = [];
+                fullRequest.push(`${method} ${path} HTTP/1.1`);
+                fullRequest.push(`Host: localhost:3000`);
+                fullRequest.push(`X-API-Key: [YOUR_API_KEY]`);
+                fullRequest.push(`Content-Type: application/json`);
+                fullRequest.push(`Accept: application/json`);
+
+                if (opts.body) {
+                    fullRequest.push('');
+                    fullRequest.push(bodyStr);
+                }
+
+                requestDisplay.textContent = fullRequest.join('\n');
+                requestContainer.classList.remove('hidden');
+
+                const start = performance.now();
+                const res = await apiFetch(path, opts);
+                const time = Math.round(performance.now() - start);
+
+                statusLabel.textContent = `${res.status} ${res.statusText} � ${time}ms`;
+                statusLabel.classList.add(res.ok ? 'text-green-400' : 'text-red-400');
+
+                let data;
+                try {
+                    data = await res.json();
+                } catch (e) {
+                    data = { raw: await res.text() || '(No body)' };
+                }
+
+                out.textContent = JSON.stringify(data, null, 2);
+                out.innerHTML = out.textContent.replace(/"([^"]+)":/g, '<span class="text-blue-300">"$1"</span>:');
+
+            } catch (err) {
+                statusLabel.textContent = 'Error';
+                statusLabel.classList.add('text-red-500');
+                out.textContent = err.message || 'Request failed';
             }
-
-            out.textContent = JSON.stringify(data, null, 2);
-            out.innerHTML = out.textContent.replace(/"([^"]+)":/g, '<span class="text-blue-300">"$1"</span>:');
-
-        } catch (err) {
-            statusLabel.textContent = 'Error';
-            statusLabel.classList.add('text-red-500');
-            out.textContent = err.message || 'Request failed';
-        }
-    };
-  </script>
+        };
+    </script>
 </body>
 </html>

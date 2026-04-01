@@ -10,12 +10,19 @@ fi
 chmod 644 /certs_shared/server.key
 chmod 644 /certs_shared/server.pem
 
-echo "Waiting for MariaDB..."
-until mysql -h mariadb -u radius -pradiusdbpass -D radius -e "SELECT 1" >/dev/null 2>&1; do
+# Use env vars injected by Docker Compose (from container_config.env)
+DB_HOST="${DB_HOST:-mariadb}"
+DB_USER="${DB_USER:-radius}"
+DB_PASS="${DB_PASSWORD:-}"
+DB_NAME="${DB_NAME:-radius}"
+
+echo "Waiting for MariaDB at ${DB_HOST}..."
+until mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -e "SELECT 1" >/dev/null 2>&1; do
     sleep 2
 done
 
-DEBUG_MODE=$(mysql -h mariadb -u radius -pradiusdbpass -D radius -N -B -e "SELECT setting_value FROM settings WHERE setting_key='radius_debug';" 2>/dev/null)
+DEBUG_MODE=$(mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -N -B \
+    -e "SELECT setting_value FROM settings WHERE setting_key='radius_debug';" 2>/dev/null)
 
 # Locate the radiusd executable robustly
 if command -v radiusd >/dev/null 2>&1; then

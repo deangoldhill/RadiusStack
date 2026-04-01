@@ -41,9 +41,9 @@
           <th class="p-3 hover:bg-gray-100" onclick="sort('username')">Username</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('nasipaddress')">NAS IP</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('acctsessiontime')">Duration</th>
-          <th class="p-3 hover:bg-gray-100" onclick="sort('acctinputoctets')">Upload (MB)</th>
-          <th class="p-3 hover:bg-gray-100" onclick="sort('acctoutputoctets')">Download (MB)</th>
-          <th class="p-3 hover:bg-gray-100 rounded-tr-lg" onclick="sort('total_data')">Total Data (MB)</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctinputoctets')">Upload (GB)</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctoutputoctets')">Download (GB)</th>
+          <th class="p-3 hover:bg-gray-100 rounded-tr-lg" onclick="sort('total_data')">Total Data (GB)</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -127,9 +127,9 @@
           <td class="p-3 font-bold text-gray-800">${a.username}</td>
           <td class="p-3 font-mono text-gray-600 text-xs">${a.nasipaddress}</td>
           <td class="p-3 font-mono text-gray-600 text-xs">${(a.acctsessiontime/3600).toFixed(2)} hr</td>
-          <td class="p-3 font-mono text-gray-600 text-xs">${((a.acctinputoctets||0)/1048576).toFixed(2)}</td>
-          <td class="p-3 font-mono text-gray-600 text-xs">${((a.acctoutputoctets||0)/1048576).toFixed(2)}</td>
-          <td class="p-3 font-mono text-blue-600 font-bold text-xs">${((a.total_data||0)/1048576).toFixed(2)}</td>
+          <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctinputoctets || 0) / 1073741824).toFixed(3)} GB</td>
+          <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctoutputoctets || 0) / 1073741824).toFixed(3)} GB</td>
+          <td class=\"p-3 font-mono text-blue-600 font-bold text-xs\">${((a.total_data || 0) / 1073741824).toFixed(3)} GB</td>
         </tr>`).join('');
       }
     }
