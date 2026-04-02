@@ -9,6 +9,7 @@ const { exec } = require('child_process');
 const multer = require('multer');
 const fs = require('fs').promises;
 const puppeteer = require('puppeteer');
+const crypto = require('crypto');
 
 const app = express();
 const cors = require('cors');
@@ -437,7 +438,7 @@ app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.f
     }
 });
 
-// === CERT DETAILS & DOWNLOAD (fixes "Loading..." and Download button) ===
+// === CERT DETAILS & DOWNLOAD ===
 app.get('/api/certs/details', requireApiAuth('settings', 'read-only'), (req, res) => {
     exec('openssl x509 -in /certs_shared/server.pem -text -noout', (error, stdout, stderr) => {
         if (error) {
@@ -462,8 +463,6 @@ app.get('/api/admins', requireApiAuth('admins', 'read-only'), async (req, res) =
     const [rows] = await pool.query('SELECT id, username, require_password_change, two_factor_enabled, two_factor_setup_complete, api_key, permissions FROM admins');
     res.json(rows);
 });
-
-const crypto = require('crypto');
 
 app.post('/api/admins', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { username, password, permissions, enable_2fa } = req.body;
@@ -501,7 +500,7 @@ app.put('/api/admins/:id', requireApiAuth('admins', 'read-write'), async (req, r
 
 app.delete('/api/admins/:id', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
-    await pool.query('DELETE FROM administrators WHERE id = ?', [id]);
+    await pool.query('DELETE FROM admins WHERE id = ?', [id]);
     await auditLog(req.admin.username, req.origin, `Deleted admin ID: ${id}`, 'success', '', req.ip);
     res.json({ success: true });
 });
@@ -654,7 +653,7 @@ app.get('/api/profiles/data', requireApiAuth('users', 'read-only'), async (req, 
     res.json({ checks, replies });
 });
 
-// === FULL PROFILE CREATE / UPDATE - FIXED FOR EMPTY NAS/VLAN ===
+// === FULL PROFILE CREATE / UPDATE ===
 app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (req, res) => {
     const { name } = req.params;
     let { nas_ips = [], vlan_id = '', reply_attributes = [] } = req.body;
@@ -671,25 +670,21 @@ app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (re
     try {
         await conn.beginTransaction();
 
-        // Clear existing data
         await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?', [name]);
         await conn.query('DELETE FROM radgroupreply WHERE groupname = ?', [name]);
 
-        // NAS-IP-Address (works with empty array)
         if (nas_ips.length > 0) {
             for (const ip of nas_ips) {
                 await conn.query(
-                    `INSERT INTO radgroupcheck (groupname, attribute, op, value) 
-                     VALUES (?, 'NAS-IP-Address', '+=', ?)`,
+                    `INSERT INTO radgroupcheck (groupname, attribute, op, value) VALUES (?, 'NAS-IP-Address', '+=', ?)`,
                     [name, ip]
                 );
             }
         }
 
-        // VLAN (only if provided)
         if (vlan_id !== '') {
             await conn.query(
-                `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES 
+                `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES
                  (?, 'Tunnel-Type', '=', 'VLAN'),
                  (?, 'Tunnel-Medium-Type', '=', 'IEEE-802'),
                  (?, 'Tunnel-Private-Group-ID', '=', ?)`,
@@ -697,25 +692,20 @@ app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (re
             );
         }
 
-        // Reply Attributes
         for (const attr of reply_attributes) {
             const attrName = (attr.attribute || '').toString().trim();
             const attrValue = (attr.value || '').toString().trim();
-
             if (attrName && attrValue) {
                 await conn.query(
-                    `INSERT INTO radgroupreply (groupname, attribute, op, value) 
-                     VALUES (?, ?, '=', ?)`,
+                    `INSERT INTO radgroupreply (groupname, attribute, op, value) VALUES (?, ?, '=', ?)`,
                     [name, attrName, attrValue]
                 );
             }
         }
 
         await conn.commit();
-
         await auditLog(req.admin.username, req.origin, `Saved profile: ${name}`, 'success',
             `NAS: ${nas_ips.length}, VLAN: ${vlan_id || 'none'}, Attributes: ${reply_attributes.length}`, req.ip);
-
         res.json({ success: true });
 
     } catch (err) {
@@ -738,12 +728,9 @@ app.delete('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (
     const conn = await pool.getConnection();
     try {
         await conn.beginTransaction();
-
         await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?', [name]);
         await conn.query('DELETE FROM radgroupreply WHERE groupname = ?', [name]);
-        // Remove users from this profile
         await conn.query('DELETE FROM radusergroup WHERE groupname = ?', [name]);
-
         await conn.commit();
         await auditLog(req.admin.username, req.origin, `Deleted profile: ${name}`, 'success', '', req.ip);
         res.json({ success: true });
@@ -827,7 +814,6 @@ app.post('/api/users', requireApiAuth('users', 'read-write'), async (req, res) =
 
         let enrollment = null;
         if (totp_enabled) {
-            const port = process.env.WEB_UI_PORT === '80' ? '' : `:${process.env.WEB_UI_PORT || '80'}`;
             const baseUrl = `${req.protocol}://${req.get('host')}`;
             const eData = await generateEnrollmentCode(conn, username);
             enrollment = {
@@ -867,7 +853,6 @@ app.post('/api/users/:username/reset-plan', requireApiAuth('users', 'read-write'
         res.status(500).json({ error: err.message });
     }
 });
-
 
 app.post('/api/users/bulk', requireApiAuth('users', 'read-write'), async (req, res) => {
     const users = req.body;
@@ -967,7 +952,7 @@ app.put('/api/users/:username', requireApiAuth('users', 'read-write'), async (re
 
             if (totp_enabled && (!rows[0] || !rows[0].secret)) {
                 const eData = await generateEnrollmentCode(conn, username);
-                const baseUrl = `${req.protocol}://${req.hostname}`; // Behind proxy
+                const baseUrl = `${req.protocol}://${req.hostname}`;
                 enrollment = {
                     code: eData.code,
                     expires_at: eData.expires_at,
@@ -1047,6 +1032,110 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
         const [[{ avg_session_min }]] = await pool.query("SELECT ROUND(AVG(acctsessiontime)/60,1) AS avg_session_min FROM radacct WHERE acctstoptime IS NOT NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
         res.json({ active_sessions: Number(active_sessions), accepts_1h: Number(accepts_1h), rejects_1h: Number(rejects_1h), accepts_24h: Number(accepts_24h), rejects_24h: Number(rejects_24h), unique_users_24h: Number(unique_users_24h), avg_session_min: Number(avg_session_min) || 0, nas_breakdown, hourly_trend });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PER-USER QUICK STATS
+app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), async (req, res) => {
+    const { username } = req.params;
+
+    const [macMapping] = await pool.query(
+        'SELECT mac_address FROM mac_auth_devices WHERE mac_id = ? OR mac_address = ? LIMIT 1',
+        [username, username]
+    );
+    const realUsername = macMapping.length > 0 ? macMapping[0].mac_address : username;
+
+    try {
+        const [[auth24]] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM radpostauth WHERE username = ? AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
+            [realUsername]
+        );
+        const [[auth7d]] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM radpostauth WHERE username = ? AND authdate >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+            [realUsername]
+        );
+        const [[rej24]] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM radpostauth WHERE username = ? AND reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
+            [realUsername]
+        );
+        const [[rej7d]] = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM radpostauth WHERE username = ? AND reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+            [realUsername]
+        );
+        const [[acct24]] = await pool.query(
+            `SELECT COUNT(*) AS sessions,
+                    COALESCE(SUM(acctinputoctets + acctoutputoctets), 0) AS data_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS time_sec,
+                    COALESCE(AVG(acctsessiontime), 0) AS avg_sec
+             FROM radacct WHERE username = ? AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
+            [realUsername]
+        );
+        const [[acct7d]] = await pool.query(
+            `SELECT COUNT(*) AS sessions,
+                    COALESCE(SUM(acctinputoctets + acctoutputoctets), 0) AS data_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS time_sec,
+                    COALESCE(AVG(acctsessiontime), 0) AS avg_sec
+             FROM radacct WHERE username = ? AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+            [realUsername]
+        );
+
+        const [planRows] = await pool.query(
+            `SELECT up.plan_id, up.manual_reset_date,
+                    upu.cycle_started_at,
+                    upu.base_input_octets,
+                    upu.base_output_octets,
+                    upu.base_session_seconds
+             FROM user_plans up
+             LEFT JOIN user_plan_usage upu ON upu.username = up.username
+             WHERE up.username = ? LIMIT 1`,
+            [realUsername]
+        );
+
+        let cycleData = {};
+        if (planRows.length > 0) {
+            const row = planRows[0];
+            const cycleStart = row.cycle_started_at || row.manual_reset_date;
+            const [[allTime]] = await pool.query(
+                `SELECT
+                    COALESCE(SUM(acctinputoctets), 0)  AS total_input,
+                    COALESCE(SUM(acctoutputoctets), 0) AS total_output,
+                    COALESCE(SUM(acctsessiontime), 0)  AS total_time
+                 FROM radacct WHERE username = ?`,
+                [realUsername]
+            );
+
+            const baseInput = Number(row.base_input_octets) || 0;
+            const baseOutput = Number(row.base_output_octets) || 0;
+            const baseTime = Number(row.base_session_seconds) || 0;
+            const cycleDataUsed = Math.max(0, Number(allTime.total_input) + Number(allTime.total_output) - baseInput - baseOutput);
+            const cycleTimeUsed = Math.max(0, Number(allTime.total_time) - baseTime);
+
+            cycleData = {
+                cycle_started_at: cycleStart,
+                cycle_data_used: cycleDataUsed,
+                cycle_time_used: cycleTimeUsed
+            };
+        }
+
+        res.json({
+            auths_24h: Number(auth24.cnt),
+            auths_7d: Number(auth7d.cnt),
+            rejects_24h: Number(rej24.cnt),
+            rejects_7d: Number(rej7d.cnt),
+            sessions_24h: Number(acct24.sessions),
+            sessions_7d: Number(acct7d.sessions),
+            data_24h: Number(acct24.data_bytes),
+            data_7d: Number(acct7d.data_bytes),
+            time_24h: Number(acct24.time_sec),
+            time_7d: Number(acct7d.time_sec),
+            avg_session_24h: Number(acct24.avg_sec),
+            avg_session_7d: Number(acct7d.avg_sec),
+            ...cycleData
+        });
+
+    } catch (err) {
+        console.error('GET /api/users/:username/stats error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // USER EXECUTIVE REPORT
@@ -1174,35 +1263,23 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
     res.send(pdf);
 });
 
-// Add this under the --- REPORTS --- section in server.js
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        // 1. Top 20 Users by Session Count (Last 7 Days)
         const [topSessions] = await pool.query(`
-            SELECT 
-                username, 
-                COUNT(*) as session_count,
+            SELECT username, COUNT(*) as session_count,
                 SUM(acctinputoctets + acctoutputoctets) / 1073741824 as data_gb
-            FROM radacct 
+            FROM radacct
             WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            GROUP BY username 
-            ORDER BY session_count DESC 
-            LIMIT 20
+            GROUP BY username ORDER BY session_count DESC LIMIT 20
         `);
-
-        // 2. Top 20 Users by Data Usage (Last 7 Days)
         const [topData] = await pool.query(`
-            SELECT 
-                COALESCE(m.mac_id, a.username) AS username, 
+            SELECT COALESCE(m.mac_id, a.username) AS username,
                 SUM(a.acctinputoctets + a.acctoutputoctets) / 1048576 as data_mb
             FROM radacct a
             LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
             WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            GROUP BY COALESCE(m.mac_id, a.username) 
-            ORDER BY data_mb DESC 
-            LIMIT 20
+            GROUP BY COALESCE(m.mac_id, a.username) ORDER BY data_mb DESC LIMIT 20
         `);
-
         res.json({ topSessions, topData });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1240,9 +1317,7 @@ app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, r
     const { username, nasip, start_date, end_date, sort = 'acctstarttime', order = 'desc', limit = 300 } = req.query;
 
     let query = `
-        SELECT 
-            a.*,
-            (a.acctinputoctets + a.acctoutputoctets) AS total_data,
+        SELECT a.*, (a.acctinputoctets + a.acctoutputoctets) AS total_data,
             COALESCE(m.mac_id, a.username) AS username
         FROM radacct a
         LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
@@ -1250,24 +1325,11 @@ app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, r
     `;
     const params = [];
 
-    if (username) {
-        query += ' AND (a.username = ? OR m.mac_id = ?)';
-        params.push(username, username);
-    }
-    if (nasip) {
-        query += ' AND nasipaddress = ?';
-        params.push(nasip);
-    }
-    if (start_date) {
-        query += ' AND acctstarttime >= ?';
-        params.push(start_date);
-    }
-    if (end_date) {
-        query += ' AND acctstarttime <= ?';
-        params.push(end_date + ' 23:59:59'); // include whole day
-    }
+    if (username) { query += ' AND (a.username = ? OR m.mac_id = ?)'; params.push(username, username); }
+    if (nasip) { query += ' AND nasipaddress = ?'; params.push(nasip); }
+    if (start_date) { query += ' AND acctstarttime >= ?'; params.push(start_date); }
+    if (end_date) { query += ' AND acctstarttime <= ?'; params.push(end_date + ' 23:59:59'); }
 
-    // Basic sorting protection
     const allowedSort = ['acctstarttime', 'acctstoptime', 'username', 'nasipaddress', 'acctsessiontime', 'acctinputoctets', 'acctoutputoctets', 'total_data'];
     const sortField = allowedSort.includes(sort) ? sort : 'acctstarttime';
     const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
@@ -1303,15 +1365,12 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
         const [result] = await pool.query(query, params);
         await auditLog(req.admin.username, req.origin, 'Deleted accounting records', 'success',
             `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip);
-
         res.json({ success: true, deleted: result.affectedRows });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to delete records' });
     }
 });
-
-// Start Server
 
 app.post('/api/users/:username/totp/reset', requireApiAuth('users', 'read-write'), async (req, res) => {
     const { username } = req.params;
@@ -1367,17 +1426,14 @@ app.post('/auth/radius/totp/start', async (req, res) => {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP already enrolled', ip);
             return res.status(403).json({ error: 'TOTP already enrolled. Contact admin to reset.' });
         }
-
         if (!totp.enrollment_code_hash || !totp.enrollment_expires_at) {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'No pending enrollment code', ip);
             return res.status(403).json({ error: 'No enrollment pending' });
         }
-
         if (new Date() > new Date(totp.enrollment_expires_at)) {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Enrollment code expired', ip);
             return res.status(403).json({ error: 'Enrollment code expired. Contact admin to reset.' });
         }
-
         const codeValid = await bcrypt.compare(enrollmentCode, totp.enrollment_code_hash);
         if (!codeValid) {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid enrollment code', ip);
@@ -1451,158 +1507,256 @@ app.post('/auth/radius/totp/confirm', async (req, res) => {
     }
 });
 
-
 // --- DATABASE BACKUP & RESTORE ---
-
-app.get('/api/system/backup', requireApiAuth('admins', 'read-only'), async (req, res) => {
-    const { type, acct, auth, audit } = req.query;
+app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (req, res) => {
+    const type = req.query.type || 'full';
+    const include_accounting = req.query.acct === 'true' || type === 'full';
+    const include_authlogs = req.query.auth === 'true' || type === 'full';
+    const include_auditlogs = req.query.audit === 'true' || type === 'full';
 
     try {
+        const safeQuery = async (q) => { try { const [r] = await pool.query(q); return r; } catch { return []; } };
+
+        const admins = await safeQuery('SELECT * FROM admins');
+        const nas = await safeQuery('SELECT * FROM nas');
+        const plans = await safeQuery('SELECT * FROM plans');
+        const radcheck = await safeQuery('SELECT * FROM radcheck');
+        const radreply = await safeQuery('SELECT * FROM radreply');
+        const radgroupcheck = await safeQuery('SELECT * FROM radgroupcheck');
+        const radgroupreply = await safeQuery('SELECT * FROM radgroupreply');
+        const mac_auth_devices = await safeQuery('SELECT * FROM mac_auth_devices');
+        const user_plan_assignments = await safeQuery('SELECT * FROM user_plan_assignments');
+        const user_plan_snapshots = await safeQuery('SELECT * FROM user_plan_snapshots');
+
+        const macSet = new Set(mac_auth_devices.map(d => d.mac_address.toLowerCase()));
+        const radcheck_users = radcheck.filter(r => !macSet.has(r.username.toLowerCase()));
+        const radcheck_mac = radcheck.filter(r => macSet.has(r.username.toLowerCase()));
+
         const backup = {
-            metadata: {
-                type: type === 'full' ? 'full' : 'partial',
-                timestamp: new Date().toISOString(),
-                version: '1.0'
-            },
-            data: {}
+            metadata: { type, timestamp: new Date().toISOString(), version: '1.1' },
+            data: {
+                admins,
+                nas,
+                plans,
+                mac_auth_devices,
+                radcheck_users,
+                radcheck_mac,
+                radreply,
+                radgroupcheck,
+                radgroupreply,
+                user_plan_assignments,
+                user_plan_snapshots,
+            }
         };
 
-        let tablesToBackup = [];
-
-        if (type === 'full') {
-            const [tables] = await pool.query("SHOW TABLES");
-            tablesToBackup = tables.map(t => Object.values(t)[0]);
-        } else {
-            tablesToBackup = [
-                'admins', 'nas', 'plans', 'user_plans', 'user_plan_usage', 'user_totp',
-                'radcheck', 'radreply', 'radusergroup', 'radgroupcheck', 'radgroupreply', 'settings'
-            ];
-            if (acct === 'true') tablesToBackup.push('radacct');
-            if (auth === 'true') tablesToBackup.push('radpostauth');
-            if (audit === 'true') tablesToBackup.push('admin_audit_log');
+        if (include_accounting) {
+            backup.data.radacct = await safeQuery('SELECT * FROM radacct');
+        }
+        if (include_authlogs) {
+            backup.data.radpostauth = await safeQuery('SELECT * FROM radpostauth');
+        }
+        if (include_auditlogs) {
+            backup.data.admin_audit_log = await safeQuery('SELECT * FROM admin_audit_log');
         }
 
-        for (const table of tablesToBackup) {
-            try {
-                const [rows] = await pool.query(`SELECT * FROM ??`, [table]);
-                backup.data[table] = rows;
-            } catch (e) {
-                console.warn(`Skipping missing table for backup: ${table}`);
-            }
-        }
-
-        await auditLog(req.admin.username, req.origin, `Generated ${type} database backup`, 'success', '', req.ip);
-
+        const filename = `radius_${type}_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        await auditLog(req.admin.username, req.origin, `Downloaded ${type} backup`, 'success', '', req.ip);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename="radius_${type}_backup.json"`);
-        res.send(JSON.stringify(backup));
+        res.send(JSON.stringify(backup, null, 2));
+
     } catch (err) {
-        console.error("Backup generation error:", err);
-        res.status(500).json({ error: 'Failed to generate backup' });
+        console.error('Backup error:', err.message, err.code, err.sql || '');
+        res.status(500).json({ error: 'Backup failed: ' + err.message });
     }
 });
 
-app.post('/api/system/restore', requireApiAuth('admins', 'read-write'), upload.single('backup'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No backup file provided' });
-
-    const fs = require('fs');
-    let backup;
-    try {
-        const fileContent = fs.readFileSync(req.file.path, 'utf8');
-        backup = JSON.parse(fileContent);
-        fs.unlinkSync(req.file.path);
-    } catch (e) {
-        return res.status(400).json({ error: 'Invalid JSON backup file' });
+// Helper: insert rows in chunks to avoid max_allowed_packet issues
+async function chunkInsert(pool, table, rows, chunkSize = 100) {
+    if (!rows || rows.length === 0) return { inserted: 0 };
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+        const chunk = rows.slice(i, i + chunkSize);
+        const keys = Object.keys(chunk[0]);
+        const placeholders = chunk.map(() => `(${keys.map(() => '?').join(',')})`).join(',');
+        const values = chunk.flatMap(row => keys.map(k => row[k] ?? null));
+        await pool.query(
+            `INSERT IGNORE INTO \`${table}\` (\`${keys.join('`,`')}\`) VALUES ${placeholders}`,
+            values
+        );
+        inserted += chunk.length;
     }
+    return { inserted };
+}
 
-    if (!backup.metadata || !backup.data) {
-        return res.status(400).json({ error: 'Unrecognized backup format' });
-    }
-
-    const type = backup.metadata.type;
-    const tables = Object.keys(backup.data);
+// FIX: Use multer memoryStorage to accept uploaded JSON file; parse from buffer
+app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), async (req, res) => {
     const conn = await pool.getConnection();
+    const results = {};
+    const errors = [];
 
     try {
-        await conn.beginTransaction();
+        if (!req.file) return res.status(400).json({ error: 'No backup file uploaded' });
 
-        const [existingTablesRaw] = await conn.query("SHOW TABLES");
-        const existingTables = existingTablesRaw.map(t => Object.values(t)[0]);
-
-        let restoredCounts = {};
-        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-
-        for (const table of tables) {
-            if (!existingTables.includes(table)) {
-                console.warn(`Restore skipping table ${table}: doesn't exist in current DB`);
-                continue;
-            }
-
-            const rows = backup.data[table];
-            if (!rows || rows.length === 0) continue;
-
-            if (type === 'full') {
-                await conn.query(`TRUNCATE TABLE ??`, [table]);
-            }
-
-            // Use REPLACE to cleanly overwrite duplicates with the backup's data
-            const queryCmd = type === 'full' ? 'INSERT' : 'REPLACE';
-
-            const [columnsRaw] = await conn.query(`SHOW COLUMNS FROM ??`, [table]);
-            const validColumns = columnsRaw.map(c => c.Field);
-
-            for (const row of rows) {
-                // Filter out columns that were in the backup but no longer exist in the new schema version
-                const rowCols = Object.keys(row).filter(c => validColumns.includes(c));
-                const rowVals = rowCols.map(c => {
-                    let val = row[c];
-                    if (typeof val === 'string' && val.length >= 19 && val[10] === 'T') {
-                        val = val.slice(0, 19).replace('T', ' ');
-                    }
-                    return val;
-                });
-
-                if (rowCols.length > 0) {
-                    const placeholders = new Array(rowCols.length).fill('?').join(',');
-                    await conn.query(
-                        `${queryCmd} INTO ?? (??) VALUES (${placeholders})`,
-                        [table, rowCols, ...rowVals]
-                    );
-                }
-            }
-            restoredCounts[table] = rows.length;
+        let backup;
+        try {
+            backup = JSON.parse(req.file.buffer.toString('utf8'));
+        } catch (e) {
+            return res.status(400).json({ error: 'Invalid JSON in backup file: ' + e.message });
         }
 
-        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        const { metadata, data } = backup;
+        if (!data) return res.status(400).json({ error: 'Backup file has no data section' });
 
-        // Reset admin password to default if admins table was truncated and restored empty?
-        // Let's assume the backup has the admin.
+        const isV11 = metadata?.version === '1.1';
 
-        // Let's do a quick sync for totp secrets after restore
-        if (tables.includes('user_totp')) {
-            // Because radcheck and user_totp might have gotten out of sync
-            // Actually, REPLACE INTO radcheck would have restored the TOTP-Secret properly if it was in the backup.
+        await conn.beginTransaction();
+
+        // --- NAS ---
+        if (data.nas?.length) {
+            await conn.query('DELETE FROM nas');
+            await chunkInsert(conn, 'nas', data.nas);
+            results.nas = data.nas.length;
+        }
+
+        // --- Plans ---
+        if (data.plans?.length) {
+            await conn.query('DELETE FROM plans');
+            await chunkInsert(conn, 'plans', data.plans);
+            results.plans = data.plans.length;
+        }
+
+        // --- MAC auth devices ---
+        if (data.mac_auth_devices?.length) {
+            await conn.query('DELETE FROM mac_auth_devices');
+            await chunkInsert(conn, 'mac_auth_devices', data.mac_auth_devices);
+            results.mac_auth_devices = data.mac_auth_devices.length;
+        }
+
+        const macSet = new Set((data.mac_auth_devices || []).map(d => d.mac_address.toLowerCase()));
+
+        const MAC_PATTERN = /^([0-9a-f]{2}[:\-]){5}[0-9a-f]{2}$/i;
+        let radcheckUsers = [];
+        let radcheckMac = [];
+
+        if (isV11) {
+            radcheckUsers = data.radcheck_users || [];
+            radcheckMac = data.radcheck_mac || [];
+        } else if (data.radcheck?.length) {
+            radcheckUsers = data.radcheck.filter(r =>
+                !macSet.has(r.username.toLowerCase()) && !MAC_PATTERN.test(r.username)
+            );
+            radcheckMac = data.radcheck.filter(r =>
+                macSet.has(r.username.toLowerCase()) || MAC_PATTERN.test(r.username)
+            );
+        }
+
+        if (radcheckUsers.length || radcheckMac.length) {
+            await conn.query(
+                `DELETE FROM radcheck WHERE username NOT REGEXP ?`,
+                ['^([0-9a-fA-F]{2}[:\\-]){5}[0-9a-fA-F]{2}$']
+            );
+            if (radcheckUsers.length) {
+                await chunkInsert(conn, 'radcheck', radcheckUsers);
+                results.radcheck_users = radcheckUsers.length;
+            }
+            if (radcheckMac.length) {
+                await conn.query(
+                    `DELETE FROM radcheck WHERE username REGEXP ?`,
+                    ['^([0-9a-fA-F]{2}[:\\-]){5}[0-9a-fA-F]{2}$']
+                );
+                await chunkInsert(conn, 'radcheck', radcheckMac);
+                results.radcheck_mac = radcheckMac.length;
+            }
+        }
+
+        // --- radreply ---
+        if (data.radreply?.length) {
+            await conn.query('DELETE FROM radreply');
+            await chunkInsert(conn, 'radreply', data.radreply);
+            results.radreply = data.radreply.length;
+        }
+
+        // --- radgroupcheck / radgroupreply ---
+        if (data.radgroupcheck?.length) {
+            await conn.query('DELETE FROM radgroupcheck');
+            await chunkInsert(conn, 'radgroupcheck', data.radgroupcheck);
+            results.radgroupcheck = data.radgroupcheck.length;
+        }
+        if (data.radgroupreply?.length) {
+            await conn.query('DELETE FROM radgroupreply');
+            await chunkInsert(conn, 'radgroupreply', data.radgroupreply);
+            results.radgroupreply = data.radgroupreply.length;
+        }
+
+        // --- Plan assignments + snapshots ---
+        if (data.user_plan_assignments?.length) {
+            await conn.query('DELETE FROM user_plan_assignments').catch(() => { });
+            await chunkInsert(conn, 'user_plan_assignments', data.user_plan_assignments);
+            results.user_plan_assignments = data.user_plan_assignments.length;
+        }
+        if (data.user_plan_snapshots?.length) {
+            await conn.query('DELETE FROM user_plan_snapshots').catch(() => { });
+            await chunkInsert(conn, 'user_plan_snapshots', data.user_plan_snapshots);
+            results.user_plan_snapshots = data.user_plan_snapshots.length;
+        }
+
+        // --- Accounting (radacct) ---
+        if (data.radacct?.length) {
+            try {
+                await chunkInsert(conn, 'radacct', data.radacct, 50);
+                results.radacct = data.radacct.length;
+            } catch (e) {
+                errors.push(`radacct: ${e.message}`);
+                console.error('radacct restore error:', e);
+            }
+        }
+
+        // --- Auth logs (radpostauth) ---
+        if (data.radpostauth?.length) {
+            try {
+                await chunkInsert(conn, 'radpostauth', data.radpostauth, 100);
+                results.radpostauth = data.radpostauth.length;
+            } catch (e) {
+                errors.push(`radpostauth: ${e.message}`);
+                console.error('radpostauth restore error:', e);
+            }
+        }
+
+        // --- Admin audit log ---
+        if (data.admin_audit_log?.length) {
+            try {
+                await chunkInsert(conn, 'admin_audit_log', data.admin_audit_log, 100);
+                results.admin_audit_log = data.admin_audit_log.length;
+            } catch (e) {
+                errors.push(`admin_audit_log: ${e.message}`);
+            }
+        }
+
+        // --- Admins (INSERT IGNORE — don't overwrite existing passwords/keys) ---
+        if (data.admins?.length) {
+            await chunkInsert(conn, 'admins', data.admins);
+            results.admins = data.admins.length;
         }
 
         await conn.commit();
-        await auditLog(req.admin.username, req.origin, `Restored ${type} database backup`, 'success', `Restored tables: ${Object.keys(restoredCounts).join(', ')}`, req.ip);
 
-        res.json({
-            success: true,
-            message: `Tables processed: ${Object.keys(restoredCounts).length}`
-        });
+        const message = errors.length
+            ? `Restore completed with warnings: ${errors.join('; ')}`
+            : 'Restore completed successfully';
+
+        await auditLog(req.admin.username, req.origin, `Restored ${metadata?.type || 'unknown'} backup (v${metadata?.version || '1.0'})`, 'success', message, req.ip);
+        res.json({ success: true, message, results, warnings: errors });
 
     } catch (err) {
-        await conn.query('SET FOREIGN_KEY_CHECKS = 1');
         await conn.rollback();
-        console.error("Restore Error:", err);
-        res.status(500).json({ error: 'Failed to restore backup: ' + err.message });
+        console.error('Restore error:', err);
+        await auditLog(req.admin.username, req.origin, 'Restore failed', 'error', err.message, req.ip);
+        res.status(500).json({ error: 'Restore failed: ' + err.message, results, warnings: errors });
     } finally {
         conn.release();
     }
 });
-
-
 
 // --- MAC AUTH ---
 app.get('/api/mac-auth', requireApiAuth('users', 'read-only'), async (req, res) => {
@@ -1666,7 +1820,6 @@ app.post('/api/mac-auth', requireApiAuth('users', 'read-write'), async (req, res
     }
 });
 
-
 app.post('/api/mac-auth/bulk', requireApiAuth('users', 'read-write'), async (req, res) => {
     const devices = req.body;
     if (!Array.isArray(devices)) return res.status(400).json({ error: 'Expected array of devices' });
@@ -1696,10 +1849,8 @@ app.post('/api/mac-auth/bulk', requireApiAuth('users', 'read-write'), async (req
                 await conn.query(`INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)`, [mac_address, mac_address]);
                 await conn.query('DELETE FROM radusergroup WHERE username = ?', [mac_address]);
                 if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [mac_address, profile]);
-
                 if (plan_id) await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [mac_address, plan_id]);
                 else await conn.query('DELETE FROM user_plans WHERE username = ?', [mac_address]);
-
                 await conn.query('DELETE FROM user_totp WHERE username = ?', [mac_address]);
                 successCount++;
             } catch (err) {
