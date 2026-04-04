@@ -14,6 +14,84 @@
     </div>
   </main>
 
+  
+  <!-- Plan Detail Drawer -->
+  <div id="planDetailOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40 backdrop-blur-sm" onclick="closePlanDetails()"></div>
+  <div id="planDetailPanel" class="fixed top-0 right-0 h-full w-full max-w-lg bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col overflow-hidden border-l border-gray-100">
+
+    <!-- Header -->
+    <div class="px-6 py-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-b border-gray-100 flex justify-between items-start flex-shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xl shadow-inner shadow-blue-800" id="dpPlanIcon">
+          P
+        </div>
+        <div>
+          <h2 class="text-xl font-bold text-gray-800 leading-tight" id="dpPlanName">Plan Name</h2>
+          <div class="text-sm font-medium text-gray-500 mt-0.5" id="dpPlanCycle">Loading...</div>
+        </div>
+      </div>
+      <button onclick="closePlanDetails()" class="text-gray-400 hover:text-gray-600 bg-white hover:bg-gray-100 rounded-full p-2 transition-colors shadow-sm border border-gray-200">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
+    <!-- Body content -->
+    <div class="flex-1 overflow-y-auto p-6 bg-gray-50 space-y-6" id="dpBody">
+
+      <!-- Top Stats Row -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-center">
+          <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Total Users</span>
+          <span class="text-2xl font-black text-gray-800 mt-1" id="dpTotalUsers">0</span>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-center">
+          <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Depleted Users</span>
+          <span class="text-2xl font-black text-red-600 mt-1" id="dpDepletedUsers">0</span>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-center">
+          <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Total Data Used</span>
+          <span class="text-2xl font-black text-blue-600 mt-1" id="dpTotalData">0.0 GB</span>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-center">
+          <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Total Time</span>
+          <span class="text-2xl font-black text-indigo-600 mt-1" id="dpTotalTime">0h</span>
+        </div>
+      </div>
+
+      <!-- Limits Box -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-gray-50 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+          <h3 class="font-bold text-sm text-gray-700">Plan Enforcements</h3>
+        </div>
+        <div class="p-4 grid grid-cols-2 gap-4 divide-x divide-gray-100 text-center">
+          <div>
+            <div class="text-xs text-gray-500 font-semibold uppercase">Data Limit</div>
+            <div class="mt-1 font-bold text-gray-800" id="dpDataLimit">Unlimited</div>
+          </div>
+          <div>
+            <div class="text-xs text-gray-500 font-semibold uppercase">Time Limit</div>
+            <div class="mt-1 font-bold text-gray-800" id="dpTimeLimit">Unlimited</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Users List -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-gray-50 px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+            <h3 class="font-bold text-sm text-gray-700">Top Users (Usage)</h3>
+          </div>
+        </div>
+        <div class="divide-y divide-gray-100" id="dpTopUsersList">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <div id="planModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
     <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">
       <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Create Plan</h2>
@@ -56,8 +134,8 @@
       if (res.ok) {
         plansList = await res.json();
         document.querySelector('#plansTable tbody').innerHTML = plansList.map(p => `
-            <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-            <td class="p-3 font-bold text-gray-800">${p.name}</td>
+            <tr class="border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer" onclick="showPlanDetails(${p.id})">
+            <td class="p-3 font-bold text-blue-600">${p.name}</td>
             <td class="p-3 font-mono text-gray-600">${p.data_limit_mb > 0 ? p.data_limit_mb : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
             <td class="p-3 font-mono text-gray-600">${p.time_limit_seconds > 0 ? (p.time_limit_seconds/3600).toFixed(1) : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
             <td class="p-3 text-xs capitalize"><span class="px-2 py-1 bg-gray-100 rounded border font-bold">${p.reset_period}</span></td>
@@ -69,7 +147,77 @@
       }
     }
 
-    function openModal(id = null) {
+    
+// Plan detail panel functions
+async function showPlanDetails(id) {
+    const overlay = document.getElementById('planDetailOverlay');
+    const panel = document.getElementById('planDetailPanel');
+
+    // Clear and show loading state
+    document.getElementById('dpPlanName').textContent = 'Loading...';
+    document.getElementById('dpPlanCycle').textContent = 'Fetching plan data...';
+    document.getElementById('dpTotalUsers').textContent = '-';
+    document.getElementById('dpDepletedUsers').textContent = '-';
+    document.getElementById('dpTotalData').textContent = '-';
+    document.getElementById('dpTotalTime').textContent = '-';
+    document.getElementById('dpTopUsersList').innerHTML = '<div class="p-8 text-center text-sm text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i> Loading analytics...</div>';
+
+    overlay.classList.remove('hidden');
+    setTimeout(() => panel.classList.remove('translate-x-full'), 10);
+
+    try {
+        const res = await apiFetch(`/api/plans/${id}/stats`);
+        if (!res.ok) throw new Error('Failed to load plan stats');
+        const data = await res.json();
+
+        document.getElementById('dpPlanName').textContent = data.plan.name;
+        document.getElementById('dpPlanIcon').textContent = data.plan.name.charAt(0).toUpperCase();
+        document.getElementById('dpPlanCycle').textContent = `Reset Cycle: ${data.plan.reset_period.toUpperCase()}`;
+
+        document.getElementById('dpTotalUsers').textContent = data.total_users;
+        document.getElementById('dpDepletedUsers').textContent = data.depleted_users;
+        document.getElementById('dpTotalData').textContent = `${data.total_data_gb} GB`;
+        document.getElementById('dpTotalTime').textContent = `${data.total_hours}h`;
+
+        document.getElementById('dpDataLimit').textContent = data.plan.data_limit_mb > 0 ? `${data.plan.data_limit_mb} MB` : 'Unlimited';
+        document.getElementById('dpTimeLimit').textContent = data.plan.time_limit_seconds > 0 ? `${(data.plan.time_limit_seconds/3600).toFixed(1)} Hours` : 'Unlimited';
+
+        const listContainer = document.getElementById('dpTopUsersList');
+        if (data.top_users.length === 0) {
+            listContainer.innerHTML = '<div class="p-6 text-center text-sm text-gray-500 italic">No users or usage data available.</div>';
+        } else {
+            listContainer.innerHTML = data.top_users.map(u => {
+                const isDepleted = u.status === 'Depleted';
+                return `
+                <div class="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                    <div>
+                        <div class="font-bold text-sm text-gray-800">${u.username}</div>
+                        <div class="text-xs text-gray-500 mt-0.5">${u.data_used_mb} MB / ${(u.time_used_sec/60).toFixed(0)} min</div>
+                    </div>
+                    <div>
+                        ${isDepleted 
+                          ? `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-100 text-red-700">DEPLETED</span>`
+                          : `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-100 text-green-700">ACTIVE</span>`
+                        }
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+    } catch (e) {
+        console.error(e);
+        document.getElementById('dpTopUsersList').innerHTML = '<div class="p-6 text-center text-sm text-red-500 font-bold">Failed to load analytics.</div>';
+    }
+}
+
+function closePlanDetails() {
+    const overlay = document.getElementById('planDetailOverlay');
+    const panel = document.getElementById('planDetailPanel');
+    panel.classList.add('translate-x-full');
+    setTimeout(() => overlay.classList.add('hidden'), 300);
+}
+
+function openModal(id = null) {
         document.getElementById('planModal').classList.remove('hidden');
         document.getElementById('planForm').reset();
 

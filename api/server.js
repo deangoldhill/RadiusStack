@@ -105,8 +105,350 @@ const pool = mysql.createPool({
     host: process.env.DB_HOST || 'mariadb',
     user: process.env.DB_USER || 'radius',
     password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'radius'
+    database: process.env.DB_NAME || 'radius',
+    dateStrings: true
 });
+
+// --- ADVANCED HA SYNC ENGINE ---
+global.haRole = process.env.HA_ROLE || 'primary';
+global.haStats = { success: 0, failed: 0, lastSync: null };
+
+setTimeout(() => {
+    if (process.env.HA_ENABLED === 'true') {
+        originalPoolQuery.call(pool, "ALTER TABLE ha_queue ADD COLUMN insert_id BIGINT DEFAULT NULL", [], { isSync: true }).catch(() => {});
+        originalPoolQuery.call(pool, "ALTER TABLE ha_sync_state ADD COLUMN last_time VARCHAR(30) DEFAULT '1970-01-01 00:00:00.000000'", [], { isSync: true }).catch(() => {});
+    }
+}, 5000);
+
+app.use((req, res, next) => {
+    if (process.env.HA_ENABLED === 'true' && global.haRole === 'secondary') {
+        const isWrite = ['POST', 'PUT', 'DELETE'].includes(req.method);
+        const isHaEndpoint = req.path.startsWith('/api/ha') || req.path.startsWith('/api/sync') || req.path.startsWith('/auth');
+        const isRestart = req.path.startsWith('/api/system/restart');
+        if (isWrite && !isHaEndpoint && !isRestart) {
+            return res.status(403).json({ error: 'Secondary node is read-only. Please promote to primary to make changes.' });
+        }
+    }
+    next();
+});
+
+async function pushToHaQueue(queryStr, valuesStr, insertId = null) {
+    try {
+        await originalPoolQuery.call(pool, "INSERT INTO ha_queue (query, values_json, insert_id) VALUES (?, ?, ?)", [queryStr, valuesStr, insertId], { isSync: true });
+    } catch (err) {
+        console.error('[HA Queue Error]', err);
+    }
+}
+
+const originalPoolQuery = pool.query;
+pool.query = async function() {
+    const args = Array.from(arguments);
+    const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
+    const isWrite = sqlQuery.startsWith('INSERT') || sqlQuery.startsWith('UPDATE') || sqlQuery.startsWith('DELETE') || sqlQuery.startsWith('REPLACE');
+    const options = args[2] || {};
+    const isSync = options.isSync === true;
+
+    const result = await originalPoolQuery.apply(this, args);
+    const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
+
+    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+        await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
+    }
+    return result;
+};
+
+const originalGetConnection = pool.getConnection;
+pool.getConnection = async function() {
+    const conn = await originalGetConnection.apply(this, arguments);
+    const originalConnQuery = conn.query;
+    conn.query = async function() {
+        const args = Array.from(arguments);
+        const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
+        const isWrite = sqlQuery.startsWith('INSERT') || sqlQuery.startsWith('UPDATE') || sqlQuery.startsWith('DELETE') || sqlQuery.startsWith('REPLACE');
+        const options = args[2] || {};
+        const isSync = options.isSync === true;
+
+        const result = await originalConnQuery.apply(this, args);
+        const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
+
+        if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+            await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
+        }
+        return result;
+    };
+    return conn;
+};
+
+const originalPoolExecute = pool.execute;
+pool.execute = async function() {
+    const args = Array.from(arguments);
+    const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
+    const isWrite = sqlQuery.startsWith('INSERT') || sqlQuery.startsWith('UPDATE') || sqlQuery.startsWith('DELETE') || sqlQuery.startsWith('REPLACE');
+    const options = args[2] || {};
+    const isSync = options.isSync === true;
+
+    const result = await originalPoolExecute.apply(this, args);
+    const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
+
+    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+        await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
+    }
+    return result;
+};
+
+async function processHaQueue() {
+    if (process.env.HA_ENABLED !== 'true' || !process.env.HA_PEER_IP) return;
+
+    try {
+        const [rows] = await originalPoolQuery.call(pool, "SELECT * FROM ha_queue ORDER BY id ASC LIMIT 50", [], { isSync: true });
+        for (let row of rows) {
+            try {
+                const payload = { 
+                    query: row.query, 
+                    values: JSON.parse(row.values_json || '[]'),
+                    insertId: row.insert_id || null
+                };
+                const response = await fetch(`http://${process.env.HA_PEER_IP}:${process.env.API_PORT || 3000}/api/sync/execute`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${process.env.HA_API_TOKEN}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    await originalPoolQuery.call(pool, "DELETE FROM ha_queue WHERE id = ?", [row.id], { isSync: true });
+                    global.haStats.success++;
+                    global.haStats.lastSync = new Date().toISOString();
+                } else {
+                    const errText = await response.text();
+                    console.error('[HA Sync Peer Error]', errText);
+                    global.haStats.failed++;
+                    break;
+                }
+            } catch (netErr) {
+                console.error('[HA Sync Network Error]', netErr.message);
+                global.haStats.failed++;
+                break;
+            }
+        }
+    } catch (err) {
+        console.error('[HA Worker Error]', err);
+    }
+}
+
+async function syncRadiusTables() {
+    if (process.env.HA_ENABLED !== 'true' || !process.env.HA_PEER_IP) return;
+    try {
+        const tables = [
+            { name: 'radacct', idCol: 'radacctid', timeCol: 'acctupdatetime' },
+            { name: 'radpostauth', idCol: 'id', timeCol: 'authdate' }
+        ];
+        for (let table of tables) {
+            // First, retrieve the absolute highest known ID processed directly from ha_sync_state
+            const [stateRows] = await originalPoolQuery.call(pool, "SELECT last_time, last_id FROM ha_sync_state WHERE table_name = ?", [table.name], { isSync: true });
+            let lastId = stateRows[0] ? stateRows[0].last_id : 0;
+            let lastTimeStr = stateRows[0] && stateRows[0].last_time ? stateRows[0].last_time : '1970-01-01 00:00:00.000000';
+
+            // Format the string exactly, discarding JS Date if necessary. We want microsecond precision.
+            if (lastTimeStr instanceof Date) {
+                lastTimeStr = lastTimeStr.toISOString().replace('T', ' ').replace('Z', '');
+            }
+
+            // Radpostauth NEVER updates, it only INSERTS. Radacct DOES update.
+            let sql = '';
+            let params = [];
+
+            // Retrieve actual DB offset directly to ensure perfect parity matching
+            const [offsetRows] = await originalPoolQuery.call(pool, "SHOW VARIABLES LIKE 'auto_increment_offset'", [], { isSync: true });
+            const dbOffset = parseInt(offsetRows[0].Value) || 1;
+            const offsetRem = dbOffset % 2;
+
+            // Clamp any future times corrupted by previous echo loops back to NOW()
+            const [nowRows] = await originalPoolQuery.call(pool, "SELECT NOW() as n", [], { isSync: true });
+            let nowStr = nowRows[0].n;
+            if (nowStr instanceof Date) nowStr = nowStr.toISOString().replace('T', ' ').replace('Z', '');
+
+            if (lastTimeStr > nowStr) {
+                lastTimeStr = nowStr;
+                await originalPoolQuery.call(pool, "UPDATE ha_sync_state SET last_time = ? WHERE table_name = ?", [nowStr, table.name], { isSync: true });
+            }
+
+            if (table.name === 'radpostauth') {
+                sql = `SELECT * FROM ${table.name} WHERE ${table.idCol} > ? AND (${table.idCol} % 2) = ? ORDER BY ${table.idCol} ASC LIMIT 200`;
+                params = [lastId, offsetRem];
+            } else {
+                sql = `SELECT * FROM ${table.name} WHERE ((${table.timeCol} > ?) OR (${table.timeCol} = ? AND ${table.idCol} > ?)) AND (${table.idCol} % 2) = ? ORDER BY ${table.timeCol} ASC, ${table.idCol} ASC LIMIT 200`;
+                params = [lastTimeStr, lastTimeStr, lastId, offsetRem];
+            }
+
+            const [dataRows] = await originalPoolQuery.call(pool, sql, params, { isSync: true });
+
+            let maxTimeProcessed = lastTimeStr;
+            let maxIdProcessed = lastId;
+
+            if (dataRows.length > 0) {
+                for (let row of dataRows) {
+                    const keys = Object.keys(row).join(', ');
+                    const placeholders = Object.keys(row).map(() => '?').join(', ');
+                    const updateStmts = Object.keys(row).map(k => `${k}=VALUES(${k})`).join(', ');
+                    const values = Object.values(row);
+                    const query = `INSERT INTO ${table.name} (${keys}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateStmts}`;
+
+                    await originalPoolQuery.call(pool, "INSERT INTO ha_queue (query, values_json) VALUES (?, ?)", [query, JSON.stringify(values)], { isSync: true });
+
+                    if (table.name === 'radacct') {
+                        let rowTime = row[table.timeCol];
+                        // If it's a date object (though dateStrings is true), format it correctly
+                        if (rowTime instanceof Date) {
+                            rowTime = rowTime.toISOString().replace('T', ' ').replace('Z', '');
+                        } else if (typeof rowTime === 'string') {
+                            // Ensure 6 decimal padding for MariaDB fractional matching
+                            if (!rowTime.includes('.')) {
+                                rowTime += '.000000';
+                            } else {
+                                rowTime = rowTime.padEnd(26, '0');
+                            }
+                        }
+
+                        // Because we ORDER BY timeCol ASC, idCol ASC, the last row in the loop is inherently the newest max
+                        maxTimeProcessed = rowTime;
+                        maxIdProcessed = row[table.idCol];
+                    } else {
+                        maxIdProcessed = Math.max(maxIdProcessed, row[table.idCol]);
+                        // Max time is irrelevant for radpostauth but we update it anyway for consistency
+                        let rowTime = row[table.timeCol];
+                        if (rowTime instanceof Date) rowTime = rowTime.toISOString().replace('T', ' ').replace('Z', '');
+                        else if (typeof rowTime === 'string' && !rowTime.includes('.')) rowTime += '.000000';
+                        maxTimeProcessed = rowTime;
+                    }
+                }
+
+                await originalPoolQuery.call(pool, "UPDATE ha_sync_state SET last_time = ?, last_id = ? WHERE table_name = ?", [maxTimeProcessed, maxIdProcessed, table.name], { isSync: true });
+            }
+        }
+    } catch (err) {
+        console.error('[HA RADIUS Sync Error]', err);
+    }
+}
+
+if (process.env.HA_ENABLED === 'true') {
+    setInterval(processHaQueue, 2000);
+    setInterval(syncRadiusTables, 5000);
+}
+
+app.get('/api/ha/status', async (req, res) => {
+    let queueLength = 0;
+    try {
+        const [q] = await originalPoolQuery.call(pool, "SELECT COUNT(*) as c FROM ha_queue", [], { isSync: true });
+        queueLength = q[0].c;
+    } catch(e) {}
+    res.json({
+        enabled: process.env.HA_ENABLED === 'true',
+        role: global.haRole,
+        peer: process.env.HA_PEER_IP || 'Not configured',
+        queueLength,
+        stats: global.haStats
+    });
+});
+
+app.post('/api/ha/promote', (req, res) => {
+    global.haRole = 'primary';
+    res.json({ success: true, message: 'Promoted to primary. This node is now fully writable.' });
+});
+
+app.post('/api/ha/demote', (req, res) => {
+    global.haRole = 'secondary';
+    res.json({ success: true, message: 'Demoted to secondary. Node is now read-only.' });
+});
+
+app.post('/api/ha/sync-now', async (req, res) => {
+    await processHaQueue();
+    await syncRadiusTables();
+    res.json({ success: true, message: 'Manual sync triggered' });
+});
+
+app.post('/api/ha/full-sync', async (req, res) => {
+    if (global.haRole !== 'primary') return res.status(403).json({ error: 'Full sync can only be triggered from the primary node.' });
+
+    try {
+        const [tables] = await originalPoolQuery.call(pool, "SHOW TABLES", [], { isSync: true });
+        const dbName = Object.values(tables[0])[0] ? Object.keys(tables[0])[0] : 'Tables_in_radius';
+
+        for (let t of tables) {
+            const tableName = t[dbName];
+            if (['ha_queue', 'ha_sync_state'].includes(tableName)) continue;
+
+            const [rows] = await originalPoolQuery.call(pool, `SELECT * FROM ${tableName}`, [], { isSync: true });
+            for (let row of rows) {
+                const keys = Object.keys(row).join(', ');
+                const placeholders = Object.keys(row).map(() => '?').join(', ');
+                const updateStmts = Object.keys(row).map(k => `${k}=VALUES(${k})`).join(', ');
+                const values = Object.values(row);
+                const query = `INSERT INTO ${tableName} (${keys}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateStmts}`;
+                await originalPoolQuery.call(pool, "INSERT INTO ha_queue (query, values_json) VALUES (?, ?)", [query, JSON.stringify(values)], { isSync: true });
+            }
+        }
+        res.json({ success: true, message: 'Full sync queued successfully.' });
+    } catch (err) {
+        console.error('[HA Full Sync Error]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/sync/execute', async (req, res) => {
+    const auth = req.headers.authorization;
+    if (!auth || auth !== `Bearer ${process.env.HA_API_TOKEN}`) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    let conn;
+    try {
+        conn = await originalGetConnection.call(pool);
+        const { query, values, insertId } = req.body;
+
+        let success = false;
+        let retries = 3;
+
+        while (retries > 0 && !success) {
+            try {
+                await conn.query("SET FOREIGN_KEY_CHECKS=0", []);
+                if (insertId) {
+                    await conn.query("SET insert_id = ?", [insertId]);
+                }
+                await conn.query(query, values || [], { isSync: true });
+                await conn.query("SET FOREIGN_KEY_CHECKS=1", []);
+                success = true;
+            } catch (err) {
+                if (err.code === 'ER_LOCK_DEADLOCK' && retries > 1) {
+                    retries--;
+                    console.warn(`[HA Sync] Deadlock detected. Retrying... (${retries} attempts left)`);
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    continue;
+                }
+                throw err;
+            }
+        }
+        res.json({ success: true });
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+            console.warn('[HA Sync] Ignored duplicate entry:', error.message);
+            return res.json({ success: true, ignored: true });
+        }
+        console.error('[HA Execute Error]', error.message);
+        res.status(500).json({ error: error.message });
+    } finally {
+        if (conn) {
+            try {
+                await conn.query("SET FOREIGN_KEY_CHECKS=1", []);
+            } catch(e) {}
+            conn.release();
+        }
+    }
+});
+// ------------------------------------------
+
 
 // Audit Logger
 async function auditLog(admin_username, origin, action, result, details = '', ip = '') {
@@ -394,10 +736,52 @@ app.get('/api/system/logs/:container', requireApiAuth('settings', 'read-only'), 
 });
 
 // --- CERTS ---
+
+app.get('/api/certs/download/:type', requireApiAuth('settings', 'read-only'), async (req, res) => {
+    try {
+        const type = req.params.type;
+        let filePath = '';
+        let fileName = '';
+        if (type === 'server-pem' || type === 'server-cert') {
+            filePath = '/certs_shared/server.pem';
+            fileName = 'radius-server.pem';
+        } else if (type === 'server-key') {
+            filePath = '/certs_shared/server.key';
+            fileName = 'radius-server.key';
+        } else if (type === 'ca-pem' || type === 'ca-cert') {
+            filePath = '/certs_shared/ca.pem';
+            fileName = 'radius-ca.pem';
+        } else if (type === 'ca-key') {
+            filePath = '/certs_shared/ca.key';
+            fileName = 'radius-ca.key';
+        } else {
+            return res.status(400).json({ error: 'Invalid cert type' });
+        }
+
+        try {
+            await fs.access(filePath);
+        } catch {
+            return res.status(404).json({ error: 'File not found on server' });
+        }
+
+        res.download(filePath, fileName);
+    } catch (err) {
+        console.error('Download error', err);
+        res.status(500).json({ error: 'Failed to download certificate' });
+    }
+});
+
 app.post('/api/certs/generate', requireApiAuth('settings', 'read-write'), (req, res) => {
     const { c = 'US', st = 'State', l = 'City', o = 'Radius', cn = 'RadiusServer' } = req.body;
-    const subj = `/C=${c}/ST=${st}/L=${l}/O=${o}/CN=${cn}`;
-    const cmd = `openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 -keyout /certs_shared/server.key -out /certs_shared/server.pem -subj "${subj}"`;
+    const subjCA = `/C=${c}/ST=${st}/L=${l}/O=${o}CA/CN=${cn}CA`;
+    const subjServer = `/C=${c}/ST=${st}/L=${l}/O=${o}/CN=${cn}`;
+
+    const cmd = `
+        openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 -keyout /certs_shared/ca.key -out /certs_shared/ca.pem -subj "${subjCA}" && \
+        openssl req -new -newkey rsa:2048 -nodes -keyout /certs_shared/server.key -out /certs_shared/server.csr -subj "${subjServer}" && \
+        openssl x509 -req -days 3650 -in /certs_shared/server.csr -CA /certs_shared/ca.pem -CAkey /certs_shared/ca.key -CAcreateserial -out /certs_shared/server.pem && \
+        rm -f /certs_shared/server.csr /certs_shared/ca.srl
+    `;
 
     exec(cmd, async (error) => {
         if (error) {
@@ -448,13 +832,6 @@ app.get('/api/certs/details', requireApiAuth('settings', 'read-only'), (req, res
             });
         }
         res.json({ details: stdout.trim() || 'Certificate exists but has no readable details.' });
-    });
-});
-
-app.get('/api/certs/download', requireApiAuth('settings', 'read-only'), (req, res) => {
-    const filePath = '/certs_shared/server.pem';
-    res.download(filePath, 'radius-server.pem', (err) => {
-        if (err) res.status(404).json({ error: 'Certificate not found' });
     });
 });
 
@@ -548,6 +925,74 @@ app.post('/api/admins/:id/disable-2fa', requireApiAuth('settings', 'read-write')
 });
 
 // --- PLANS ---
+
+app.get('/api/plans/:id/stats', requireApiAuth('plans', 'read-only'), async (req, res) => {
+    try {
+        const [planRow] = await pool.query("SELECT * FROM plans WHERE id = ?", [req.params.id]);
+        if (!planRow[0]) return res.status(404).json({ error: 'Plan not found' });
+        const plan = planRow[0];
+
+        const [users] = await pool.query(`
+            SELECT 
+                up.username,
+                COALESCE((SELECT SUM(acctinputoctets) + SUM(acctoutputoctets) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_input_octets, 0) - COALESCE(pu.base_output_octets, 0) AS total_bytes,
+                COALESCE((SELECT SUM(acctsessiontime) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_session_seconds, 0) AS total_seconds
+            FROM user_plans up
+            LEFT JOIN user_plan_usage pu ON pu.username = up.username
+            WHERE up.plan_id = ?
+        `, [req.params.id]);
+
+        let depletedCount = 0;
+        const topUsers = [];
+        let total_bytes_all = 0;
+        let total_seconds_all = 0;
+
+        users.forEach(u => {
+            let total_mb = Math.max(0, u.total_bytes / (1024 * 1024));
+            let total_sec = Math.max(0, u.total_seconds);
+            total_bytes_all += Math.max(0, u.total_bytes);
+            total_seconds_all += total_sec;
+
+            let isDepleted = false;
+            let depletionReason = null;
+            if (plan.data_limit_mb > 0 && total_mb >= plan.data_limit_mb) {
+                isDepleted = true;
+                depletionReason = 'Data';
+            }
+            if (plan.time_limit_seconds > 0 && total_sec >= plan.time_limit_seconds) {
+                isDepleted = true;
+                depletionReason = 'Time';
+            }
+
+            if (isDepleted) depletedCount++;
+
+            topUsers.push({
+                username: u.username,
+                data_used_mb: parseFloat(total_mb).toFixed(2),
+                time_used_sec: parseInt(total_sec),
+                status: isDepleted ? 'Depleted' : 'Active',
+                depletionReason
+            });
+        });
+
+        topUsers.sort((a, b) => b.data_used_mb - a.data_used_mb);
+
+        res.json({
+            plan,
+            total_users: users.length,
+            depleted_users: depletedCount,
+            active_users: users.length - depletedCount,
+            total_data_gb: (total_bytes_all / (1024*1024*1024)).toFixed(2),
+            total_hours: (total_seconds_all / 3600).toFixed(1),
+            top_users: topUsers.slice(0, 10)
+        });
+
+    } catch (e) {
+        console.error('Plan stats error', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/plans', requireApiAuth('plans', 'read-only'), async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM plans ORDER BY id DESC');
     res.json(rows);

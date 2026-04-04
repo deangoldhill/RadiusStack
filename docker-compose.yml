@@ -1,101 +1,112 @@
 services:
   mariadb:
     image: mariadb:10.11
+    command:
+    - --auto-increment-increment=2
+    - --auto-increment-offset=${HA_DB_OFFSET:-1}
     container_name: radius_db
     restart: unless-stopped
     env_file:
-      - container_config.env
+    - container_config.env
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: radius
       MYSQL_USER: ${DB_USER}
       MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: ${TIMEZONE:-Europe/London}
     volumes:
-      - mariadb_data:/var/lib/mysql
-      - ./db-init:/docker-entrypoint-initdb.d
+    - mariadb_data:/var/lib/mysql
+    - ./db-init:/docker-entrypoint-initdb.d
     ports:
-      - "${DB_PORT:-3306}:3306"
+    - ${DB_PORT:-3306}:3306
     networks:
-      - radius_net
-
+    - radius_net
   radius:
     build: ./radius
     container_name: radius_server
     restart: unless-stopped
     depends_on:
-      - mariadb
+    - mariadb
     env_file:
-      - container_config.env
+    - container_config.env
     environment:
       RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
       RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
       DB_PASSWORD: ${DB_PASSWORD}
+      HA_ENABLED: ${HA_ENABLED:-false}
+      HA_ROLE: ${HA_ROLE:-primary}
+      HA_PEER_IP: ${HA_PEER_IP:-}
+      HA_API_TOKEN: ${HA_API_TOKEN:-ha_sync_token_123}
+      TZ: ${TIMEZONE:-Europe/London}
     ports:
-      - "${RADIUS_AUTH_PORT:-1812}:1812/udp"
-      - "${RADIUS_ACCT_PORT:-1813}:1813/udp"
+    - ${RADIUS_AUTH_PORT:-1812}:1812/udp
+    - ${RADIUS_ACCT_PORT:-1813}:1813/udp
     volumes:
-      - certs_volume:/certs_shared
+    - certs_volume:/certs_shared
     networks:
-      - radius_net
-
+    - radius_net
   api:
     build:
       context: ./api
     container_name: radius_api
     restart: unless-stopped
     depends_on:
-      - mariadb
+    - mariadb
     env_file:
-      - container_config.env
+    - container_config.env
     environment:
-      - DB_HOST=mariadb
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASSWORD}
-      - DB_NAME=radius
-      - JWT_SECRET=${JWT_SECRET}
-      - TOTP_ISSUER=${TOTP_ISSUER}
+    - DB_HOST=mariadb
+    - DB_USER=${DB_USER}
+    - DB_PASS=${DB_PASSWORD}
+    - DB_NAME=radius
+    - JWT_SECRET=${JWT_SECRET}
+    - TOTP_ISSUER=${TOTP_ISSUER}
+    - HA_ENABLED=${HA_ENABLED:-false}
+    - HA_ROLE=${HA_ROLE:-primary}
+    - HA_PEER_IP=${HA_PEER_IP:-}
+    - HA_API_TOKEN=${HA_API_TOKEN:-ha_sync_token_123}
+    - TZ=${TIMEZONE:-Europe/London}
     ports:
-      - "${API_PORT:-3000}:3000"
+    - ${API_PORT:-3000}:3000
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - certs_volume:/certs_shared
+    - /var/run/docker.sock:/var/run/docker.sock
+    - certs_volume:/certs_shared
     networks:
-      - radius_net
-
+    - radius_net
   web_ui:
     image: nginx:alpine
     container_name: radius_web_ui
     restart: unless-stopped
     ports:
-      - "${WEB_UI_PORT:-80}:80"
+    - ${WEB_UI_PORT:-80}:80
     volumes:
-      - ./web_ui/public:/usr/share/nginx/html
-      - ./web_ui/nginx.conf:/etc/nginx/conf.d/default.conf
+    - ./web_ui/public:/usr/share/nginx/html
+    - ./web_ui/nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
-      - api
+    - api
     networks:
-      - radius_net
-
+    - radius_net
+    environment:
+    - TZ=${TIMEZONE:-Europe/London}
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: radius_phpmyadmin
     restart: unless-stopped
     depends_on:
-      - mariadb
+    - mariadb
     env_file:
-      - container_config.env
+    - container_config.env
     environment:
       PMA_HOST: mariadb
       PMA_USER: root
       PMA_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: ${TIMEZONE:-Europe/London}
     ports:
-      - "${PHPMYADMIN_PORT:-8080}:80"
+    - ${PHPMYADMIN_PORT:-8080}:80
     networks:
-      - radius_net
-
+    - radius_net
 volumes:
-  mariadb_data:
-  certs_volume:
-
+  mariadb_data: null
+  certs_volume: null
 networks:
-  radius_net:
+  radius_net: null

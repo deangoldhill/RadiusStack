@@ -1,14 +1,21 @@
 #!/bin/sh
 mkdir -p /certs_shared
 if [ ! -f /certs_shared/server.pem ]; then
-    echo "Generating default 10-year EAP certificates..."
-    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-        -keyout /certs_shared/server.key -out /certs_shared/server.pem \
-        -subj "/C=US/ST=State/L=City/O=Radius/CN=RadiusServer"
+    echo "Generating default 10-year CA and EAP certificates..."
+    # Generate CA
+    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509         -keyout /certs_shared/ca.key -out /certs_shared/ca.pem         -subj "/C=US/ST=State/L=City/O=RadiusCA/CN=RadiusCA"
+
+    # Generate Server Key & CSR
+    openssl req -new -newkey rsa:2048 -nodes         -keyout /certs_shared/server.key -out /certs_shared/server.csr         -subj "/C=US/ST=State/L=City/O=Radius/CN=RadiusServer"
+
+    # Sign Server Cert with CA
+    openssl x509 -req -days 3650 -in /certs_shared/server.csr         -CA /certs_shared/ca.pem -CAkey /certs_shared/ca.key -CAcreateserial         -out /certs_shared/server.pem
+
+    # Clean up CSR
+    rm -f /certs_shared/server.csr /certs_shared/ca.srl
 fi
 
-chmod 644 /certs_shared/server.key
-chmod 644 /certs_shared/server.pem
+chmod 644 /certs_shared/ca.key /certs_shared/ca.pem /certs_shared/server.key /certs_shared/server.pem
 
 # Use env vars injected by Docker Compose (from container_config.env)
 DB_HOST="${DB_HOST:-mariadb}"

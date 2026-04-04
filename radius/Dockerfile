@@ -1,6 +1,6 @@
 FROM freeradius/freeradius-server:3.2.3-alpine
 
-RUN apk add --no-cache openssl mariadb-client mariadb-connector-c
+RUN apk add --no-cache openssl mariadb-client mariadb-connector-c tzdata
 
 RUN ln -s /opt/etc/raddb/mods-available/sql /opt/etc/raddb/mods-enabled/sql
 

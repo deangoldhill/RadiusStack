@@ -235,7 +235,12 @@
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50 flex flex-col">
           <div class="flex justify-between items-center mb-3">
             <h3 class="font-bold text-sm text-gray-700">Active Certificate</h3>
-            <button onclick="downloadCert()" class="bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 px-3 py-1 rounded-lg text-xs font-bold transition-colors">Download .pem</button>
+            <div class="flex gap-2">
+            <button onclick="downloadCert('ca-pem')" class="bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-lg text-xs font-bold transition-colors" title="Download CA Certificate">CA .PEM</button>
+            <button onclick="downloadCert('ca-key')" class="bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 px-2 py-1 rounded-lg text-xs font-bold transition-colors" title="Download CA Private Key">CA .KEY</button>
+            <button onclick="downloadCert('server-pem')" class="bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 px-2 py-1 rounded-lg text-xs font-bold transition-colors" title="Download Server Certificate">Server .PEM</button>
+            <button onclick="downloadCert('server-key')" class="bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 px-2 py-1 rounded-lg text-xs font-bold transition-colors" title="Download Server Private Key">Server .KEY</button>
+          </div>
           </div>
           <pre id="certDetails" class="flex-1 bg-gray-900 p-3 text-xs overflow-y-auto max-h-56 rounded-lg text-green-400 font-mono shadow-inner border border-gray-700 leading-relaxed">Loading...</pre>
         </div>
@@ -270,6 +275,105 @@
     </div>
 
   </div>
+
+        <!-- HA Settings Panel -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <h2 class="text-lg font-semibold mb-4 text-gray-800">High Availability Status</h2>
+            <div id="haStatusContainer" class="text-sm">
+                <p class="text-gray-600" id="haLoadingText">Loading HA Status...</p>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2">
+                <button id="btnPromote" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 hidden">Promote to Primary</button>
+                <button id="btnDemote" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 hidden">Demote to Secondary</button>
+                <button id="btnSyncNow" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Force Sync Now</button>
+                <button id="btnFullSync" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 hidden">Perform Full Sync</button>
+            </div>
+            <p id="haActionMsg" class="mt-2 text-sm font-semibold text-green-600"></p>
+        </div>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', async () => {
+                const fetchHaStatus = async () => {
+                    try {
+                        const res = await apiFetch('/api/ha/status');
+                        const data = await res.json();
+                        const container = document.getElementById('haStatusContainer');
+                        const promoteBtn = document.getElementById('btnPromote');
+                        const demoteBtn = document.getElementById('btnDemote');
+                        const fullSyncBtn = document.getElementById('btnFullSync');
+
+                        if (!data.enabled) {
+                            container.innerHTML = '<p class="text-gray-500 italic">High Availability is disabled in the environment variables.</p>';
+                            document.getElementById('btnSyncNow').classList.add('hidden');
+                            return;
+                        }
+
+                        let roleBadge = data.role === 'primary' 
+                            ? '<span class="px-2 py-1 bg-blue-100 text-blue-800 rounded font-bold">PRIMARY</span>' 
+                            : '<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded font-bold">SECONDARY (Read-Only)</span>';
+
+                        container.innerHTML = `
+                            <div class="grid grid-cols-2 gap-4">
+                                <div><strong>Role:</strong> ${roleBadge}</div>
+                                <div><strong>Peer IP:</strong> ${data.peer}</div>
+                                <div><strong>Pending Sync Queue:</strong> ${data.queueLength} operations</div>
+                                <div><strong>Successful Syncs:</strong> ${data.stats.success}</div>
+                                <div><strong>Failed Syncs:</strong> ${data.stats.failed}</div>
+                                <div><strong>Last Sync:</strong> ${data.stats.lastSync ? new Date(data.stats.lastSync).toLocaleString() : 'Never'}</div>
+                            </div>
+                        `;
+
+                        if (data.role === 'secondary') {
+                            promoteBtn.classList.remove('hidden');
+                            demoteBtn.classList.add('hidden');
+                            fullSyncBtn.classList.add('hidden');
+                        } else {
+                            promoteBtn.classList.add('hidden');
+                            demoteBtn.classList.remove('hidden');
+                            fullSyncBtn.classList.remove('hidden');
+                        }
+                    } catch (e) {
+                        console.error('Failed to load HA stats', e);
+                        document.getElementById('haLoadingText').textContent = 'Failed to load HA stats. Check console.';
+                    }
+                };
+
+                await fetchHaStatus();
+                setInterval(fetchHaStatus, 5000);
+
+                const displayMsg = (msg) => {
+                    const el = document.getElementById('haActionMsg');
+                    el.textContent = msg;
+                    setTimeout(() => el.textContent = '', 4000);
+                };
+
+                document.getElementById('btnPromote').addEventListener('click', async () => {
+                    if (!confirm('Are you sure you want to promote this node to Primary? It will begin accepting writes and syncing to its peer.')) return;
+                    await apiFetch('/api/ha/promote', { method: 'POST' });
+                    location.reload();
+                });
+
+                document.getElementById('btnDemote').addEventListener('click', async () => {
+                    if (!confirm('Are you sure you want to demote this node? It will become read-only.')) return;
+                    await apiFetch('/api/ha/demote', { method: 'POST' });
+                    location.reload();
+                });
+
+                document.getElementById('btnSyncNow').addEventListener('click', async () => {
+                    await apiFetch('/api/ha/sync-now', { method: 'POST' });
+                    displayMsg('Manual sync triggered!');
+                    fetchHaStatus();
+                });
+
+                document.getElementById('btnFullSync').addEventListener('click', async () => {
+                    if (!confirm('WARNING: A Full Sync will push ALL configuration, user, and accounting data from this node to the peer. Proceed?')) return;
+                    await apiFetch('/api/ha/full-sync', { method: 'POST' });
+                    displayMsg('Full sync initiated! The queue is now populated and will process automatically.');
+                    fetchHaStatus();
+                });
+            });
+        </script>
+
 </main>
 
 <!-- Logs Modal -->
@@ -449,12 +553,20 @@
     if (res.ok) { const data = await res.json(); document.getElementById('certDetails').textContent = data.details; }
   }
 
-  async function downloadCert() {
-    const res = await apiFetch('/api/certs/download');
+  async function downloadCert(type) {
+    const res = await apiFetch(`/api/certs/download/${type}`);
     if (res.ok) {
       const blob = await res.blob();
       const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob);
-      a.download = 'radius-server.pem'; a.click();
+      if (type === 'ca-pem') a.download = 'radius-ca.pem';
+      else if (type === 'ca-key') a.download = 'radius-ca.key';
+      else if (type === 'server-key') a.download = 'radius-server.key';
+      else a.download = 'radius-server.pem';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      alert('Failed to download certificate file.');
     }
   }
 
@@ -496,6 +608,35 @@
   loadSettings();
   loadHealth();
   loadCertDetails();
+
+</script>
+<script>
+
+    async function downloadCert(type) {
+        try {
+            const res = await apiFetch(`/api/certs/download/${type}`);
+            if (!res.ok) {
+                const err = await res.json();
+                alert('Download failed: ' + (err.error || 'Unknown error'));
+                return;
+            }
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            if (type === 'ca-pem') a.download = 'radius-ca.pem';
+      else if (type === 'ca-key') a.download = 'radius-ca.key';
+      else if (type === 'server-key') a.download = 'radius-server.key';
+      else a.download = 'radius-server.pem';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('Failed to download certificate', e);
+            alert('Failed to download certificate.');
+        }
+    }
 
 </script>
 </body>
