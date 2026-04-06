@@ -110,6 +110,30 @@ const pool = mysql.createPool({
 });
 
 // --- ADVANCED HA SYNC ENGINE ---
+
+// Generate a static 256-bit AES key by hashing the existing HA_API_TOKEN
+const HA_PSK = crypto.createHash('sha256').update(process.env.HA_API_TOKEN || 'default').digest();
+
+function encryptHaPayload(payload) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', HA_PSK, iv);
+    let encrypted = cipher.update(JSON.stringify(payload), 'utf8', 'base64');
+    encrypted += cipher.final('base64');
+    return {
+        iv: iv.toString('base64'),
+        authTag: cipher.getAuthTag().toString('base64'),
+        data: encrypted
+    };
+}
+
+function decryptHaPayload(body) {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', HA_PSK, Buffer.from(body.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(body.authTag, 'base64'));
+    let decrypted = decipher.update(body.data, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+}
+
 global.haRole = process.env.HA_ROLE || 'primary';
 global.haStats = { success: 0, failed: 0, lastSync: null };
 
@@ -117,6 +141,8 @@ setTimeout(() => {
     if (process.env.HA_ENABLED === 'true') {
         originalPoolQuery.call(pool, "ALTER TABLE ha_queue ADD COLUMN insert_id BIGINT DEFAULT NULL", [], { isSync: true }).catch(() => {});
         originalPoolQuery.call(pool, "ALTER TABLE ha_sync_state ADD COLUMN last_time VARCHAR(30) DEFAULT '1970-01-01 00:00:00.000000'", [], { isSync: true }).catch(() => {});
+        // Add microsecond tracking column to safely sync Interim-Updates without 1-second collisions
+        originalPoolQuery.call(pool, "ALTER TABLE radacct ADD COLUMN ha_updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)", [], { isSync: true }).catch(() => {});
     }
 }, 5000);
 
@@ -203,18 +229,21 @@ async function processHaQueue() {
         const [rows] = await originalPoolQuery.call(pool, "SELECT * FROM ha_queue ORDER BY id ASC LIMIT 50", [], { isSync: true });
         for (let row of rows) {
             try {
-                const payload = { 
+                const rawPayload = { 
                     query: row.query, 
                     values: JSON.parse(row.values_json || '[]'),
-                    insertId: row.insert_id || null
+                    insertId: row.insert_id || null,
+                    _ts: Date.now() // Bound timestamp for replay protection
                 };
+
+                const securePayload = encryptHaPayload(rawPayload);
+
                 const response = await fetch(`http://${process.env.HA_PEER_IP}:${process.env.API_PORT || 3000}/api/sync/execute`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${process.env.HA_API_TOKEN}`
+                        'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(securePayload)
                 });
 
                 if (response.ok) {
@@ -241,45 +270,35 @@ async function processHaQueue() {
 async function syncRadiusTables() {
     if (process.env.HA_ENABLED !== 'true' || !process.env.HA_PEER_IP) return;
     try {
+        let hasUpdatedCol = true;
+        try { await originalPoolQuery.call(pool, "SELECT ha_updated_at FROM radacct LIMIT 1", [], { isSync: true }); } 
+        catch(e) { hasUpdatedCol = false; }
+
         const tables = [
-            { name: 'radacct', idCol: 'radacctid', timeCol: 'acctupdatetime' },
+            { name: 'radacct', idCol: 'radacctid', timeCol: hasUpdatedCol ? 'ha_updated_at' : 'acctupdatetime' },
             { name: 'radpostauth', idCol: 'id', timeCol: 'authdate' }
         ];
+
         for (let table of tables) {
-            // First, retrieve the absolute highest known ID processed directly from ha_sync_state
             const [stateRows] = await originalPoolQuery.call(pool, "SELECT last_time, last_id FROM ha_sync_state WHERE table_name = ?", [table.name], { isSync: true });
             let lastId = stateRows[0] ? stateRows[0].last_id : 0;
             let lastTimeStr = stateRows[0] && stateRows[0].last_time ? stateRows[0].last_time : '1970-01-01 00:00:00.000000';
 
-            // Format the string exactly, discarding JS Date if necessary. We want microsecond precision.
-            if (lastTimeStr instanceof Date) {
-                lastTimeStr = lastTimeStr.toISOString().replace('T', ' ').replace('Z', '');
-            }
+            if (lastTimeStr instanceof Date) lastTimeStr = lastTimeStr.toISOString().replace('T', ' ').replace('Z', '');
 
-            // Radpostauth NEVER updates, it only INSERTS. Radacct DOES update.
-            let sql = '';
-            let params = [];
-
-            // Retrieve actual DB offset directly to ensure perfect parity matching
             const [offsetRows] = await originalPoolQuery.call(pool, "SHOW VARIABLES LIKE 'auto_increment_offset'", [], { isSync: true });
-            const dbOffset = parseInt(offsetRows[0].Value) || 1;
+            const dbOffset = parseInt(offsetRows[0].Value, 10) || 1;
             const offsetRem = dbOffset % 2;
 
-            // Clamp any future times corrupted by previous echo loops back to NOW()
-            const [nowRows] = await originalPoolQuery.call(pool, "SELECT NOW() as n", [], { isSync: true });
-            let nowStr = nowRows[0].n;
-            if (nowStr instanceof Date) nowStr = nowStr.toISOString().replace('T', ' ').replace('Z', '');
-
-            if (lastTimeStr > nowStr) {
-                lastTimeStr = nowStr;
-                await originalPoolQuery.call(pool, "UPDATE ha_sync_state SET last_time = ? WHERE table_name = ?", [nowStr, table.name], { isSync: true });
-            }
+            let sql = '';
+            let params = [];
 
             if (table.name === 'radpostauth') {
                 sql = `SELECT * FROM ${table.name} WHERE ${table.idCol} > ? AND (${table.idCol} % 2) = ? ORDER BY ${table.idCol} ASC LIMIT 200`;
                 params = [lastId, offsetRem];
             } else {
-                sql = `SELECT * FROM ${table.name} WHERE ((${table.timeCol} > ?) OR (${table.timeCol} = ? AND ${table.idCol} > ?)) AND (${table.idCol} % 2) = ? ORDER BY ${table.timeCol} ASC, ${table.idCol} ASC LIMIT 200`;
+                const effectiveTimeExpr = hasUpdatedCol ? table.timeCol : `COALESCE(${table.timeCol}, acctstarttime, acctstoptime)`;
+                sql = `SELECT *, ${effectiveTimeExpr} AS ha_effective_time FROM ${table.name} WHERE ((${effectiveTimeExpr} > ?) OR (${effectiveTimeExpr} = ? AND ${table.idCol} > ?)) AND (${table.idCol} % 2) = ? ORDER BY ${effectiveTimeExpr} ASC, ${table.idCol} ASC LIMIT 200`;
                 params = [lastTimeStr, lastTimeStr, lastId, offsetRem];
             }
 
@@ -290,6 +309,10 @@ async function syncRadiusTables() {
 
             if (dataRows.length > 0) {
                 for (let row of dataRows) {
+                    const haEffectiveTime = row.ha_effective_time;
+                    delete row.ha_effective_time;
+                    delete row.ha_updated_at; // Ensure we don't push the local microsecond tracker to the remote
+
                     const keys = Object.keys(row).join(', ');
                     const placeholders = Object.keys(row).map(() => '?').join(', ');
                     const updateStmts = Object.keys(row).map(k => `${k}=VALUES(${k})`).join(', ');
@@ -299,28 +322,16 @@ async function syncRadiusTables() {
                     await originalPoolQuery.call(pool, "INSERT INTO ha_queue (query, values_json) VALUES (?, ?)", [query, JSON.stringify(values)], { isSync: true });
 
                     if (table.name === 'radacct') {
-                        let rowTime = row[table.timeCol];
-                        // If it's a date object (though dateStrings is true), format it correctly
-                        if (rowTime instanceof Date) {
-                            rowTime = rowTime.toISOString().replace('T', ' ').replace('Z', '');
-                        } else if (typeof rowTime === 'string') {
-                            // Ensure 6 decimal padding for MariaDB fractional matching
-                            if (!rowTime.includes('.')) {
-                                rowTime += '.000000';
-                            } else {
-                                rowTime = rowTime.padEnd(26, '0');
-                            }
-                        }
-
-                        // Because we ORDER BY timeCol ASC, idCol ASC, the last row in the loop is inherently the newest max
+                        let rowTime = haEffectiveTime || lastTimeStr;
+                        if (rowTime instanceof Date) rowTime = rowTime.toISOString().replace('T', ' ').replace('Z', '');
+                        else if (typeof rowTime === 'string') rowTime = rowTime.includes('.') ? rowTime.padEnd(26, '0') : rowTime + '.000000';
                         maxTimeProcessed = rowTime;
                         maxIdProcessed = row[table.idCol];
                     } else {
                         maxIdProcessed = Math.max(maxIdProcessed, row[table.idCol]);
-                        // Max time is irrelevant for radpostauth but we update it anyway for consistency
-                        let rowTime = row[table.timeCol];
+                        let rowTime = row[table.timeCol] || lastTimeStr;
                         if (rowTime instanceof Date) rowTime = rowTime.toISOString().replace('T', ' ').replace('Z', '');
-                        else if (typeof rowTime === 'string' && !rowTime.includes('.')) rowTime += '.000000';
+                        else if (typeof rowTime === 'string') rowTime = rowTime.includes('.') ? rowTime.padEnd(26, '0') : rowTime + '.000000';
                         maxTimeProcessed = rowTime;
                     }
                 }
@@ -398,15 +409,32 @@ app.post('/api/ha/full-sync', async (req, res) => {
 });
 
 app.post('/api/sync/execute', async (req, res) => {
-    const auth = req.headers.authorization;
-    if (!auth || auth !== `Bearer ${process.env.HA_API_TOKEN}`) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    let payload;
+    try {
+        payload = decryptHaPayload(req.body);
+    } catch (err) {
+        console.error('[HA Sync] Decryption failed - possible token mismatch or tampering');
+        return res.status(401).json({ error: 'Decryption failed' });
+    }
+
+    // Strict Replay Protection: Reject packets older than 60 seconds
+    const age = Date.now() - (payload._ts || 0);
+    if (age > 60000 || age < -5000) {
+        console.warn('[HA Sync] Rejected expired or replayed payload');
+        return res.status(401).json({ error: 'Payload expired' });
     }
 
     let conn;
     try {
         conn = await originalGetConnection.call(pool);
-        const { query, values, insertId } = req.body;
+        const { query, values, insertId } = payload;
+
+        const sanitizedValues = (values || []).map(v => {
+            if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(v)) {
+                return v.replace('T', ' ').replace('Z', '');
+            }
+            return v;
+        });
 
         let success = false;
         let retries = 3;
@@ -415,9 +443,12 @@ app.post('/api/sync/execute', async (req, res) => {
             try {
                 await conn.query("SET FOREIGN_KEY_CHECKS=0", []);
                 if (insertId) {
+                    await conn.query("SET SESSION auto_increment_increment = 1", []);
                     await conn.query("SET insert_id = ?", [insertId]);
                 }
-                await conn.query(query, values || [], { isSync: true });
+
+                await conn.query(query, sanitizedValues);
+
                 await conn.query("SET FOREIGN_KEY_CHECKS=1", []);
                 success = true;
             } catch (err) {
