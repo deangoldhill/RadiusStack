@@ -294,8 +294,8 @@ async function syncRadiusTables() {
             let params = [];
 
             if (table.name === 'radpostauth') {
-                sql = `SELECT * FROM ${table.name} WHERE ${table.idCol} > ? AND (${table.idCol} % 2) = ? ORDER BY ${table.idCol} ASC LIMIT 200`;
-                params = [lastId, offsetRem];
+                sql = `SELECT *, authdate AS ha_effective_time FROM ${table.name} WHERE ((authdate > ?) OR (authdate = ? AND ${table.idCol} > ?)) AND (${table.idCol} % 2) = ? ORDER BY authdate ASC, ${table.idCol} ASC LIMIT 200`;
+                params = [lastTimeStr, lastTimeStr, lastId, offsetRem];
             } else {
                 const effectiveTimeExpr = hasUpdatedCol ? table.timeCol : `COALESCE(${table.timeCol}, acctstarttime, acctstoptime)`;
                 sql = `SELECT *, ${effectiveTimeExpr} AS ha_effective_time FROM ${table.name} WHERE ((${effectiveTimeExpr} > ?) OR (${effectiveTimeExpr} = ? AND ${table.idCol} > ?)) AND (${table.idCol} % 2) = ? ORDER BY ${effectiveTimeExpr} ASC, ${table.idCol} ASC LIMIT 200`;
@@ -677,6 +677,27 @@ app.get('/api/auth/me', async (req, res) => {
     if (!admins.length) return res.status(401).json({ error: 'Invalid API Key' });
     res.json(admins[0]);
 });
+app.put('/api/auth/me/password', async (req, res) => {
+    const apiKey = req.header('X-API-Key');
+    if (!apiKey) return res.status(401).json({ error: 'API Key missing' });
+
+    const [admins] = await pool.query('SELECT * FROM admins WHERE api_key = ?', [apiKey]);
+    if (!admins.length) return res.status(401).json({ error: 'Invalid API Key' });
+
+    const admin = admins[0];
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) return res.status(400).json({ error: 'Missing fields' });
+
+    const valid = await bcrypt.compare(oldPassword, admin.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid current password' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [hash, admin.id]);
+
+    await auditLog(admin.username, 'webui', 'Changed their own password', 'success', '', req.ip || '');
+    res.json({ success: true });
+});
 
 // --- AUDIT LOG API ---
 app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) => {
@@ -964,14 +985,15 @@ app.get('/api/plans/:id/stats', requireApiAuth('plans', 'read-only'), async (req
         const plan = planRow[0];
 
         const [users] = await pool.query(`
-            SELECT 
-                up.username,
-                COALESCE((SELECT SUM(acctinputoctets) + SUM(acctoutputoctets) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_input_octets, 0) - COALESCE(pu.base_output_octets, 0) AS total_bytes,
-                COALESCE((SELECT SUM(acctsessiontime) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_session_seconds, 0) AS total_seconds
-            FROM user_plans up
-            LEFT JOIN user_plan_usage pu ON pu.username = up.username
-            WHERE up.plan_id = ?
-        `, [req.params.id]);
+    SELECT 
+        COALESCE(m.mac_id, up.username) AS username,
+        COALESCE((SELECT SUM(acctinputoctets) + SUM(acctoutputoctets) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_input_octets, 0) - COALESCE(pu.base_output_octets, 0) AS total_bytes,
+        COALESCE((SELECT SUM(acctsessiontime) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_session_seconds, 0) AS total_seconds
+    FROM user_plans up
+    LEFT JOIN user_plan_usage pu ON pu.username = up.username
+    LEFT JOIN mac_auth_devices m ON m.mac_address = up.username
+    WHERE up.plan_id = ?
+`, [req.params.id]);
 
         let depletedCount = 0;
         const topUsers = [];
@@ -1742,12 +1764,16 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
         const [topSessions] = await pool.query(`
-            SELECT username, COUNT(*) as session_count,
-                SUM(acctinputoctets + acctoutputoctets) / 1073741824 as data_gb
-            FROM radacct
-            WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            GROUP BY username ORDER BY session_count DESC LIMIT 20
-        `);
+    SELECT COALESCE(m.mac_id, a.username) AS username,
+        COUNT(*) AS session_count,
+        SUM(a.acctinputoctets + a.acctoutputoctets) / 1.073741824e+09 AS data_gb
+    FROM radacct a
+    LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
+    WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    GROUP BY COALESCE(m.mac_id, a.username)
+    ORDER BY session_count DESC
+    LIMIT 20
+`);
         const [topData] = await pool.query(`
             SELECT COALESCE(m.mac_id, a.username) AS username,
                 SUM(a.acctinputoctets + a.acctoutputoctets) / 1048576 as data_mb
@@ -2001,8 +2027,8 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (r
         const radgroupcheck = await safeQuery('SELECT * FROM radgroupcheck');
         const radgroupreply = await safeQuery('SELECT * FROM radgroupreply');
         const mac_auth_devices = await safeQuery('SELECT * FROM mac_auth_devices');
-        const user_plan_assignments = await safeQuery('SELECT * FROM user_plan_assignments');
-        const user_plan_snapshots = await safeQuery('SELECT * FROM user_plan_snapshots');
+        const user_plans = await safeQuery('SELECT * FROM user_plans');
+        const user_plan_usage = await safeQuery('SELECT * FROM user_plan_usage');
 
         const macSet = new Set(mac_auth_devices.map(d => d.mac_address.toLowerCase()));
         const radcheck_users = radcheck.filter(r => !macSet.has(r.username.toLowerCase()));
@@ -2020,8 +2046,8 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (r
                 radreply,
                 radgroupcheck,
                 radgroupreply,
-                user_plan_assignments,
-                user_plan_snapshots,
+                user_plans,
+                user_plan_usage,
             }
         };
 
@@ -2166,15 +2192,16 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer
         }
 
         // --- Plan assignments + snapshots ---
-        if (data.user_plan_assignments?.length) {
-            await conn.query('DELETE FROM user_plan_assignments').catch(() => { });
-            await chunkInsert(conn, 'user_plan_assignments', data.user_plan_assignments);
-            results.user_plan_assignments = data.user_plan_assignments.length;
+        if (data.user_plans?.length) {
+            await conn.query('DELETE FROM user_plans');
+            await chunkInsert(conn, 'user_plans', data.user_plans);
+            results.user_plans = data.user_plans.length;
         }
-        if (data.user_plan_snapshots?.length) {
-            await conn.query('DELETE FROM user_plan_snapshots').catch(() => { });
-            await chunkInsert(conn, 'user_plan_snapshots', data.user_plan_snapshots);
-            results.user_plan_snapshots = data.user_plan_snapshots.length;
+
+        if (data.user_plan_usage?.length) {
+            await conn.query('DELETE FROM user_plan_usage');
+            await chunkInsert(conn, 'user_plan_usage', data.user_plan_usage);
+            results.user_plan_usage = data.user_plan_usage.length;
         }
 
         // --- Accounting (radacct) ---

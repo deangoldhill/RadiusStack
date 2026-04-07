@@ -146,7 +146,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         <a href="api-docs.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4DA;</span> API Docs</a>
         <a href="settings.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F527;</span> Settings</a>
       </nav>
-      <div class="mt-auto pt-6 border-t border-gray-800">
+      <div class="mt-auto pt-6 border-t border-gray-800 space-y-3">
+        <button onclick="openadminPasswordModal()" class="w-full flex items-center justify-center bg-gray-800 hover:bg-gray-700 transition-all duration-300 text-gray-300 hover:text-white py-3 rounded-xl font-bold shadow-sm group">
+          <span class="mr-2 group-hover:-translate-y-1 transition-transform">👤</span> Profile
+        </button>
         <button onclick="logout()" class="w-full flex items-center justify-center bg-gray-800 hover:bg-red-600 transition-all duration-300 text-gray-300 hover:text-white py-3 rounded-xl font-bold shadow-sm group">
           <span class="mr-2 group-hover:-translate-x-1 transition-transform"></span> Logout
         </button>
@@ -178,5 +181,55 @@ document.addEventListener("DOMContentLoaded", async () => {
   const main = document.querySelector('main');
   if (main) main.className = "flex-1 p-8 overflow-y-auto";
 
-  window.appTheme = theme;
+    window.appTheme = theme;
+  // Inject Profile Password Modal
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="adminPasswordModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+      <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">
+        <h2 class="text-xl font-bold mb-4 text-gray-800">Change My Password</h2>
+        <form id="adminPasswordForm" class="space-y-4">
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1">Current Password</label>
+            <input type="password" id="profOldPass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required>
+          </div>
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1">New Password</label>
+            <input type="password" id="profNewPass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required>
+          </div>
+          <div class="flex justify-end gap-3 mt-6">
+            <button type="button" onclick="closeadminPasswordModal()" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-bold transition-colors shadow-sm">Cancel</button>
+            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold transition-colors shadow-sm">Save Password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `);
+
+  window.openadminPasswordModal = () => {
+      document.getElementById('adminPasswordModal').classList.remove('hidden');
+      document.getElementById('adminPasswordForm').reset();
+  };
+
+  window.closeadminPasswordModal = () => {
+      document.getElementById('adminPasswordModal').classList.add('hidden');
+  };
+
+  document.getElementById('adminPasswordForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const oldPassword = document.getElementById('profOldPass').value;
+      const newPassword = document.getElementById('profNewPass').value;
+      
+      const res = await apiFetch('/api/auth/me/password', {
+          method: 'PUT',
+          body: JSON.stringify({ oldPassword, newPassword })
+      });
+      
+      if (res.ok) {
+          alert('Password updated successfully!');
+          closeadminPasswordModal();
+      } else {
+          const data = await res.json();
+          alert('Error: ' + data.error);
+      }
+  };
 });
