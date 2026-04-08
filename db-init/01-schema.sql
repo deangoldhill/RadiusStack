@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 
 INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', 'false') ON DUPLICATE KEY UPDATE setting_key=setting_key;
-INSERT INTO nas (nasname, shortname, secret, description) VALUES ('127.0.0.1', 'all', 'testing123', 'Sample internal-only NAS');
+
 
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('ui_theme', 'blue');
 
