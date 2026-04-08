@@ -12,24 +12,32 @@ Designed for security and simplicity.
 * **Intelligent Backups:** Export and safely restore JSON-based database configurations across version upgrades.
 * **Automated Certificate Generation:** One-click custom SSL/EAP certificate generation or direct file uploads.
 * **Live Analytics:** Monitor active sessions, view authentication/accounting logs, and detailed administration audit log.
+* **High Availability:** Full config, object and session sync between members. See the wiki for more details. 
 
 ## Documentation
 
 For full installation instructions, feature breakdowns, and management guides, please visit the **[RadiusStack Wiki](https://github.com/deangoldhill/RadiusStack/wiki)**.
 
 ---
-*Created and maintained by Dean Goldhill.*
+
+<img width="1888" height="962" alt="image" src="https://github.com/user-attachments/assets/14cebbd2-aaed-418a-afa7-97c7669fe869" />
+<img width="1700" height="688" alt="image" src="https://github.com/user-attachments/assets/58238fa6-dbcd-4f00-9848-3a1b7f977b02" />
+<img width="1685" height="323" alt="image" src="https://github.com/user-attachments/assets/f0b15a8b-02dc-4c73-808f-14fdeb20eafa" />
+<img width="1689" height="464" alt="image" src="https://github.com/user-attachments/assets/5ff147ed-9e6d-4bda-bd51-8bcb9209d36f" />
+<img width="1665" height="517" alt="image" src="https://github.com/user-attachments/assets/c788d08b-84ff-425b-92f6-1523e35312bb" />
+<img width="1688" height="923" alt="image" src="https://github.com/user-attachments/assets/e404f667-894f-4ed5-816a-1bf66eff2447" />
+<img width="1691" height="681" alt="image" src="https://github.com/user-attachments/assets/b12d2c6f-e188-4994-9f1b-e940083abcca" />
+<img width="1699" height="906" alt="image" src="https://github.com/user-attachments/assets/7e5a2d5a-9a82-4cf4-a19c-950fd99c7556" />
 
 
-<img width="1479" height="326" alt="image" src="https://github.com/user-attachments/assets/83282ac0-df08-4b90-bb10-f6a604b1314d" />
-<img width="1334" height="533" alt="image" src="https://github.com/user-attachments/assets/1a6c207c-8866-479a-ae90-050577dc969b" />
-<img width="827" height="599" alt="image" src="https://github.com/user-attachments/assets/0409efa8-ff0f-41da-8c62-a319c7ec1cca" />
-<img width="1886" height="632" alt="image" src="https://github.com/user-attachments/assets/83dff712-0933-4bf4-a6a7-7d270f76147b" />
-<img width="1674" height="856" alt="image" src="https://github.com/user-attachments/assets/41d81ded-237f-41e0-9cdd-dc5fbe8ac303" />
-<img width="1053" height="812" alt="image" src="https://github.com/user-attachments/assets/84674d94-e141-4612-907f-0b931fbefeaf" />
-<img width="1685" height="227" alt="image" src="https://github.com/user-attachments/assets/5da7658b-f1be-4518-836f-8651ee03183d" />
-<img width="1691" height="962" alt="image" src="https://github.com/user-attachments/assets/3f900ca1-3f04-4da4-b47a-7662d6a82b7a" />
-<img width="1707" height="776" alt="image" src="https://github.com/user-attachments/assets/9cb5ed7b-aced-45ab-bb33-4ba6d0bf7e22" />
+
+
+
+
+
+
+
+
 
 
 
