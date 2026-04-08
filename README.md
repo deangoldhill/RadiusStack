@@ -6,7 +6,6 @@ Useful for managing Wi-Fi access points, remote access, or network appliance log
 Designed for security and simplicity. 
 
 **Try the demo**
-
 https://demo.radius-stack.com
 admin account:  admin / demo123
 Reports account:  reports / demo123
