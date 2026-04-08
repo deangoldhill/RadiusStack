@@ -17,11 +17,11 @@
             <table class="w-full text-left text-sm whitespace-nowrap" id="profilesTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600">
-                        <th class="p-3 rounded-tl-lg">Profile Name</th>
-                        <th class="p-3">VLAN ID</th>
-                        <th class="p-3">NAS Restriction</th>
-                        <th class="p-3">Reply Attributes</th>
-                        <th class="p-3">Users</th>
+                        <th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Profile Name</th>
+                        <th onclick="sortTable('vlan')" class="cursor-pointer hover:bg-gray-100 p-3">VLAN ID</th>
+                        <th onclick="sortTable('nas')" class="cursor-pointer hover:bg-gray-100 p-3">NAS Restriction</th>
+                        <th onclick="sortTable('replies')" class="cursor-pointer hover:bg-gray-100 p-3">Reply Attributes</th>
+                        <th onclick="sortTable('users')" class="cursor-pointer hover:bg-gray-100 p-3">Users</th>
                         <th class="p-3 text-right rounded-tr-lg">Actions</th>
                     </tr>
                 </thead>
@@ -132,6 +132,26 @@
 
     <script src="/js/layout.js"></script>
     <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderTable();
+        }
+
+        function getSortValue(pName, field) {
+            const checks = allProfileData.checks.filter(c => c.groupname === pName);
+            const replies = allProfileData.replies.filter(r => r.groupname === pName);
+            const vlanAttr = replies.find(r => r.attribute === 'Tunnel-Private-Group-Id');
+            const nasAttr = checks.find(c => c.attribute === 'NAS-IP-Address');
+            const userCount = allUsers.filter(u => u.groupname === pName).length;
+
+            switch(field) { case 'profileName': return pName || ''; case 'vlan': return vlanAttr ? vlanAttr.value : ''; case 'nas': return nasAttr ? nasAttr.value : ''; case 'replies': return replies.length; case 'users': return userCount; default: return ''; }
+        }
+
         let customAttributes = [];
         const baseAttributes = ["Acct-Interim-Interval", "Session-Timeout", "Idle-Timeout", "Reply-Message", "Mikrotik-Rate-Limit", "Filter-Id"];
         let allProfileData = { checks: [], replies: [] };
@@ -205,6 +225,8 @@
             [...checks, ...replies].forEach(item => { if (item.groupname) profileSet.add(item.groupname); });
             const profiles = Array.from(profileSet).sort();
 
+            
+            if (currentSort) { profiles.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
             document.querySelector('#profilesTable tbody').innerHTML = profiles.map(p => {
                 const vlanReply = replies.find(r => r.groupname === p && r.attribute === 'Tunnel-Private-Group-ID');
                 const vlanBadge = vlanReply

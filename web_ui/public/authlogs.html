@@ -35,7 +35,7 @@
         <h1 class="text-3xl font-bold mb-6">RADIUS Authentication Logs</h1>
 
         <div class="bg-white p-4 rounded shadow mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 
                 <div>
                     <label class="block text-sm font-bold mb-1">Username</label>
@@ -65,6 +65,14 @@
                     <input type="datetime-local" id="dateTo" class="border p-2 rounded w-full">
                 </div>
 
+                <div>
+                    <label class="block text-sm font-bold mb-1">Result</label>
+                    <select id="replyFilter" class="border p-2 rounded w-full">
+                        <option value="">All</option>
+                        <option value="Access-Accept">Accept</option>
+                        <option value="Access-Reject">Reject</option>
+                    </select>
+                </div>
                 <div>
                     <label class="block text-sm font-bold mb-1">Max Records</label>
                     <select id="limitFilter" class="border p-2 rounded w-full">
@@ -129,6 +137,7 @@
             const dateFrom = document.getElementById('dateFrom').value;
             const dateTo = document.getElementById('dateTo').value;
             const limit = document.getElementById('limitFilter').value;
+            const reply = document.getElementById('replyFilter').value;
 
             const params = new URLSearchParams();
             if (username) params.set('username', username);
@@ -136,6 +145,7 @@
             if (callingstation) params.set('callingstationid', callingstation);
             if (dateFrom) params.set('date_from', dateFrom);
             if (dateTo) params.set('date_to', dateTo);
+            if (reply) params.set('reply', reply);
             params.set('limit', limit);
 
             const url = '/api/logs/auth' + (params.toString() ? '?' + params.toString() : '');
@@ -183,6 +193,7 @@
             document.getElementById('callingStationFilter').value = '';
             document.getElementById('dateFrom').value = '';
             document.getElementById('dateTo').value = '';
+            document.getElementById('replyFilter').value = '';
             document.getElementById('limitFilter').value = '100';
             loadLogs();
         }

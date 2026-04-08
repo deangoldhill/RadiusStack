@@ -11,6 +11,7 @@
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">MAC Authentication</h1>
             <div class="flex space-x-3 items-center">
+                <button id="deleteSelectedBtn" onclick="deleteSelected()" class="hidden bg-red-600 hover:bg-red-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">Delete Selected</button>
                 <a href="data:text/csv;charset=utf-8,mac_address%2Cmac_id%2Cprofile%2Cplan_id%0A1a%3A2b%3A3c%3A4d%3A5e%3A6f%2CAlices-Phone%2CStaff%2C%0Aaa%3Abb%3Acc%3Add%3Aee%3Aff%2CLobby-Printer%2C%2C1" download="mac_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
                 <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
                     <input type="file" accept=".csv" class="hidden" onchange="handleBulkImport(event)">
@@ -47,12 +48,14 @@
             <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600">
-                        <th class="p-3 rounded-tl-lg">MAC ID</th>
-                        <th class="p-3">MAC Address</th>
-                        <th class="p-3">Assigned Plan</th>
-                        <th class="p-3">Profile</th>
-                        <th class="p-3">30-Day Data</th>
-                        <th class="p-3">30-Day Time</th>
+                        <th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th>
+                        <th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">MAC ID</th>
+                        <th onclick="sortTable('callingstationid')" class="cursor-pointer hover:bg-gray-100 p-3">MAC Address</th>
+                        <th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th>
+                        <th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th>
+                        <th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th>
+                        <th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th>
+                        <th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th>
                         <th class="p-3 text-right rounded-tr-lg">Actions</th>
                     </tr>
                 </thead>
@@ -192,6 +195,20 @@
 
     <script src="/js/layout.js"></script>
     <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderDevices();
+        }
+
+        function getSortValue(u, field) {
+            switch(field) { case 'username': return u.username || ''; case 'callingstationid': return u.callingstationid || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; default: return ''; }
+        }
+
         let originalMacAddress = null;
         let allDevices = [];
         let allPlans = [];
@@ -233,12 +250,16 @@
                 const matchesProfile = !profileFilter || (profileFilter === '__NO_PROFILE__' ? !d.profile : d.profile === profileFilter);
                 return matchesSearch && matchesPlan && matchesProfile;
             });
+            
+            if (currentSort) { filtered.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
             document.querySelector('#usersTable tbody').innerHTML = filtered.map(d => `
             <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeJS(d.mac_address)}','${escapeJS(d.mac_id)}')">
+              <td class="p-3 w-10" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeJS(d.mac_address)}" class="row-checkbox cursor-pointer" onchange="updateMultiSelect()"></td>
               <td class="p-3 font-bold text-blue-700">${d.mac_id}</td>
               <td class="p-3 font-mono text-xs text-gray-500">${d.mac_address}</td>
               <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${d.plan_name || 'No Plan'}</span></td>
               <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${d.profile || 'None'}</span></td>
+              <td class="p-3 font-mono text-xs text-gray-600">${d.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.time_30d || 0) / 3600).toFixed(1)} hrs</td>
               <td class="p-3 text-right" onclick="event.stopPropagation()">
@@ -545,6 +566,73 @@
         }
 
         loadData();
-    </script>
+    
+        function toggleSelectAll() {
+            const isChecked = document.getElementById('selectAllCheckbox').checked;
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            checkboxes.forEach(cb => cb.checked = isChecked);
+            updateMultiSelect();
+        }
+
+        function updateMultiSelect() {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+
+            const selectAllCb = document.getElementById('selectAllCheckbox');
+            if (selectAllCb) {
+                if (checkboxes.length === 0 || checkedCount === 0) {
+                    selectAllCb.checked = false;
+                    selectAllCb.indeterminate = false;
+                } else if (checkedCount === checkboxes.length) {
+                    selectAllCb.checked = true;
+                    selectAllCb.indeterminate = false;
+                } else {
+                    selectAllCb.checked = false;
+                    selectAllCb.indeterminate = true;
+                }
+            }
+
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            if (deleteBtn) {
+                if (checkedCount > 0) {
+                    deleteBtn.textContent = `Delete Selected (${checkedCount})`;
+                    deleteBtn.classList.remove('hidden');
+                } else {
+                    deleteBtn.classList.add('hidden');
+                }
+            }
+        }
+
+        async function deleteSelected() {
+            const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+            if (checkboxes.length === 0) return;
+
+            if (!confirm(`Are you sure you want to delete ${checkboxes.length} selected MACs?`)) return;
+
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            const originalText = deleteBtn.textContent;
+            deleteBtn.textContent = "Deleting...";
+            deleteBtn.disabled = true;
+
+            for (const cb of checkboxes) {
+                const macAddress = cb.value;
+                try {
+                    const res = await apiFetch(`/api/mac-auth/${encodeURIComponent(macAddress)}`, { method: 'DELETE' });
+                    if (!res.ok) console.error(`Failed to delete ${macAddress}`);
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            deleteBtn.classList.add('hidden');
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = originalText;
+
+            loadData();
+        }
+
+</script>
 </body>
 </html>

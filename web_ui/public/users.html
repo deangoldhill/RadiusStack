@@ -11,6 +11,7 @@
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">User Management</h1>
             <div class="flex space-x-3 items-center">
+                <button id="deleteSelectedBtn" onclick="deleteSelected()" class="hidden bg-red-600 hover:bg-red-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">Delete Selected</button>
                 <a href="data:text/csv;charset=utf-8,username%2Cpassword%2Cprofile%2Cplan_id%2Ctotp_enabled%0Aalice%2CSecretPass123%2CStaff%2C%2C0%0Abob%2CPassword%21456%2CGuest%2C2%2C1" download="users_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
                 <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
                     <input type="file" accept=".csv" class="hidden" onchange="handleBulkImport(event)">
@@ -55,7 +56,7 @@
 
         <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
-                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">Username</th><th class="p-3">Password</th><th class="p-3">Assigned Plan</th><th class="p-3">Profile</th><th class="p-3">30-Day Data</th><th class="p-3">30-Day Time</th><th class="p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th><th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th><th onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th><th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -198,6 +199,20 @@
 
     <script src="/js/layout.js"></script>
     <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderUsers();
+        }
+
+        function getSortValue(u, field) {
+            switch(field) { case 'username': return u.username || ''; case 'value': return u.password || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; case 'totp': return Number(u.totp_enabled) || 0; default: return ''; }
+        }
+
         let originalUsername = null;
         let allUsers = [];
         let allPlans = [];
@@ -298,12 +313,16 @@
                 return matchesSearch && matchesPlan && matchesProfile && matchesTotp;
             });
 
+            
+            if (currentSort) { filtered.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
             document.querySelector('#usersTable tbody').innerHTML = filtered.map(u => `
             <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeJS(u.username)}')">
+              <td class="p-3 w-10" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeJS(u.username)}" class="row-checkbox cursor-pointer" onchange="updateMultiSelect()"></td>
               <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${u.username}</td>
               <td class="p-3 text-gray-500 font-mono text-xs" onclick="event.stopPropagation()">${maskPasswords ? maskPassword(u.password) : (u.password || '')}</td>
               <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
               <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
+              <td class="p-3 font-mono text-xs text-gray-600">${u.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d || 0) / 3600).toFixed(1)} hrs</td>
               <td class="p-3" onclick="event.stopPropagation()">
@@ -854,6 +873,73 @@
             };
             reader.readAsText(file);
         }
-    </script>
+    
+        function toggleSelectAll() {
+            const isChecked = document.getElementById('selectAllCheckbox').checked;
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            checkboxes.forEach(cb => cb.checked = isChecked);
+            updateMultiSelect();
+        }
+
+        function updateMultiSelect() {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+
+            const selectAllCb = document.getElementById('selectAllCheckbox');
+            if (selectAllCb) {
+                if (checkboxes.length === 0 || checkedCount === 0) {
+                    selectAllCb.checked = false;
+                    selectAllCb.indeterminate = false;
+                } else if (checkedCount === checkboxes.length) {
+                    selectAllCb.checked = true;
+                    selectAllCb.indeterminate = false;
+                } else {
+                    selectAllCb.checked = false;
+                    selectAllCb.indeterminate = true;
+                }
+            }
+
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            if (deleteBtn) {
+                if (checkedCount > 0) {
+                    deleteBtn.textContent = `Delete Selected (${checkedCount})`;
+                    deleteBtn.classList.remove('hidden');
+                } else {
+                    deleteBtn.classList.add('hidden');
+                }
+            }
+        }
+
+        async function deleteSelected() {
+            const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+            if (checkboxes.length === 0) return;
+
+            if (!confirm(`Are you sure you want to delete ${checkboxes.length} selected users?`)) return;
+
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            const originalText = deleteBtn.textContent;
+            deleteBtn.textContent = "Deleting...";
+            deleteBtn.disabled = true;
+
+            for (const cb of checkboxes) {
+                const username = cb.value;
+                try {
+                    const res = await apiFetch(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+                    if (!res.ok) console.error(`Failed to delete ${username}`);
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+
+            document.getElementById('selectAllCheckbox').checked = false;
+            document.getElementById('selectAllCheckbox').indeterminate = false;
+            deleteBtn.classList.add('hidden');
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = originalText;
+
+            loadData();
+        }
+
+</script>
 </body>
 </html>

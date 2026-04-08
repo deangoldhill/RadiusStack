@@ -1499,7 +1499,7 @@ app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (r
 });
 
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const { username, nasip, callingstationid, date_from, date_to, limit = 100 } = req.query;
+    const { username, nasip, callingstationid, date_from, date_to, reply, limit = 100 } = req.query;
     let query = 'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
     const conditions = [], params = [];
     if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
@@ -1507,6 +1507,8 @@ app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, re
     if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
     if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
     if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
+    if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
+
     if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
     query += ' ORDER BY authdate DESC';
     const queryLimit = Math.min(parseInt(limit) || 100, 10000);

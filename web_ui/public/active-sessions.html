@@ -58,9 +58,8 @@
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
                 <div>
                     <label class="block text-xs font-bold text-gray-600 mb-1">Username</label>
-                    <input type="text" id="fUser" list="userList" placeholder="All users" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
-                    <datalist id="userList"></datalist>
-                </div>
+                    <input type="text" id="fUser" placeholder="All users" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
+                                    </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-600 mb-1">NAS IP</label>
                     <select id="fNas" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
@@ -76,8 +75,7 @@
                     <input type="text" id="fFramed" placeholder="e.g. 10.0.0." class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="loadSessions()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors">Apply</button>
-                    <button onclick="clearFilters()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg transition-colors">Clear</button>
+                    <button onclick="clearFilters()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg transition-colors">Clear Filters</button>
                 </div>
             </div>
         </div>
@@ -87,15 +85,15 @@
             <table class="w-full text-left text-sm whitespace-nowrap" id="sessTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600 text-xs font-bold uppercase border-b">
-                        <th class="p-3">Username</th>
-                        <th class="p-3">Framed IP</th>
-                        <th class="p-3">NAS IP</th>
-                        <th class="p-3">Calling Station</th>
-                        <th class="p-3">Started</th>
-                        <th class="p-3">Duration</th>
-                        <th class="p-3 text-right">Upload</th>
-                        <th class="p-3 text-right">Download</th>
-                        <th class="p-3 text-right">Total</th>
+                        <th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th>
+                        <th onclick="sortTable('framedipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">Framed IP</th>
+                        <th onclick="sortTable('nasipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">NAS IP</th>
+                        <th onclick="sortTable('callingstationid')" class="cursor-pointer hover:bg-gray-100 p-3">Calling Station</th>
+                        <th onclick="sortTable('acctstarttime')" class="cursor-pointer hover:bg-gray-100 p-3">Started</th>
+                        <th onclick="sortTable('duration')" class="cursor-pointer hover:bg-gray-100 p-3">Duration</th>
+                        <th onclick="sortTable('acctinputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Upload</th>
+                        <th onclick="sortTable('acctoutputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Download</th>
+                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th>
                     </tr>
                 </thead>
                 <tbody id="sessBody">
@@ -133,6 +131,20 @@
 
     <script src="/js/layout.js"></script>
     <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderTable();
+        }
+
+        function getSortValue(s, field) {
+            switch(field) { case 'username': return s.username || ''; case 'framedipaddress': return s.framedipaddress || ''; case 'nasipaddress': return s.nasipaddress || ''; case 'callingstationid': return s.callingstationid || ''; case 'acctstarttime': return s.acctstarttime ? new Date(s.acctstarttime).getTime() : 0; case 'duration': return s.acctstarttime ? Date.now() - new Date(s.acctstarttime).getTime() : 0; case 'acctinputoctets': return Number(s.acctinputoctets) || 0; case 'acctoutputoctets': return Number(s.acctoutputoctets) || 0; case 'total': return (Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0); default: return ''; }
+        }
+
         var allSessions = [];
         var autoRefresh = true;
         var refreshTimer = null;
@@ -146,36 +158,32 @@
         }
 
         async function init() {
-            var [uRes, nRes] = await Promise.all([apiFetch('/api/users'), apiFetch('/api/nas')]);
-            if (uRes.ok) { var users = await uRes.json(); document.getElementById('userList').innerHTML = users.map(function (u) { return '<option value="' + u.username + '">'; }).join(''); }
+            var nRes = await apiFetch('/api/nas');
             if (nRes.ok) { var nas = await nRes.json(); document.getElementById('fNas').innerHTML += nas.map(function (n) { return '<option value="' + n.nasname + '">' + n.shortname + ' (' + n.nasname + ')</option>'; }).join(''); }
+
+            ['fUser', 'fCalling', 'fFramed'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.addEventListener('input', renderTable);
+            });
+            var nasEl = document.getElementById('fNas');
+            if (nasEl) nasEl.addEventListener('change', renderTable);
+
             loadSessions();
         }
 
         function clearFilters() {
             ['fUser', 'fCalling', 'fFramed'].forEach(function (id) { document.getElementById(id).value = ''; });
             document.getElementById('fNas').value = '';
-            loadSessions();
+            renderTable();
         }
 
         async function loadSessions() {
             var icon = document.getElementById('refreshIcon');
             icon.classList.add('spinning');
-            var p = new URLSearchParams();
-            var u = document.getElementById('fUser').value,
-                n = document.getElementById('fNas').value,
-                c = document.getElementById('fCalling').value,
-                f = document.getElementById('fFramed').value;
-            if (u) p.set('username', u);
-            if (n) p.set('nasip', n);
-            if (c) p.set('callingstationid', c);
-            if (f) p.set('framedip', f);
-            p.set('limit', '500');
             try {
-                var res = await apiFetch('/api/sessions/active?' + p.toString());
+                var res = await apiFetch('/api/sessions/active?limit=1000');
                 if (!res.ok) { icon.classList.remove('spinning'); return; }
                 allSessions = await res.json();
-                document.getElementById('sessionCount').textContent = allSessions.length;
                 renderTable();
             } catch (e) { console.error(e); }
             icon.classList.remove('spinning');
@@ -184,12 +192,34 @@
 
         function renderTable() {
             var tbody = document.getElementById('sessBody');
-            if (!allSessions.length) {
+            var u = document.getElementById('fUser').value.toLowerCase();
+            var n = document.getElementById('fNas').value;
+            var c = document.getElementById('fCalling').value.toLowerCase();
+            var f = document.getElementById('fFramed').value.toLowerCase();
+
+            var filtered = allSessions;
+            if (u || n || c || f) {
+                filtered = allSessions.filter(function (s) {
+                    var matchU = !u || (s.username && String(s.username).toLowerCase().includes(u));
+                    var matchN = !n || (s.nasipaddress === n);
+                    var matchC = !c || (s.callingstationid && String(s.callingstationid).toLowerCase().includes(c));
+                    var matchF = !f || (s.framedipaddress && String(s.framedipaddress).toLowerCase().includes(f));
+                    return matchU && matchN && matchC && matchF;
+                });
+            }
+
+            var countEl = document.getElementById('sessionCount');
+            if (countEl) countEl.textContent = filtered.length;
+
+            if (!filtered.length) {
                 tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
                 return;
             }
-            tbody.innerHTML = allSessions.map(function (s, i) {
-                return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + i + ')">' +
+
+            if (currentSort) { filtered.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c_val = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c_val:-c_val; }); }
+            tbody.innerHTML = filtered.map(function (s) {
+                var idx = allSessions.indexOf(s);
+                return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + idx + ')">' +
                     '<td class="p-3 font-bold text-gray-800">' + s.username + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.framedipaddress || '—') + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.nasipaddress || '—') + '</td>' +
