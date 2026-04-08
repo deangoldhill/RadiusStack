@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>Accounting History</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-800">Accounting History</h1>
+        <button onclick="deleteFiltered()" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors px-4 py-2 rounded-lg font-bold shadow-sm">Delete Filtered Records</button>
+    </div>
+
+    <!-- Advanced Filters -->
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-6 flex flex-wrap items-end gap-4 text-sm">
+        <div class="flex-1 min-w-[150px]">
+            <label class="block font-bold text-gray-700 mb-1">Username</label>
+            <input type="text" id="fUser" list="userList" placeholder="Search User" class="w-full border p-2 rounded bg-gray-50 focus:ring outline-none">
+            <datalist id="userList"></datalist>
+        </div>
+        <div class="flex-1 min-w-[150px]">
+            <label class="block font-bold text-gray-700 mb-1">NAS Client</label>
+            <select id="fNas" class="w-full border p-2 rounded bg-gray-50 focus:ring outline-none">
+                <option value="">All NAS Clients</option>
+            </select>
+        </div>
+        <div>
+            <label class="block font-bold text-gray-700 mb-1">Start Date</label>
+            <input type="date" id="fStart" class="w-full border p-2 rounded bg-gray-50 focus:ring outline-none">
+        </div>
+        <div>
+            <label class="block font-bold text-gray-700 mb-1">End Date</label>
+            <input type="date" id="fEnd" class="w-full border p-2 rounded bg-gray-50 focus:ring outline-none">
+        </div>
+        <div class="space-x-2">
+            <button onclick="fetchAcct()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-bold shadow-sm transition-colors">Search</button>
+            <button onclick="clearFilters()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold shadow-sm transition-colors">Reset</button>
+        </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+      <table class="w-full text-left text-sm whitespace-nowrap" id="acctTable">
+        <thead><tr class="bg-gray-50 text-gray-600 cursor-pointer select-none">
+          <th class="p-3 rounded-tl-lg hover:bg-gray-100" onclick="sort('acctstarttime')">Start Time</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctstoptime')">Stop Time</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('username')">Username</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('nasipaddress')">NAS IP</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctsessiontime')">Duration</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctinputoctets')">Upload (GB)</th>
+          <th class="p-3 hover:bg-gray-100" onclick="sort('acctoutputoctets')">Download (GB)</th>
+          <th class="p-3 hover:bg-gray-100 rounded-tr-lg" onclick="sort('total_data')">Total Data (GB)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Details Modal -->
+  <div id="detailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex justify-between items-center p-4 border-b bg-gray-50">
+              <h2 class="text-xl font-bold text-gray-800">Session Details</h2>
+              <button onclick="hideDetails()" class="text-gray-500 hover:text-red-500 font-bold text-2xl leading-none">&times;</button>
+          </div>
+          <div class="p-4 overflow-y-auto flex-1 bg-white">
+              <table class="w-full text-left text-sm border-collapse">
+                  <tbody id="modalBody"></tbody>
+              </table>
+          </div>
+          <div class="p-4 border-t bg-gray-50 flex justify-end">
+              <button onclick="hideDetails()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-bold transition-colors">Close</button>
+          </div>
+      </div>
+  </div>
+
+  <script src="/js/layout.js"></script>
+  <script>
+    let currentSort = 'acctstarttime';
+    let currentOrder = 'desc';
+    let allRecords = [];
+
+    async function init() {
+        const uRes = await apiFetch('/api/users');
+        if (uRes.ok) {
+            const users = await uRes.json();
+            document.getElementById('userList').innerHTML = users.map(u => `<option value="${u.username}">`).join('');
+        }
+        const nRes = await apiFetch('/api/nas');
+        if (nRes.ok) {
+            const nas = await nRes.json();
+            document.getElementById('fNas').innerHTML += nas.map(n => `<option value="${n.nasname}">${n.shortname} (${n.nasname})</option>`).join('');
+        }
+        fetchAcct();
+    }
+
+    function sort(field) {
+      if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+      else { currentSort = field; currentOrder = 'asc'; }
+      fetchAcct();
+    }
+
+    function clearFilters() {
+        document.getElementById('fUser').value = '';
+        document.getElementById('fNas').value = '';
+        document.getElementById('fStart').value = '';
+        document.getElementById('fEnd').value = '';
+        fetchAcct();
+    }
+
+    function getFilterParams() {
+        const u = document.getElementById('fUser').value;
+        const n = document.getElementById('fNas').value;
+        const s = document.getElementById('fStart').value;
+        const e = document.getElementById('fEnd').value;
+        return { username: u, nasip: n, start_date: s, end_date: e };
+    }
+
+    async function fetchAcct() {
+      const filters = getFilterParams();
+      const q = new URLSearchParams({ sort: currentSort, order: currentOrder, limit: 300 });
+      if(filters.username) q.append('username', filters.username);
+      if(filters.nasip) q.append('nasip', filters.nasip);
+      if(filters.start_date) q.append('start_date', filters.start_date);
+      if(filters.end_date) q.append('end_date', filters.end_date);
+
+      const res = await apiFetch(`/api/accounting?${q.toString()}`);
+      if (res.ok) {
+        allRecords = await res.json();
+        document.querySelector('#acctTable tbody').innerHTML = allRecords.map((a, index) => `<tr class="border-b border-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onclick="showDetails(${index})">
+          <td class="p-3 text-xs text-gray-500">${new Date(a.acctstarttime).toLocaleString()}</td>
+          <td class="p-3 text-xs text-gray-500">${a.acctstoptime ? new Date(a.acctstoptime).toLocaleString() : '<span class="px-2 py-0.5 bg-green-100 text-green-800 rounded font-bold border border-green-200">Active</span>'}</td>
+          <td class="p-3 font-bold text-gray-800">${a.username}</td>
+          <td class="p-3 font-mono text-gray-600 text-xs">${a.nasipaddress}</td>
+          <td class="p-3 font-mono text-gray-600 text-xs">${(a.acctsessiontime/3600).toFixed(2)} hr</td>
+          <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctinputoctets || 0) / 1073741824).toFixed(3)} GB</td>
+          <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctoutputoctets || 0) / 1073741824).toFixed(3)} GB</td>
+          <td class=\"p-3 font-mono text-blue-600 font-bold text-xs\">${((a.total_data || 0) / 1073741824).toFixed(3)} GB</td>
+        </tr>`).join('');
+      }
+    }
+
+    function showDetails(index) {
+        const record = allRecords[index];
+        const tbody = document.getElementById('modalBody');
+        tbody.innerHTML = Object.entries(record).map(([key, val]) => {
+            let displayVal = val !== null ? val : '<span class="text-gray-400 italic">null</span>';
+            // Format dates automatically
+            if (val && typeof val === 'string' && val.includes('T') && val.includes('Z')) {
+                displayVal = new Date(val).toLocaleString();
+            }
+            return `
+                <tr class="border-b hover:bg-gray-50 transition-colors">
+                    <td class="p-2 font-bold text-gray-700 w-1/3">${key}</td>
+                    <td class="p-2 text-gray-800 break-all font-mono text-xs">${displayVal}</td>
+                </tr>
+            `;
+        }).join('');
+        document.getElementById('detailsModal').classList.remove('hidden');
+    }
+
+    function hideDetails() {
+        document.getElementById('detailsModal').classList.add('hidden');
+    }
+
+    async function deleteFiltered() {
+        const payload = getFilterParams();
+        if(!payload.username && !payload.nasip && !payload.start_date && !payload.end_date) {
+            return alert("You must specify at least one filter before deleting records to prevent wiping the entire database.");
+        }
+        if(!confirm(`Are you sure you want to permanently delete all accounting records matching these filters?`)) return;
+
+        const res = await apiFetch(`/api/accounting`, { method: 'DELETE', body: JSON.stringify(payload) });
+        if(res.ok) {
+            const data = await res.json();
+            alert(`Successfully deleted ${data.deleted} records.`);
+            fetchAcct();
+        } else {
+            const err = await res.json(); alert('Error: ' + err.error);
+        }
+    }
+
+    init();
+  </script>
+</body></html>

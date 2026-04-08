@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta charset="UTF-8">
+    <title>Active Sessions</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .spinning {
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(4px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        .row-in {
+            animation: fadeIn 0.2s ease forwards;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">Active Sessions</h1>
+                <p class="text-sm text-gray-500 mt-1">Live view of all currently connected RADIUS sessions</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="inline-flex items-center gap-1.5 text-sm font-bold text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-full">
+                    <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                    <span id="sessionCount">—</span> Active
+                </span>
+                <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">⏱ Auto-refresh: ON</button>
+                <button onclick="loadSessions()" class="flex items-center gap-1 text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">
+                    <svg id="refreshIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6" /><path d="M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-5">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">Username</label>
+                    <input type="text" id="fUser" list="userList" placeholder="All users" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
+                    <datalist id="userList"></datalist>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">NAS IP</label>
+                    <select id="fNas" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
+                        <option value="">All NAS</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">Calling Station ID</label>
+                    <input type="text" id="fCalling" placeholder="Partial MAC/ID" class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 mb-1">Framed IP</label>
+                    <input type="text" id="fFramed" placeholder="e.g. 10.0.0." class="w-full border p-2 rounded-lg bg-gray-50 text-sm focus:ring focus:ring-blue-200 outline-none">
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="loadSessions()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors">Apply</button>
+                    <button onclick="clearFilters()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg transition-colors">Clear</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+            <table class="w-full text-left text-sm whitespace-nowrap" id="sessTable">
+                <thead>
+                    <tr class="bg-gray-50 text-gray-600 text-xs font-bold uppercase border-b">
+                        <th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th>
+                        <th onclick="sortTable('framedipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">Framed IP</th>
+                        <th onclick="sortTable('nasipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">NAS IP</th>
+                        <th onclick="sortTable('callingstationid')" class="cursor-pointer hover:bg-gray-100 p-3">Calling Station</th>
+                        <th onclick="sortTable('acctstarttime')" class="cursor-pointer hover:bg-gray-100 p-3">Started</th>
+                        <th onclick="sortTable('duration')" class="cursor-pointer hover:bg-gray-100 p-3">Duration</th>
+                        <th onclick="sortTable('acctinputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Upload</th>
+                        <th onclick="sortTable('acctoutputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Download</th>
+                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th>
+                    </tr>
+                </thead>
+                <tbody id="sessBody">
+                    <tr><td colspan="9" class="p-8 text-center text-gray-400 text-sm">Loading sessions…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- Details Modal -->
+    <div id="detailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-center p-4 border-b bg-gray-50">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800">Session Details</h2>
+                    <p class="text-xs text-gray-500 mt-0.5" id="modalSubtitle"></p>
+                </div>
+                <button onclick="hideModal()" class="text-gray-400 hover:text-red-500 font-bold text-2xl leading-none transition-colors">&times;</button>
+            </div>
+            <div class="p-5 overflow-y-auto flex-1">
+                <!-- KPI strip -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5" id="modalKpis"></div>
+                <!-- Full fields table -->
+                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">All Fields</h3>
+                <table class="w-full text-left text-sm border-collapse rounded-lg overflow-hidden">
+                    <tbody id="modalBody"></tbody>
+                </table>
+            </div>
+            <div class="p-4 border-t bg-gray-50 flex justify-between items-center">
+                <a id="modalUserLink" href="#" class="text-xs text-blue-600 hover:underline font-medium">View full user report →</a>
+                <button onclick="hideModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-bold transition-colors">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/layout.js"></script>
+    <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderTable();
+        }
+
+        function getSortValue(s, field) {
+            switch(field) { case 'username': return s.username || ''; case 'framedipaddress': return s.framedipaddress || ''; case 'nasipaddress': return s.nasipaddress || ''; case 'callingstationid': return s.callingstationid || ''; case 'acctstarttime': return s.acctstarttime ? new Date(s.acctstarttime).getTime() : 0; case 'duration': return s.acctstarttime ? Date.now() - new Date(s.acctstarttime).getTime() : 0; case 'acctinputoctets': return Number(s.acctinputoctets) || 0; case 'acctoutputoctets': return Number(s.acctoutputoctets) || 0; case 'total': return (Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0); default: return ''; }
+        }
+
+        var allSessions = [];
+        var autoRefresh = true;
+        var refreshTimer = null;
+
+        function fmtGB(b) { return ((b || 0) / 1073741824).toFixed(3) + ' GB'; }
+        function fmtHrs(s) { return ((s || 0) / 3600).toFixed(2) + ' hrs'; }
+        function elapsed(start) {
+            var sec = Math.floor((Date.now() - new Date(start).getTime()) / 1000);
+            var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+            return (h > 0 ? h + 'h ' : '') + m + 'm ' + s + 's';
+        }
+
+        async function init() {
+            var [uRes, nRes] = await Promise.all([apiFetch('/api/users'), apiFetch('/api/nas')]);
+            if (uRes.ok) { var users = await uRes.json(); document.getElementById('userList').innerHTML = users.map(function (u) { return '<option value="' + u.username + '">'; }).join(''); }
+            if (nRes.ok) { var nas = await nRes.json(); document.getElementById('fNas').innerHTML += nas.map(function (n) { return '<option value="' + n.nasname + '">' + n.shortname + ' (' + n.nasname + ')</option>'; }).join(''); }
+            loadSessions();
+        }
+
+        function clearFilters() {
+            ['fUser', 'fCalling', 'fFramed'].forEach(function (id) { document.getElementById(id).value = ''; });
+            document.getElementById('fNas').value = '';
+            loadSessions();
+        }
+
+        async function loadSessions() {
+            var icon = document.getElementById('refreshIcon');
+            icon.classList.add('spinning');
+            var p = new URLSearchParams();
+            var u = document.getElementById('fUser').value,
+                n = document.getElementById('fNas').value,
+                c = document.getElementById('fCalling').value,
+                f = document.getElementById('fFramed').value;
+            if (u) p.set('username', u);
+            if (n) p.set('nasip', n);
+            if (c) p.set('callingstationid', c);
+            if (f) p.set('framedip', f);
+            p.set('limit', '500');
+            try {
+                var res = await apiFetch('/api/sessions/active?' + p.toString());
+                if (!res.ok) { icon.classList.remove('spinning'); return; }
+                allSessions = await res.json();
+                document.getElementById('sessionCount').textContent = allSessions.length;
+                renderTable();
+            } catch (e) { console.error(e); }
+            icon.classList.remove('spinning');
+            scheduleRefresh();
+        }
+
+        function renderTable() {
+            var tbody = document.getElementById('sessBody');
+            if (!allSessions.length) {
+                tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
+                return;
+            }
+            
+            if (currentSort) { allSessions.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
+            tbody.innerHTML = allSessions.map(function (s, i) {
+                return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + i + ')">' +
+                    '<td class="p-3 font-bold text-gray-800">' + s.username + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-600">' + (s.framedipaddress || '—') + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-600">' + (s.nasipaddress || '—') + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-500 max-w-[140px] truncate">' + (s.callingstationid || '—') + '</td>' +
+                    '<td class="p-3 text-xs text-gray-600">' + (s.acctstarttime ? new Date(s.acctstarttime).toLocaleString() : '—') + '</td>' +
+                    '<td class="p-3 text-xs font-mono text-green-700 font-bold">' + (s.acctstarttime ? elapsed(s.acctstarttime) : '—') + '</td>' +
+                    '<td class="p-3 text-xs text-right font-mono text-green-600">' + fmtGB(s.acctinputoctets) + '</td>' +
+                    '<td class="p-3 text-xs text-right font-mono text-blue-600">' + fmtGB(s.acctoutputoctets) + '</td>' +
+                    '<td class="p-3 text-xs text-right font-mono font-bold text-gray-700">' + fmtGB((Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0)) + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        function showModal(idx) {
+            var s = allSessions[idx];
+            document.getElementById('modalSubtitle').textContent = 'Session ID: ' + (s.radacctid || s.acctuniqueid || '—') + ' · ' + s.username;
+            document.getElementById('modalUserLink').href = 'reports.html';
+
+            var totalBytes = (Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0);
+            document.getElementById('modalKpis').innerHTML =
+                kpiTile('Duration', s.acctstarttime ? elapsed(s.acctstarttime) : '—', 'text-green-600') +
+                kpiTile('Upload', fmtGB(s.acctinputoctets), 'text-teal-600') +
+                kpiTile('Download', fmtGB(s.acctoutputoctets), 'text-blue-600') +
+                kpiTile('Total', fmtGB(totalBytes), 'text-indigo-700');
+
+            document.getElementById('modalBody').innerHTML = Object.entries(s).map(function (kv) {
+                var key = kv[0], val = kv[1];
+                var display = val === null ? '<span class="text-gray-300 italic">null</span>' : val;
+                if (val && typeof val === 'string' && (val.match(/^\d{4}-\d{2}-\d{2}T/) || val.match(/^\d{4}-\d{2}-\d{2} /))) { display = new Date(val).toLocaleString(); }
+                var highlight = (key === 'acctinputoctets' || key === 'acctoutputoctets') ? 'font-bold text-blue-700' : 'text-gray-800';
+                return '<tr class="border-b border-gray-50 hover:bg-gray-50"><td class="p-2 font-bold text-gray-600 w-1/3 text-xs">' + key + '</td><td class="p-2 font-mono text-xs break-all ' + highlight + '">' + display + '</td></tr>';
+            }).join('');
+            document.getElementById('detailsModal').classList.remove('hidden');
+        }
+
+        function kpiTile(label, val, cls) {
+            return '<div class="bg-gray-50 border rounded-lg p-3 text-center"><div class="text-xs text-gray-500 font-bold uppercase mb-1">' + label + '</div><div class="text-lg font-black ' + cls + '">' + val + '</div></div>';
+        }
+
+        function hideModal() { document.getElementById('detailsModal').classList.add('hidden'); }
+
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            document.getElementById('autoRefreshBtn').textContent = '⏱ Auto-refresh: ' + (autoRefresh ? 'ON' : 'OFF');
+            if (autoRefresh) scheduleRefresh(); else { clearTimeout(refreshTimer); }
+        }
+
+        function scheduleRefresh() {
+            clearTimeout(refreshTimer);
+            if (autoRefresh) refreshTimer = setTimeout(loadSessions, 15000);
+        }
+
+        // Close modal on backdrop click
+        document.getElementById('detailsModal').addEventListener('click', function (e) { if (e.target === this) hideModal(); });
+        // Close on Escape
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideModal(); });
+
+        init();
+    </script>
+</body>
+</html>

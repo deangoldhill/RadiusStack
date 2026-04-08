@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>Users</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <main>
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">User Management</h1>
+            <div class="flex space-x-3 items-center">
+                <a href="data:text/csv;charset=utf-8,username%2Cpassword%2Cprofile%2Cplan_id%2Ctotp_enabled%0Aalice%2CSecretPass123%2CStaff%2C%2C0%0Abob%2CPassword%21456%2CGuest%2C2%2C1" download="users_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
+                <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
+                    <input type="file" accept=".csv" class="hidden" onchange="handleBulkImport(event)">
+                    <span class="mr-2">📁</span> Bulk Import CSV
+                </label>
+                <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add User</button>
+            </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search Users</label>
+                    <input type="text" id="userSearch" placeholder="Type username, profile or plan..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Plan</label>
+                    <select id="planFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                        <option value="">All Plans</option>
+                        <option value="__NO_PLAN__">No Plan</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Profile</label>
+                    <select id="profileFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                        <option value="">All Profiles</option>
+                        <option value="__NO_PROFILE__">No Profile</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">TOTP</label>
+                    <select id="totpFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                        <option value="">All</option>
+                        <option value="enabled">Enabled</option>
+                        <option value="disabled">Disabled</option>
+                        <option value="registered">Registered</option>
+                        <option value="pending">Pending Setup</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+            <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
+                <thead><tr class="bg-gray-50 text-gray-600"><th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Username</th><th onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- ===================== ADD / EDIT USER MODAL ===================== -->
+    <div id="userModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border border-gray-100">
+            <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Create / Edit User</h2>
+            <form id="userForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Username</label>
+                    <input type="text" id="uname" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Cleartext Password</label>
+                    <input type="text" id="upass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Billing Plan</label>
+                    <select id="uplan" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- No Plan (Unlimited) --</option></select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Profile</label>
+                    <select id="uprofile" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- None --</option></select>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4 border-t">
+                    <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ===================== USER DETAIL PANEL ===================== -->
+    <div id="userDetailOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40 backdrop-blur-sm" onclick="closeDetailPanel()"></div>
+    <div id="userDetailPanel" class="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col overflow-hidden">
+        <!-- Panel Header -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-lg" id="dpAvatar">U</div>
+                <div>
+                    <h2 class="text-lg font-bold text-gray-800" id="dpUsername">—</h2>
+                    <div class="flex items-center gap-2 text-xs text-gray-500" id="dpSubtitle">Loading...</div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="refreshDetailPanel()" title="Refresh" class="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors">
+                    <svg id="dpRefreshIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
+                </button>
+                <button onclick="closeDetailPanel()" class="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Panel Tabs -->
+        <div class="flex border-b border-gray-100 bg-white flex-shrink-0 px-6">
+            <button onclick="switchTab('overview')" id="tab-overview" class="dp-tab active px-4 py-3 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 -mb-px">Overview</button>
+            <button onclick="switchTab('sessions')" id="tab-sessions" class="dp-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Sessions</button>
+            <button onclick="switchTab('authlogs')" id="tab-authlogs" class="dp-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Auth Logs</button>
+        </div>
+
+        <!-- Panel Body (scrollable) -->
+        <div class="flex-1 overflow-y-auto p-6" id="dpBody">
+            <div class="flex items-center justify-center h-32 text-gray-400 text-sm">Loading user data...</div>
+        </div>
+
+        <!-- Panel Footer Actions -->
+        <div class="flex items-center gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50 flex-shrink-0" id="dpFooter">
+            <button id="dpEditBtn" onclick="" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors">Edit User</button>
+            <button id="dpResetPlanBtn" onclick="" class="bg-yellow-100 hover:bg-yellow-200 text-yellow-700 border border-yellow-200 px-4 py-2 rounded-lg text-sm font-bold transition-colors hidden">Reset Usage</button>
+            <button id="dpDeleteBtn" onclick="" class="ml-auto bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-lg text-sm font-bold transition-colors">Delete</button>
+        </div>
+    </div>
+
+    <style>
+        .dp-tab.active {
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }
+
+        .stat-card {
+            background: #f9fafb;
+            border: 1px solid #f0f0f0;
+            border-radius: 0.75rem;
+            padding: 1rem;
+        }
+
+            .stat-card .label {
+                font-size: 0.7rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: #9ca3af;
+                margin-bottom: 0.25rem;
+            }
+
+            .stat-card .val-24h {
+                font-size: 1.25rem;
+                font-weight: 800;
+                color: #1f2937;
+                line-height: 1.2;
+            }
+
+            .stat-card .val-7d {
+                font-size: 0.8rem;
+                color: #6b7280;
+                margin-top: 0.15rem;
+            }
+
+                .stat-card .val-7d span {
+                    font-weight: 600;
+                    color: #374151;
+                }
+
+        .progress-bar-track {
+            background: #e5e7eb;
+            border-radius: 9999px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            border-radius: 9999px;
+            transition: width 0.6s ease;
+        }
+
+        #dpRefreshIcon.spinning {
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+
+    <script src="/js/layout.js"></script>
+    <script>
+
+        let currentSort = null;
+        let currentOrder = 'asc';
+
+        function sortTable(field) {
+            if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            else { currentSort = field; currentOrder = 'asc'; }
+            renderUsers();
+        }
+
+        function getSortValue(u, field) {
+            switch(field) { case 'username': return u.username || ''; case 'value': return u.password || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'time': return Number(u.time_30d) || 0; case 'totp': return Number(u.totp_enabled) || 0; default: return ''; }
+        }
+
+        let originalUsername = null;
+        let allUsers = [];
+        let allPlans = [];
+        let userSettings = { mask_user_passwords: 'false' };
+        let currentDetailUser = null;
+        let currentDetailTab = 'overview';
+        let currentDetailData = null;
+
+        // ---- TOTP Helpers ----
+        function clearEnrollment(username) {
+            if (window.totpEnrollments) delete window.totpEnrollments[username];
+            loadData();
+        }
+
+        async function toggleTotp(username, enabled) {
+            const res = await apiFetch(`/api/users/${encodeURIComponent(username)}`, {
+                method: 'PUT', body: JSON.stringify({ totp_enabled: enabled })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { alert(data.error || 'Failed to update TOTP'); return; }
+            window.totpEnrollments = window.totpEnrollments || {};
+            if (data.enrollment) { window.totpEnrollments[username] = data.enrollment; }
+            else { delete window.totpEnrollments[username]; }
+            await loadData();
+        }
+
+        async function resetTotp(username) {
+            if (!confirm(`Reset TOTP for ${username}? They will need to scan a new QR code.`)) return;
+            const res = await apiFetch(`/api/users/${encodeURIComponent(username)}/totp/reset`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { alert(data.error || 'Failed to reset TOTP'); return; }
+            window.totpEnrollments = window.totpEnrollments || {};
+            if (data.enrollment) { window.totpEnrollments[username] = data.enrollment; }
+            await loadData();
+        }
+
+        function maskPassword(value) {
+            if (!value) return '';
+            return '•'.repeat(Math.max(8, String(value).length));
+        }
+
+        function escapeJS(str) {
+            if (!str) return '';
+            return String(str).replace(/'/g, "\\'");
+        }
+
+        // ---- Formatters ----
+        function fmtBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const b = Number(bytes);
+            if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+            if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
+            if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+            return b + ' B';
+        }
+
+        function fmtDuration(seconds) {
+            if (!seconds || seconds === 0) return '0s';
+            const s = Number(seconds);
+            const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m`;
+            if (m > 0) return `${m}m ${sec}s`;
+            return `${sec}s`;
+        }
+
+        function fmtDate(dt) {
+            if (!dt) return 'Never';
+            return new Date(dt).toLocaleString();
+        }
+
+        function fmtDateShort(dt) {
+            if (!dt) return '—';
+            return new Date(dt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // ---- Render table ----
+        function renderUsers() {
+            const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
+            const planFilter = document.getElementById('planFilter')?.value || '';
+            const profileFilter = document.getElementById('profileFilter')?.value || '';
+            const totpFilter = document.getElementById('totpFilter')?.value || '';
+            const maskPasswords = userSettings.mask_user_passwords === 'true';
+
+            const filtered = allUsers.filter(u => {
+                const planName = u.plan_name || '';
+                const profileName = u.profile || '';
+                const totpEnabled = Number(u.totp_enabled) === 1;
+                const totpRegistered = Number(u.totp_registered) === 1;
+                const matchesSearch = !search || [u.username, u.password, planName, profileName].filter(Boolean).some(v => String(v).toLowerCase().includes(search));
+                const matchesPlan = !planFilter || (planFilter === '__NO_PLAN__' ? !u.plan_id : String(u.plan_id) === planFilter);
+                const matchesProfile = !profileFilter || (profileFilter === '__NO_PROFILE__' ? !profileName : profileName === profileFilter);
+                const matchesTotp = !totpFilter
+                    || (totpFilter === 'enabled' && totpEnabled)
+                    || (totpFilter === 'disabled' && !totpEnabled)
+                    || (totpFilter === 'registered' && totpEnabled && totpRegistered)
+                    || (totpFilter === 'pending' && totpEnabled && !totpRegistered);
+                return matchesSearch && matchesPlan && matchesProfile && matchesTotp;
+            });
+
+            
+            if (currentSort) { filtered.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
+            document.querySelector('#usersTable tbody').innerHTML = filtered.map(u => `
+            <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeJS(u.username)}')">
+              <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${u.username}</td>
+              <td class="p-3 text-gray-500 font-mono text-xs" onclick="event.stopPropagation()">${maskPasswords ? maskPassword(u.password) : (u.password || '')}</td>
+              <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
+              <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
+              <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d || 0) / 1048576).toFixed(2)} MB</td>
+              <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d || 0) / 3600).toFixed(1)} hrs</td>
+              <td class="p-3" onclick="event.stopPropagation()">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp('${escapeJS(u.username)}', this.checked)" class="h-4 w-4 text-blue-600 rounded">
+                  <span class="text-sm ${Number(u.totp_registered) === 1 ? 'text-green-600 font-medium' : 'text-amber-600'}">
+                    ${Number(u.totp_enabled) === 1 ? (Number(u.totp_registered) === 1 ? 'Active' : 'Pending') : 'Off'}
+                  </span>
+                  ${Number(u.totp_enabled) === 1 ? `<div class="text-[10px] text-blue-600 mt-1 cursor-pointer hover:underline uppercase tracking-wider font-bold" onclick="event.stopPropagation();resetTotp('${escapeJS(u.username)}')">Reset Key</div>` : ''}
+                </div>
+              </td>
+              <td class="p-3 text-right" onclick="event.stopPropagation()">
+                <div class="flex items-center justify-end gap-1 flex-wrap">
+                  ${u.plan_id ? `<button onclick="resetPlan(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
+                  <button onclick="editUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                  <button onclick="deleteUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+                </div>
+              </td>
+            </tr>
+            ${window.totpEnrollments && window.totpEnrollments[u.username] ? `
+              <tr class="bg-blue-50 border-b border-blue-100">
+                <td colspan="8" class="px-4 py-3">
+                  <div class="flex flex-wrap gap-4 items-start">
+                    <div class="font-semibold text-blue-800 text-sm">🔑 TOTP Enrollment Pending for <strong>${u.username}</strong></div>
+                    <div>
+                      <div class="font-semibold text-gray-700 text-xs mb-1">Setup URL</div>
+                      <div class="flex">
+                        <input id="url_${u.username}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-72" readonly value="${window.totpEnrollments[u.username].url}">
+                        <button onclick="navigator.clipboard.writeText(document.getElementById('url_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="font-semibold text-gray-700 text-xs mb-1">Enrollment Code</div>
+                      <div class="flex">
+                        <input id="code_${u.username}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-36 font-mono tracking-widest" readonly value="${window.totpEnrollments[u.username].code}">
+                        <button onclick="navigator.clipboard.writeText(document.getElementById('code_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="font-semibold text-gray-700 text-xs mb-1">Expires</div>
+                      <input class="w-full border rounded px-2 py-1.5 bg-gray-100 text-xs text-gray-600" readonly value="${new Date(window.totpEnrollments[u.username].expires_at).toLocaleString()}">
+                    </div>
+                    <button onclick="clearEnrollment('${escapeJS(u.username)}')" class="text-xs text-blue-600 hover:text-blue-800 self-end">Dismiss</button>
+                  </div>
+                </td>
+              </tr>` : ''}`).join('');
+        }
+
+        // ============================================================
+        //  DETAIL PANEL
+        // ============================================================
+        function openDetailPanel(username) {
+            currentDetailUser = username;
+            currentDetailTab = 'overview';
+            const panel = document.getElementById('userDetailPanel');
+            const overlay = document.getElementById('userDetailOverlay');
+            document.getElementById('dpUsername').textContent = username;
+            document.getElementById('dpAvatar').textContent = username.charAt(0).toUpperCase();
+            document.getElementById('dpSubtitle').textContent = 'Loading...';
+            document.getElementById('dpBody').innerHTML = '<div class="flex items-center justify-center h-32 text-gray-400 text-sm"><svg class="animate-spin mr-2" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Loading user data...</div>';
+            overlay.classList.remove('hidden');
+            panel.classList.remove('translate-x-full');
+            setActiveTabs('overview');
+            loadDetailData(username);
+        }
+
+        function closeDetailPanel() {
+            const panel = document.getElementById('userDetailPanel');
+            const overlay = document.getElementById('userDetailOverlay');
+            panel.classList.add('translate-x-full');
+            overlay.classList.add('hidden');
+            currentDetailUser = null;
+            currentDetailData = null;
+        }
+
+        async function refreshDetailPanel() {
+            if (!currentDetailUser) return;
+            const icon = document.getElementById('dpRefreshIcon');
+            icon.classList.add('spinning');
+            await loadDetailData(currentDetailUser);
+            icon.classList.remove('spinning');
+        }
+
+        function switchTab(tab) {
+            currentDetailTab = tab;
+            setActiveTabs(tab);
+            if (!currentDetailData) return;
+            renderDetailTab(tab, currentDetailData);
+        }
+
+        function setActiveTabs(active) {
+            ['overview', 'sessions', 'authlogs'].forEach(t => {
+                const el = document.getElementById('tab-' + t);
+                if (!el) return;
+                if (t === active) { el.classList.add('active'); el.classList.remove('text-gray-500'); el.classList.add('text-blue-600'); }
+                else { el.classList.remove('active'); el.classList.add('text-gray-500'); el.classList.remove('text-blue-600'); }
+            });
+        }
+
+        async function loadDetailData(username) {
+            try {
+                // Fetch both the quick stats and the full user report in parallel
+                const [statsRes, reportRes] = await Promise.all([
+                    apiFetch(`/api/users/${encodeURIComponent(username)}/stats`),
+                    apiFetch(`/api/reports/user/${encodeURIComponent(username)}`)
+                ]);
+
+                const stats = statsRes.ok ? await statsRes.json() : null;
+                const report = reportRes.ok ? await reportRes.json() : null;
+
+                const userData = allUsers.find(u => u.username === username) || {};
+                currentDetailData = { stats, report, user: userData };
+
+                // Update subtitle
+                const plan = userData.plan_name || 'No Plan';
+                const profile = userData.profile || 'No Profile';
+                document.getElementById('dpSubtitle').innerHTML = `
+              <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
+              <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>
+            `;
+
+                // Footer buttons
+                document.getElementById('dpEditBtn').onclick = () => { closeDetailPanel(); editUser(username); };
+                document.getElementById('dpDeleteBtn').onclick = () => { closeDetailPanel(); deleteUser(username); };
+                if (userData.plan_id) {
+                    document.getElementById('dpResetPlanBtn').classList.remove('hidden');
+                    document.getElementById('dpResetPlanBtn').onclick = () => { closeDetailPanel(); resetPlan(username); };
+                } else {
+                    document.getElementById('dpResetPlanBtn').classList.add('hidden');
+                }
+
+                renderDetailTab(currentDetailTab, currentDetailData);
+            } catch (e) {
+                document.getElementById('dpBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
+            }
+        }
+
+        function renderDetailTab(tab, data) {
+            const body = document.getElementById('dpBody');
+            if (tab === 'overview') body.innerHTML = renderOverviewTab(data);
+            else if (tab === 'sessions') body.innerHTML = renderSessionsTab(data);
+            else if (tab === 'authlogs') body.innerHTML = renderAuthLogsTab(data);
+        }
+
+        function renderOverviewTab(data) {
+            const s = data.stats || {};
+            const r = data.report || {};
+            const rs = r.stats || {};
+            const user = data.user || {};
+
+            // Plan usage calculation
+            const planInfo = renderPlanUsage(s, user);
+
+            // Auth stats
+            const accepts = (r.authStats || []).find(a => a.reply === 'Access-Accept');
+            const rejects = (r.authStats || []).find(a => a.reply === 'Access-Reject');
+            const totalAuths = (r.authStats || []).reduce((n, a) => n + Number(a.count), 0);
+
+            return `
+            <!-- Quick KPI row: 24h / 7d -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Activity — Last 24 h vs Last 7 d</h3>
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+
+                <div class="stat-card">
+                  <div class="label">Auth Requests</div>
+                  <div class="val-24h">${s.auths_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span>${s.auths_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Sessions</div>
+                  <div class="val-24h">${s.sessions_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span>${s.sessions_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Rejects</div>
+                  <div class="val-24h ${Number(s.rejects_24h) > 0 ? 'text-red-600' : ''}">${s.rejects_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span class="${Number(s.rejects_7d) > 0 ? 'text-red-600' : ''}">${s.rejects_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Data Used</div>
+                  <div class="val-24h">${fmtBytes(s.data_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtBytes(s.data_7d)}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Time Online</div>
+                  <div class="val-24h">${fmtDuration(s.time_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtDuration(s.time_7d)}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Avg Session</div>
+                  <div class="val-24h">${fmtDuration(s.avg_session_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtDuration(s.avg_session_7d)}</span></div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Plan Usage -->
+            ${planInfo}
+
+            <!-- Auth Summary -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Authentication Summary (All Time)</h3>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="stat-card text-center">
+                  <div class="label">Total Auths</div>
+                  <div class="val-24h">${totalAuths.toLocaleString()}</div>
+                </div>
+                <div class="stat-card text-center">
+                  <div class="label">Accepts</div>
+                  <div class="val-24h text-green-600">${accepts ? Number(accepts.count).toLocaleString() : '0'}</div>
+                </div>
+                <div class="stat-card text-center">
+                  <div class="label">Rejects</div>
+                  <div class="val-24h text-red-600">${rejects ? Number(rejects.count).toLocaleString() : '0'}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- All-time stats -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">All-Time Accounting</h3>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="stat-card">
+                  <div class="label">Total Sessions</div>
+                  <div class="val-24h">${rs.total_sessions ? Number(rs.total_sessions).toLocaleString() : '0'}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Total Data</div>
+                  <div class="val-24h">${fmtBytes((Number(rs.total_input) || 0) + (Number(rs.total_output) || 0))}</div>
+                  <div class="val-7d">↑ ${fmtBytes(rs.total_input)} ↓ ${fmtBytes(rs.total_output)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Total Time Online</div>
+                  <div class="val-24h">${fmtDuration(rs.total_time)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Avg Session Length</div>
+                  <div class="val-24h">${fmtDuration(rs.avg_session_time)}</div>
+                  <div class="val-7d">Longest: <span>${fmtDuration(rs.longest_session)}</span></div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">First Seen</div>
+                  <div class="val-24h text-sm font-semibold">${fmtDateShort(rs.first_seen)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Last Seen</div>
+                  <div class="val-24h text-sm font-semibold">${fmtDateShort(rs.last_seen)}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NAS Breakdown -->
+            ${(r.nasStats && r.nasStats.length > 0) ? `
+            <div class="mb-4">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">NAS Breakdown</h3>
+              <div class="rounded-xl border border-gray-100 overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead><tr class="bg-gray-50 text-gray-500 text-xs"><th class="px-3 py-2 text-left">NAS IP</th><th class="px-3 py-2 text-right">Sessions</th><th class="px-3 py-2 text-right">Data</th><th class="px-3 py-2 text-right">Avg Duration</th></tr></thead>
+                  <tbody>${r.nasStats.map(n => `
+                    <tr class="border-t border-gray-50">
+                      <td class="px-3 py-2 font-mono text-xs">${n.nasipaddress}</td>
+                      <td class="px-3 py-2 text-right font-bold">${Number(n.session_count).toLocaleString()}</td>
+                      <td class="px-3 py-2 text-right text-gray-600">${fmtBytes(n.total_bytes)}</td>
+                      <td class="px-3 py-2 text-right text-gray-600">${fmtDuration(n.avg_duration)}</td>
+                    </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>` : ''}
+          `;
+        }
+
+        function renderPlanUsage(s, user) {
+            if (!user.plan_id) {
+                return `<div class="mb-5 p-4 bg-gray-50 rounded-xl border border-gray-100 text-sm text-gray-500">No billing plan assigned — unlimited access.</div>`;
+            }
+            const plan = allPlans.find(p => String(p.id) === String(user.plan_id));
+            if (!plan || !s) return '';
+
+            const dataLimit = Number(plan.data_limit_mb) * 1048576;
+            const timeLimit = Number(plan.time_limit_seconds);
+            const dataUsed = Number(s.cycle_data_used || 0);
+            const timeUsed = Number(s.cycle_time_used || 0);
+            const dataPct = dataLimit > 0 ? Math.min(100, (dataUsed / dataLimit) * 100) : null;
+            const timePct = timeLimit > 0 ? Math.min(100, (timeUsed / timeLimit) * 100) : null;
+
+            const cycleStart = s.cycle_started_at ? new Date(s.cycle_started_at) : null;
+            const resetPeriod = plan.reset_period || 'never';
+            let nextReset = null;
+            if (cycleStart && resetPeriod !== 'never') {
+                nextReset = new Date(cycleStart);
+                if (resetPeriod === 'daily') nextReset.setDate(nextReset.getDate() + 1);
+                else if (resetPeriod === 'weekly') nextReset.setDate(nextReset.getDate() + 7);
+                else if (resetPeriod === 'monthly') nextReset.setMonth(nextReset.getMonth() + 1);
+            }
+            const now = new Date();
+            const msUntilReset = nextReset ? Math.max(0, nextReset - now) : null;
+            const daysUntil = msUntilReset !== null ? Math.floor(msUntilReset / 86400000) : null;
+            const hoursUntil = msUntilReset !== null ? Math.floor((msUntilReset % 86400000) / 3600000) : null;
+            const timeUntilStr = msUntilReset !== null ? (daysUntil > 0 ? `${daysUntil}d ${hoursUntil}h` : `${hoursUntil}h`) : null;
+
+            const barColor = (pct) => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+
+            return `
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${plan.name} <span class="normal-case text-gray-400 font-normal">(resets ${resetPeriod})</span></h3>
+              <div class="bg-gray-50 rounded-xl border border-gray-100 p-4 space-y-4">
+
+                ${dataPct !== null ? `
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="font-semibold text-gray-700">Data Used</span>
+                    <span class="font-bold ${dataPct >= 90 ? 'text-red-600' : 'text-gray-700'}">${fmtBytes(dataUsed)} / ${fmtBytes(dataLimit)} (${dataPct.toFixed(1)}%)</span>
+                  </div>
+                  <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${dataPct}%;background:${barColor(dataPct)}"></div></div>
+                  ${dataPct >= 100 ? '<div class="text-xs text-red-600 font-bold mt-1">⚠ Data limit reached</div>' : `<div class="text-xs text-gray-400 mt-1">${fmtBytes(dataLimit - dataUsed)} remaining</div>`}
+                </div>` : `<div class="text-xs text-gray-500">Data limit: <span class="font-semibold">Unlimited</span></div>`}
+
+                ${timePct !== null ? `
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="font-semibold text-gray-700">Time Used</span>
+                    <span class="font-bold ${timePct >= 90 ? 'text-red-600' : 'text-gray-700'}">${fmtDuration(timeUsed)} / ${fmtDuration(timeLimit)} (${timePct.toFixed(1)}%)</span>
+                  </div>
+                  <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${timePct}%;background:${barColor(timePct)}"></div></div>
+                  ${timePct >= 100 ? '<div class="text-xs text-red-600 font-bold mt-1">⚠ Time limit reached</div>' : `<div class="text-xs text-gray-400 mt-1">${fmtDuration(timeLimit - timeUsed)} remaining</div>`}
+                </div>` : `<div class="text-xs text-gray-500">Time limit: <span class="font-semibold">Unlimited</span></div>`}
+
+                <div class="flex flex-wrap gap-4 text-xs text-gray-500 pt-1 border-t border-gray-200">
+                  ${cycleStart ? `<span>Cycle started: <strong class="text-gray-700">${fmtDateShort(cycleStart)}</strong></span>` : ''}
+                  ${nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        function renderSessionsTab(data) {
+            const acct = (data.report || {}).accounting || [];
+            if (!acct.length) return '<div class="text-sm text-gray-400 text-center py-12">No session records found.</div>';
+            return `
+            <div class="rounded-xl border border-gray-100 overflow-x-auto">
+              <table class="w-full text-xs whitespace-nowrap">
+                <thead><tr class="bg-gray-50 text-gray-500">
+                  <th class="px-3 py-2 text-left">Start</th>
+                  <th class="px-3 py-2 text-left">Stop</th>
+                  <th class="px-3 py-2 text-right">Duration</th>
+                  <th class="px-3 py-2 text-right">Data</th>
+                  <th class="px-3 py-2 text-left">NAS IP</th>
+                  <th class="px-3 py-2 text-left">Framed IP</th>
+                  <th class="px-3 py-2 text-left">Cause</th>
+                </tr></thead>
+                <tbody>${acct.slice(0, 100).map(a => {
+                const isActive = !a.acctstoptime;
+                const dataBytes = (Number(a.acctinputoctets) || 0) + (Number(a.acctoutputoctets) || 0);
+                return `
+                  <tr class="border-t border-gray-50 ${isActive ? 'bg-green-50' : ''}">
+                    <td class="px-3 py-2 font-mono">${fmtDateShort(a.acctstarttime)}</td>
+                    <td class="px-3 py-2 font-mono">${isActive ? '<span class="text-green-600 font-bold">Active</span>' : fmtDateShort(a.acctstoptime)}</td>
+                    <td class="px-3 py-2 text-right font-mono">${fmtDuration(a.acctsessiontime)}</td>
+                    <td class="px-3 py-2 text-right font-mono">${fmtBytes(dataBytes)}</td>
+                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${a.framedipaddress || '—'}</td>
+                    <td class="px-3 py-2 text-gray-400">${a.acctterminatecause || (isActive ? '—' : '—')}</td>
+                  </tr>`;
+            }).join('')}
+                </tbody>
+              </table>
+              ${acct.length > 100 ? `<div class="text-center text-xs text-gray-400 py-2">Showing 100 of ${acct.length} sessions</div>` : ''}
+            </div>
+          `;
+        }
+
+        function renderAuthLogsTab(data) {
+            const auth = (data.report || {}).postauth || [];
+            if (!auth.length) return '<div class="text-sm text-gray-400 text-center py-12">No authentication records found.</div>';
+            return `
+            <div class="rounded-xl border border-gray-100 overflow-x-auto">
+              <table class="w-full text-xs whitespace-nowrap">
+                <thead><tr class="bg-gray-50 text-gray-500">
+                  <th class="px-3 py-2 text-left">Date / Time</th>
+                  <th class="px-3 py-2 text-left">Result</th>
+                  <th class="px-3 py-2 text-left">NAS IP</th>
+                  <th class="px-3 py-2 text-left">Calling Station</th>
+                  <th class="px-3 py-2 text-left">Class</th>
+                  <th class="px-3 py-2 text-left">Reply Message</th>
+                </tr></thead>
+                <tbody>${auth.slice(0, 200).map(a => {
+                const isAccept = a.reply === 'Access-Accept';
+                return `
+                  <tr class="border-t border-gray-50">
+                    <td class="px-3 py-2 font-mono">${fmtDateShort(a.authdate)}</td>
+                    <td class="px-3 py-2">
+                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${a.reply}</span>
+                    </td>
+                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${a.callingstationid || '—'}</td>
+                    <td class="px-3 py-2 text-gray-500">${a.class || '—'}</td>
+                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${a.replymessage || '—'}</td>
+                  </tr>`;
+            }).join('')}
+                </tbody>
+              </table>
+              ${auth.length > 200 ? `<div class="text-center text-xs text-gray-400 py-2">Showing 200 of ${auth.length} records</div>` : ''}
+            </div>
+          `;
+        }
+        // ============================================================
+
+        function populateFilters(plans, profiles) {
+            const planFilter = document.getElementById('planFilter');
+            const profileFilter = document.getElementById('profileFilter');
+            const currentPlan = planFilter.value;
+            const currentProfile = profileFilter.value;
+            planFilter.innerHTML = '<option value="">All Plans</option><option value="__NO_PLAN__">No Plan</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+            profileFilter.innerHTML = '<option value="">All Profiles</option><option value="__NO_PROFILE__">No Profile</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+            planFilter.value = currentPlan;
+            profileFilter.value = currentProfile;
+        }
+
+        async function loadData() {
+            const settingsRes = await apiFetch('/api/settings');
+            if (settingsRes.ok) { userSettings = await settingsRes.json(); }
+
+            allPlans = [];
+            const plRes = await apiFetch('/api/plans');
+            if (plRes.ok) {
+                allPlans = await plRes.json();
+                document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + allPlans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+            }
+
+            let profiles = [];
+            const pRes = await apiFetch('/api/profiles');
+            if (pRes.ok) {
+                profiles = await pRes.json();
+                document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+            }
+
+            populateFilters(allPlans, profiles);
+
+            const res = await apiFetch('/api/users');
+            if (res.ok) {
+                allUsers = await res.json();
+                renderUsers();
+            }
+        }
+
+        async function resetPlan(username) {
+            if (!confirm(`Manually reset plan usage limits for ${username}?`)) return;
+            const res = await apiFetch(`/api/users/${username}/reset-plan`, { method: 'POST' });
+            if (res.ok) { alert('Limits reset successfully'); loadData(); }
+        }
+
+        function openModal() {
+            originalUsername = null;
+            document.getElementById('userModal').classList.remove('hidden');
+            document.getElementById('userForm').reset();
+            document.getElementById('uname').readOnly = false;
+            document.getElementById('uname').classList.remove('bg-gray-100');
+        }
+
+        function closeModal() { document.getElementById('userModal').classList.add('hidden'); }
+
+        function editUser(username) {
+            const u = allUsers.find(x => x.username === username);
+            if (!u) return;
+            originalUsername = username;
+            document.getElementById('userModal').classList.remove('hidden');
+            document.getElementById('uname').value = u.username || '';
+            document.getElementById('uname').readOnly = true;
+            document.getElementById('uname').classList.add('bg-gray-100');
+            document.getElementById('upass').value = u.password || '';
+            document.getElementById('uprofile').value = u.profile || '';
+            document.getElementById('uplan').value = u.plan_id || '';
+        }
+
+        async function deleteUser(username) {
+            if (!confirm(`Delete user ${username}?`)) return;
+            const res = await apiFetch(`/api/users/${username}`, { method: 'DELETE' });
+            if (res.ok) loadData();
+        }
+
+        document.getElementById('userForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const u = document.getElementById('uname').value;
+            const p = document.getElementById('upass').value;
+            const prof = document.getElementById('uprofile').value;
+            const plan = document.getElementById('uplan').value;
+            const payload = { username: u, password: p, profile: prof, plan_id: plan };
+            if (originalUsername) {
+                const res = await apiFetch(`/api/users/${originalUsername}`, { method: 'PUT', body: JSON.stringify(payload) });
+                if (res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
+            } else {
+                const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(payload) });
+                if (res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
+            }
+        };
+
+        ['userSearch', 'planFilter', 'profileFilter', 'totpFilter'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', renderUsers);
+        });
+
+        loadData();
+
+        function parseCSV(text) {
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length < 2) return [];
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim());
+                const row = {};
+                headers.forEach((header, index) => { row[header] = values[index] !== undefined ? values[index] : ''; });
+                data.push(row);
+            }
+            return data;
+        }
+
+        async function handleBulkImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            event.target.value = '';
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const text = e.target.result;
+                const records = parseCSV(text);
+                if (records.length === 0) { alert("No records found in CSV."); return; }
+                if (!confirm(`Found ${records.length} user records to import. Proceed?`)) return;
+                try {
+                    const res = await apiFetch('/api/users/bulk', { method: 'POST', body: JSON.stringify(records) });
+                    const data = await res.json();
+                    let msg = data.message || "Import completed.";
+                    if (data.errors && data.errors.length > 0) {
+                        msg += `\n\nErrors (${data.errors.length}):\n` + data.errors.slice(0, 10).join('\n');
+                        if (data.errors.length > 10) msg += '\n...and more.';
+                    }
+                    alert(msg);
+                    loadData();
+                } catch (err) { alert("An error occurred during bulk import."); }
+            };
+            reader.readAsText(file);
+        }
+    </script>
+</body>
+</html>
