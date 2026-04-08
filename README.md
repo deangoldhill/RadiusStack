@@ -5,9 +5,9 @@ A complete, modern, containerized RADIUS authentication stack designed for ease 
 Useful for managing Wi-Fi access points, remote access, or network appliance logins, RadiusStack provides full control over users, usage plans, profile attributes, and feature riich monitoring and analytics.
 Designed for security and simplicity. 
 
-**Try the demo**:
-https://demo.radius-stack.com
-admin account:  admin / demo123
+**Try the demo**< br/>
+https://demo.radius-stack.com< br/>
+admin account:  admin / demo123< br/>
 Reports account:  reports / demo123
 
 ## Key Features
