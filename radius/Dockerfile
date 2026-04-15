@@ -98,18 +98,10 @@ EOF
 RUN cat << 'EOF' > /opt/etc/raddb/policy.d/strict_nas
 strict_nas_check {
     update request {
-        # 1. Get the group for the user [cite: 14]
         &Tmp-String-1 := "%{sql: SELECT groupname FROM radusergroup WHERE username = '%{User-Name}' LIMIT 1}"
-        
-        # 2. Check if this group even has a NAS restriction [cite: 2]
         &Tmp-Integer-0 := "%{sql: SELECT COUNT(*) FROM radgroupcheck WHERE groupname = '%{Tmp-String-1}' AND attribute = 'NAS-IP-Address'}"
-        
-        # 3. FIX: Use %{request:NAS-IP-Address} or the fallback %{outer.request:NAS-IP-Address}
-        # This syntax works for both standard and tunneled requests
         &Tmp-Integer-1 := "%{sql: SELECT COUNT(*) FROM radgroupcheck WHERE groupname = '%{Tmp-String-1}' AND attribute = 'NAS-IP-Address' AND value = '%{%{outer.request:NAS-IP-Address}:-%{NAS-IP-Address}}'}"
     }
-    
-    # 
     if (&Tmp-String-1 != "" && &Tmp-Integer-0 > 0 && &Tmp-Integer-1 == 0) {
         update reply {
             &Reply-Message := "Access Denied: NAS-IP-Address not permitted"
@@ -119,7 +111,8 @@ strict_nas_check {
 }
 EOF
 
-RUN awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/default > /tmp/default.tmp && mv /tmp/default.tmp /opt/etc/raddb/sites-available/default &&     awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/inner-tunnel > /tmp/inner-tunnel.tmp && mv /tmp/inner-tunnel.tmp /opt/etc/raddb/sites-available/inner-tunnel
+RUN awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/default > /tmp/default.tmp && mv /tmp/default.tmp /opt/etc/raddb/sites-available/default && \
+    awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_nas_check"; done=1; next } 1' /opt/etc/raddb/sites-available/inner-tunnel > /tmp/inner-tunnel.tmp && mv /tmp/inner-tunnel.tmp /opt/etc/raddb/sites-available/inner-tunnel
 
 
 # --- TOTP POLICY INSTALLATION ---

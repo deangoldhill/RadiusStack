@@ -526,6 +526,9 @@ async function snapshotUserPlanUsage(db, username) {
 async function initDb() {
     await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_debug', 'false')");
     await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mask_user_passwords', 'false')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', 'false')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_plan', '')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_profile', '')");
 
     const [rows] = await pool.query('SELECT COUNT(*) as count FROM admins');
     if (rows[0].count === 0) {
@@ -736,7 +739,7 @@ app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, re
 });
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
-    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords } = req.body;
+    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile } = req.body;
 
     if (enforce_2fa !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', ?) ON DUPLICATE KEY UPDATE setting_value=?", [enforce_2fa, enforce_2fa]);
     if (radius_debug !== undefined) {
@@ -747,8 +750,11 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
     if (ui_theme !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('ui_theme', ?) ON DUPLICATE KEY UPDATE setting_value=?", [ui_theme, ui_theme]);
     if (totp_enrollment_hours !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('totp_enrollment_hours', ?) ON DUPLICATE KEY UPDATE setting_value=?", [totp_enrollment_hours, totp_enrollment_hours]);
     if (mask_user_passwords !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mask_user_passwords', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mask_user_passwords, mask_user_passwords]);
+  if (mac_auth_autocreate !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate, mac_auth_autocreate]);
+  if (mac_auth_autocreate_plan !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_plan', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_plan, mac_auth_autocreate_plan]);
+  if (mac_auth_autocreate_profile !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_profile', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_profile, mac_auth_autocreate_profile]);
 
-    await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug})`, 'success', '', req.ip);
+    await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug}, MacAutoCreate:${mac_auth_autocreate})`, 'success', '', req.ip);
     res.json({ success: true });
 });
 
@@ -1212,6 +1218,97 @@ app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (re
         res.status(500).json({ error: err.message || 'Failed to save profile' });
     } finally {
         conn.release();
+    }
+});
+
+app.get('/api/profiles/:name', requireApiAuth('users', 'read-only'), async (req, res) => {
+    const { name } = req.params;
+
+    try {
+        const [members] = await pool.query(`
+            SELECT
+                u.username AS real_username,
+                COALESCE(m.mac_id, u.username) AS username,
+                CASE WHEN m.mac_address IS NOT NULL THEN 'mac' ELSE 'user' END AS object_type,
+                u.groupname AS profile,
+                up.plan_id,
+                p.name AS plan_name,
+
+                COALESCE(acct.sessions_30d, 0) AS sessions_30d,
+                COALESCE(acct.data_30d, 0) AS data_30d,
+                COALESCE(acct.time_30d, 0) AS time_30d,
+                COALESCE(acct.last_seen, NULL) AS last_seen,
+
+                COALESCE(auth.auth_count_30d, 0) AS auth_count_30d,
+                COALESCE(auth.accept_count_30d, 0) AS accept_count_30d,
+                COALESCE(auth.reject_count_30d, 0) AS reject_count_30d,
+                COALESCE(auth.last_auth_at, NULL) AS last_auth_at,
+                COALESCE(auth.last_reply, NULL) AS last_reply
+            FROM radusergroup u
+            LEFT JOIN mac_auth_devices m ON m.mac_address = u.username
+            LEFT JOIN user_plans up ON up.username = u.username
+            LEFT JOIN plans p ON p.id = up.plan_id
+            LEFT JOIN (
+                SELECT
+                    username,
+                    COUNT(*) AS sessions_30d,
+                    SUM(acctinputoctets + acctoutputoctets) AS data_30d,
+                    SUM(acctsessiontime) AS time_30d,
+                    MAX(COALESCE(acctupdatetime, acctstarttime, acctstoptime)) AS last_seen
+                FROM radacct
+                WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY username
+            ) acct ON acct.username = u.username
+            LEFT JOIN (
+                SELECT
+                    p1.username,
+                    COUNT(*) AS auth_count_30d,
+                    SUM(CASE WHEN p1.reply = 'Access-Accept' THEN 1 ELSE 0 END) AS accept_count_30d,
+                    SUM(CASE WHEN p1.reply = 'Access-Reject' THEN 1 ELSE 0 END) AS reject_count_30d,
+                    MAX(p1.authdate) AS last_auth_at,
+                    SUBSTRING_INDEX(
+                        GROUP_CONCAT(p1.reply ORDER BY p1.authdate DESC SEPARATOR ','),
+                        ',', 1
+                    ) AS last_reply
+                FROM radpostauth p1
+                WHERE p1.authdate >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY p1.username
+            ) auth ON auth.username = u.username
+            WHERE u.groupname = ?
+            ORDER BY object_type ASC, username ASC
+        `, [name]);
+
+        const summary = members.reduce((acc, row) => {
+            acc.total_objects += 1;
+            if (row.object_type === 'user') acc.total_users += 1;
+            if (row.object_type === 'mac') acc.total_macs += 1;
+            acc.total_sessions_30d += Number(row.sessions_30d || 0);
+            acc.total_data_30d += Number(row.data_30d || 0);
+            acc.total_time_30d += Number(row.time_30d || 0);
+            acc.total_auth_count_30d += Number(row.auth_count_30d || 0);
+            acc.total_accept_count_30d += Number(row.accept_count_30d || 0);
+            acc.total_reject_count_30d += Number(row.reject_count_30d || 0);
+            return acc;
+        }, {
+            total_objects: 0,
+            total_users: 0,
+            total_macs: 0,
+            total_sessions_30d: 0,
+            total_data_30d: 0,
+            total_time_30d: 0,
+            total_auth_count_30d: 0,
+            total_accept_count_30d: 0,
+            total_reject_count_30d: 0
+        });
+
+        res.json({
+            profile: name,
+            summary,
+            members
+        });
+    } catch (err) {
+        console.error('GET /api/profiles/:name error:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -2274,15 +2371,18 @@ app.get('/api/mac-auth', requireApiAuth('users', 'read-only'), async (req, res) 
                 up.plan_id,
                 p.name AS plan_name,
                 COALESCE(a.data_30d, 0) AS data_30d,
-                COALESCE(a.time_30d, 0) AS time_30d
+                COALESCE(a.time_30d, 0) AS time_30d,
+                COALESCE(a.sessions_30d, 0) AS sessions_30d
             FROM mac_auth_devices m
             LEFT JOIN radusergroup g ON g.username = m.mac_address
             LEFT JOIN user_plans up ON up.username = m.mac_address
             LEFT JOIN plans p ON p.id = up.plan_id
             LEFT JOIN (
-                SELECT username,
-                       SUM(acctinputoctets + acctoutputoctets) AS data_30d,
-                       SUM(acctsessiontime) AS time_30d
+                SELECT 
+                    username,
+                    SUM(acctinputoctets + acctoutputoctets) AS data_30d,
+                    SUM(acctsessiontime) AS time_30d,
+                    COUNT(*) AS sessions_30d
                 FROM radacct
                 WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
                 GROUP BY username
@@ -2424,3 +2524,64 @@ app.delete('/api/mac-auth/:macAddress', requireApiAuth('users', 'read-write'), a
 app.listen(3000, '0.0.0.0', () => {
     console.log('Radius UI Server listening on port 3000');
 });
+
+
+// --- MAC AUTH AUTO-CREATE WORKER ---
+async function processAutoCreateMacs() {
+    try {
+        const [settingsRows] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile')");
+        const config = settingsRows.reduce((acc, row) => ({ ...acc, [row.setting_key]: row.setting_value }), {});
+
+        if (config.mac_auth_autocreate !== 'true') return;
+
+        const plan_id = config.mac_auth_autocreate_plan || '';
+        const profile = config.mac_auth_autocreate_profile || '';
+
+        // Find MACs rejected in the last 60 seconds
+        const [rejectedRows] = await pool.query(`
+            SELECT DISTINCT p.username 
+            FROM radpostauth p
+            LEFT JOIN radcheck r ON r.username = p.username
+            WHERE p.reply = 'Access-Reject' 
+              AND p.username REGEXP '^([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})$'
+              AND r.username IS NULL
+              AND p.authdate > DATE_SUB(NOW(), INTERVAL 1 MINUTE)
+        `);
+
+        for (let row of rejectedRows) {
+            let mac_address = row.username.trim().toLowerCase().replace(/-/g, ':');
+            let mac_id = mac_address;
+
+            // Double check existence
+            const [existing] = await pool.query('SELECT username FROM radcheck WHERE username = ?', [mac_address]);
+            if (existing.length > 0) continue;
+
+            const conn = await pool.getConnection();
+            try {
+                await conn.beginTransaction();
+                await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id) VALUES (?, ?)', [mac_address, mac_id]);
+                await conn.query(`DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password'`, [mac_address]);
+                await conn.query(`INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)`, [mac_address, mac_address]);
+                await conn.query('DELETE FROM radusergroup WHERE username = ?', [mac_address]);
+                if (profile) {
+                    await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [mac_address, profile]);
+                }
+                await conn.query('DELETE FROM user_plans WHERE username = ?', [mac_address]);
+                if (plan_id) {
+                    await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [mac_address, plan_id]);
+                }
+                await conn.commit();
+                console.log(`[MAC Auto-Create Worker] Registered new MAC: ${mac_address} (Plan: ${plan_id || 'None'}, Profile: ${profile || 'None'})`);
+            } catch (err) {
+                await conn.rollback();
+                console.error(`[MAC Auto-Create Worker] Error registering MAC ${mac_address}:`, err);
+            } finally {
+                conn.release();
+            }
+        }
+    } catch (err) {
+        console.error('[MAC Auto-Create Worker] Error:', err);
+    }
+}
+setInterval(processAutoCreateMacs, 5000);
+

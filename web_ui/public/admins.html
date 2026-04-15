@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>Administrators</title><script src="https://cdn.tailwindcss.com"></script></head><body>
+  <main>
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-gray-800">Administrators</h1>
+      <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Add Administrator</button>
+    </div>
+
+    <div id="apiKeyDisplay" class="hidden mb-6 bg-yellow-50 border border-yellow-200 p-4 rounded-lg shadow-sm">
+        <h3 class="text-lg font-bold text-yellow-800 flex items-center"><span class="mr-2">??</span> IMPORTANT: Save Your API Key</h3>
+        <p class="text-sm text-yellow-700 mb-2">This is the only time this key will be displayed. If you lose it, you must generate a new one.</p>
+        <div class="flex items-center space-x-2">
+            <input type="text" id="newApiKeyValue" readonly class="w-full bg-white border border-yellow-300 p-2 rounded font-mono text-sm text-gray-800">
+            <button onclick="navigator.clipboard.writeText(document.getElementById('newApiKeyValue').value); alert('Copied!')" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded font-bold transition-colors">Copy</button>
+        </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
+      <table class="w-full text-left text-sm whitespace-nowrap" id="adminsTable">
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">ID</th><th class="p-3">Username</th><th class="p-3">Role Type</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="qrModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full text-center border border-gray-100">
+      <h2 class="text-xl font-bold mb-4 text-gray-800">2FA Enabled</h2>
+      <p class="text-sm text-gray-600 mb-4">Please scan this QR code with your authenticator app now. You will need it on your next login.</p>
+      <img id="qrImage" src="" alt="QR Code" class="mx-auto mb-4 border p-2 rounded-lg bg-gray-50">
+      <div class="font-mono text-sm bg-gray-100 p-2 rounded mb-4 break-all" id="qrSecret"></div>
+      <button onclick="document.getElementById('qrModal').classList.add('hidden')" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold">Done</button>
+    </div>
+  </div>
+
+
+  <div id="adminModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-xl shadow-2xl max-w-lg w-full border border-gray-100">
+      <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Add Administrator</h2>
+      <form id="adminForm" class="space-y-4">
+        <input type="hidden" id="adminId">
+
+        <div><label class="block text-sm font-bold text-gray-700">Username</label>
+        <input type="text" id="aUser" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" required></div>
+
+        <div><label class="block text-sm font-bold text-gray-700">Password <span class="text-xs font-normal text-gray-500" id="passHint"></span></label>
+        <input type="password" id="aPass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none"></div>
+
+        <div class="border-t pt-4">
+            <label class="block text-sm font-bold text-gray-700 mb-2">Global Access Level</label>
+            <div class="flex space-x-4 mb-4">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="radio" name="accessLevel" value="read-only" checked class="form-radio text-blue-600">
+                    <span class="text-sm font-medium">Read-Only</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="radio" name="accessLevel" value="read-write" class="form-radio text-red-600">
+                    <span class="text-sm font-medium text-red-600">Read & Write</span>
+                </label>
+            </div>
+
+            <label class="block text-sm font-bold text-gray-700 mb-2">Enabled Modules</label>
+            <div class="grid grid-cols-2 gap-2 text-sm">
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modUsers" checked class="form-checkbox text-blue-600 rounded"><span>Users & Profiles</span></label>
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modNas" checked class="form-checkbox text-blue-600 rounded"><span>NAS Clients</span></label>
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modPlans" checked class="form-checkbox text-blue-600 rounded"><span>Billing Plans</span></label>
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modSettings" class="form-checkbox text-blue-600 rounded"><span>Settings</span></label>                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modReports" checked class="form-checkbox text-blue-600 rounded"><span>Reports</span></label>
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modAdmins" class="form-checkbox text-blue-600 rounded"><span>Administrators</span></label>
+            </div>
+        </div>
+
+        
+        <div id="2faGroup" class="flex items-center space-x-2 mt-4 hidden">
+            <input type="checkbox" id="enable2FA" class="form-checkbox text-blue-600 rounded">
+            <label class="text-sm font-bold text-gray-700">Require 2FA Setup on First Login</label>
+        </div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t">
+          <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save Admin</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/js/layout.js"></script>
+  <script>
+    let adminsList = [];
+
+    async function loadAdmins() {
+      const res = await apiFetch('/api/admins');
+      if (res.ok) {
+        adminsList = await res.json();
+        document.querySelector('#adminsTable tbody').innerHTML = adminsList.map(a => {
+            const isSuper = a.username === 'admin';
+            let roleBadge = '<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded">Custom</span>';
+
+            let perms = {};
+            try { perms = typeof a.permissions === 'string' ? JSON.parse(a.permissions) : (a.permissions || {}); } catch(e){}
+
+            if(perms.users === 'read-write' && perms.settings === 'read-write' && perms.reports === 'read-write') {
+                roleBadge = '<span class="px-2 py-1 bg-red-100 text-red-800 text-xs font-bold rounded border border-red-200">Super Admin</span>';
+            } else if (Object.values(perms).every(v => v === 'read-only') && Object.values(perms).length > 0) {
+                roleBadge = '<span class="px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded border border-green-200">Read Only</span>';
+            }
+
+            return `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+            <td class="p-3 font-mono text-gray-500">${a.id}</td>
+            <td class="p-3 font-bold text-gray-800">${a.username}</td>
+            <td class="p-3">${roleBadge}</td>
+            <td class="p-3 text-right space-x-2">
+                <button type="button" onclick="generateKey(${a.id})" class="bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Gen API Key</button>
+                <button type="button" onclick="${a.two_factor_enabled ? `disable2FA(${a.id}, '${a.username}')` : `enable2FA(${a.id}, '${a.username}')`}" class="bg-${a.two_factor_enabled ? 'yellow' : 'green'}-50 text-${a.two_factor_enabled ? 'yellow' : 'green'}-700 border border-${a.two_factor_enabled ? 'yellow' : 'green'}-200 hover:bg-${a.two_factor_enabled ? 'yellow' : 'green'}-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">${a.two_factor_enabled ? 'Disable 2FA' : 'Enable 2FA'}</button>
+                <button type="button" onclick="openModal(${a.id})" class="bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                <button type="button" onclick="deleteAdmin(${a.id}, '${a.username}')" class="bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm" ${isSuper?'disabled style="opacity:0.5; cursor:not-allowed" title="Cannot delete root admin"':''}>Delete</button>
+            </td>
+            </tr>`;
+        }).join('');
+      }
+    }
+
+    window.openModal = function(id = null) {
+        document.getElementById('adminModal').classList.remove('hidden');
+        document.getElementById('adminForm').reset();
+
+        if (id !== null) {
+            const a = adminsList.find(x => x.id === id);
+            if(!a) return;
+            document.getElementById('modalTitle').textContent = `Edit Admin: ${a.username}`;
+            document.getElementById('adminId').value = a.id;
+            document.getElementById('aUser').value = a.username;
+            document.getElementById('aUser').readOnly = a.username === 'admin';
+            if (a.username === 'admin') document.getElementById('aUser').classList.add('bg-gray-100');
+
+            document.getElementById('passHint').textContent = "(Leave blank to keep unchanged)";
+            document.getElementById('aPass').required = false;
+
+            let perms = {};
+            try { perms = typeof a.permissions === 'string' ? JSON.parse(a.permissions) : (a.permissions || {}); } catch(e){}
+
+            const level = Object.values(perms).includes('read-write') ? 'read-write' : 'read-only';
+            const radio = document.querySelector(`input[name="accessLevel"][value="${level}"]`);
+            if(radio) radio.checked = true;
+
+            document.getElementById('modUsers').checked = !!perms.users;
+            document.getElementById('modNas').checked = !!perms.nas;
+            document.getElementById('modPlans').checked = !!perms.plans;
+            document.getElementById('modSettings').checked = !!perms.settings;
+                        document.getElementById('modReports').checked = !!perms.reports;
+            document.getElementById('modAdmins').checked = !!perms.admins;
+
+            // If superadmin, force permissions and disable editing them
+            const isSuper = a.username === 'admin';
+            document.querySelectorAll('input[type="checkbox"]:not(#enable2FA), input[type="radio"]').forEach(el => el.disabled = isSuper);
+            document.getElementById('2faGroup').classList.add('hidden');
+        } else {
+            document.getElementById('modalTitle').textContent = 'Add Administrator';
+            document.getElementById('adminId').value = '';
+            document.getElementById('aUser').readOnly = false;
+            document.getElementById('aUser').classList.remove('bg-gray-100');
+            document.getElementById('passHint').textContent = "(Required)";
+            document.getElementById('aPass').required = true;
+            document.querySelectorAll('input[type="checkbox"]:not(#enable2FA), input[type="radio"]').forEach(el => el.disabled = false);
+
+            document.getElementById('2faGroup').classList.remove('hidden');
+            document.getElementById('enable2FA').checked = enforce2FA;
+            document.getElementById('enable2FA').disabled = enforce2FA;
+        }
+
+    }
+
+    window.closeModal = function() {
+        document.getElementById('adminModal').classList.add('hidden');
+    }
+
+    window.generateKey = async function(id) {
+        if(!confirm('Generate a new permanent API Key? (Old keys will be invalidated)')) return;
+        const res = await apiFetch(`/api/admins/${id}/generate-key`, { method: 'POST' });
+        if(res.ok) {
+            const data = await res.json();
+            document.getElementById('newApiKeyValue').value = data.apiKey;
+            document.getElementById('apiKeyDisplay').classList.remove('hidden');
+            window.scrollTo(0,0);
+        } else {
+            alert('Failed to generate key');
+        }
+    }
+
+    
+    window.enable2FA = async function(id, user) {
+        if(!confirm(`Generate and enable 2FA for ${user}? You must scan the QR code right now.`)) return;
+        const res = await apiFetch(`/api/admins/${id}/enable-2fa`, { method: 'POST' });
+        if(res.ok) {
+            const data = await res.json();
+            document.getElementById('qrImage').src = data.qrImage;
+            document.getElementById('qrSecret').textContent = data.secret;
+            document.getElementById('qrModal').classList.remove('hidden');
+            loadAdmins();
+        } else {
+            alert('Failed to enable 2FA');
+        }
+    }
+
+    window.disable2FA = async function(id, user) {
+        if(!confirm(`Disable 2FA for ${user}?`)) return;
+        const res = await apiFetch(`/api/admins/${id}/disable-2fa`, { method: 'POST' });
+        if(res.ok) loadAdmins();
+    }
+
+    window.deleteAdmin = async function(id, user) {
+        if(!confirm(`Are you sure you want to permanently delete admin: ${user}?`)) return;
+        const res = await apiFetch(`/api/admins/${id}`, { method: 'DELETE' });
+        if(res.ok) loadAdmins();
+    }
+
+    document.getElementById('adminForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('adminId').value;
+        const level = document.querySelector('input[name="accessLevel"]:checked').value;
+
+        const perms = {};
+        if(document.getElementById('modUsers').checked) perms.users = level;
+        if(document.getElementById('modNas').checked) perms.nas = level;
+        if(document.getElementById('modPlans').checked) perms.plans = level;
+        if(document.getElementById('modSettings').checked) perms.settings = level;
+                if(document.getElementById('modReports').checked) perms.reports = level;
+        if(document.getElementById('modAdmins').checked) perms.admins = level;
+
+        const payload = {
+            username: document.getElementById('aUser').value,
+            permissions: perms,
+            enable_2fa: document.getElementById('enable2FA').checked
+        };
+        const pass = document.getElementById('aPass').value;
+        if(pass) payload.password = pass;
+
+        const url = id ? `/api/admins/${id}` : '/api/admins';
+        const method = id ? 'PUT' : 'POST';
+
+        const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
+        if(res.ok) {
+            closeModal();
+            loadAdmins();
+        } else {
+            const err = await res.json(); alert('Error: ' + err.error);
+        }
+    };
+
+    
+    let enforce2FA = false;
+    async function init() {
+      try {
+         const res = await apiFetch('/api/settings');
+         if(res.ok) {
+            const data = await res.json();
+            enforce2FA = data.enforce_2fa === 'true';
+         }
+      } catch(e){}
+      loadAdmins();
+    }
+    init();
+
+  </script>
+</body></html>

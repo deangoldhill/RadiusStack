@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User TOTP Setup - Radius</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-6">
+  <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-8">
+    <h1 class="text-2xl font-bold text-center mb-2">Set up TOTP</h1>
+    <p class="text-sm text-gray-500 text-center mb-6">Sign in with your credentials and one-time setup code.</p>
+
+    <div id="message" class="hidden mb-4 rounded px-4 py-3 text-sm"></div>
+
+    <form id="loginForm" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Username</label>
+        <input id="username" class="w-full border rounded px-3 py-2 bg-gray-50" readonly required>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">RADIUS Password</label>
+        <input id="password" type="password" class="w-full border rounded px-3 py-2" required>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">One-Time Setup Code</label>
+        <input id="enrollmentCode" type="text" class="w-full border rounded px-3 py-2 font-mono text-sm" placeholder="Provided by your administrator" required>
+      </div>
+      <button class="w-full bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700 font-bold transition-colors">
+        Continue
+      </button>
+    </form>
+
+    <div id="setupBox" class="hidden mt-8">
+      <h2 class="text-lg font-semibold mb-3">Authenticator setup</h2>
+      <p class="text-sm text-gray-600 mb-4">Scan this QR code in your TOTP app (Google Authenticator, etc.).</p>
+
+      <div class="flex justify-center mb-4">
+        <img id="qrImage" alt="TOTP QR code" class="w-56 h-56 border rounded p-2 bg-white shadow-sm">
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Manual key</label>
+        <input id="manualSecret" class="w-full border rounded px-3 py-2 bg-gray-50 font-mono text-sm text-gray-600" readonly>
+      </div>
+
+      <form id="confirmForm" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Verification code</label>
+          <input id="otpCode" class="w-full border rounded px-3 py-2 font-mono" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required>
+        </div>
+        <button class="w-full bg-green-600 text-white rounded px-4 py-2 hover:bg-green-700 font-bold transition-colors shadow-sm">
+          Confirm TOTP
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let enrollmentToken = null;
+
+    // Auto-fill username from URL if present
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlUser = urlParams.get('username');
+    if (urlUser) {
+        document.getElementById('username').value = urlUser;
+    } else {
+        document.getElementById('username').removeAttribute('readonly');
+        document.getElementById('username').classList.remove('bg-gray-50');
+    }
+
+    function showMessage(text, type = 'error') {
+      const el = document.getElementById('message');
+      el.textContent = text;
+      el.className = 'mb-4 rounded px-4 py-3 text-sm font-medium';
+      el.classList.remove('hidden');
+      if (type === 'success') {
+        el.classList.add('bg-green-50', 'text-green-800', 'border', 'border-green-200');
+      } else {
+        el.classList.add('bg-red-50', 'text-red-800', 'border', 'border-red-200');
+      }
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const enrollmentCode = document.getElementById('enrollmentCode').value.trim();
+
+      try {
+        const res = await fetch('/auth/radius/totp/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, enrollmentCode })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to start enrollment');
+
+        enrollmentToken = data.token;
+        document.getElementById('qrImage').src = data.qrImage;
+        document.getElementById('manualSecret').value = data.manualSecret;
+        document.getElementById('setupBox').classList.remove('hidden');
+        document.getElementById('loginForm').style.display = 'none';
+
+        showMessage('QR code generated. Scan it and enter the current code to finish.', 'success');
+      } catch (err) {
+        showMessage(err.message || 'Failed to start enrollment');
+      }
+    });
+
+    document.getElementById('confirmForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const res = await fetch('/auth/radius/totp/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: enrollmentToken,
+            code: document.getElementById('otpCode').value.trim()
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to confirm TOTP');
+
+        showMessage('TOTP registration complete. You can now use your RADIUS password plus the 6-digit code.', 'success');
+        document.getElementById('confirmForm').style.display = 'none';
+      } catch (err) {
+        showMessage(err.message || 'Failed to confirm TOTP');
+      }
+    });
+  </script>
+</body>
+</html>

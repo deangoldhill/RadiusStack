@@ -25,10 +25,8 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 
 INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', 'false') ON DUPLICATE KEY UPDATE setting_key=setting_key;
-
-
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('ui_theme', 'blue');
-
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', 'false');
 
 CREATE TABLE IF NOT EXISTS plans (
   id INT AUTO_INCREMENT PRIMARY KEY,

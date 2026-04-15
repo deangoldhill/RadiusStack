@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta charset="UTF-8">
+    <title>Auth Logs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .filterable {
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+            border-radius: 3px;
+            padding: 1px 3px;
+            margin: -1px -3px;
+        }
+
+            .filterable:hover {
+                background: #dbeafe;
+                color: #1d4ed8;
+            }
+
+            .filterable:active {
+                background: #bfdbfe;
+            }
+
+        .filter-hint {
+            font-size: 10px;
+            color: #9ca3af;
+            margin-top: 2px;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1 class="text-3xl font-bold mb-6">RADIUS Authentication Logs</h1>
+
+        <div class="bg-white p-4 rounded shadow mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">Username</label>
+                    <input type="text" id="usernameFilter" placeholder="Leave blank for all" class="border p-2 rounded w-full">
+                    <div class="filter-hint">Click a username in the table to filter</div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">NAS IP Address</label>
+                    <input type="text" id="nasipFilter" placeholder="e.g. 192.168.1.1" class="border p-2 rounded w-full">
+                    <div class="filter-hint">Click a NAS IP in the table to filter</div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">Calling Station ID</label>
+                    <input type="text" id="callingStationFilter" placeholder="e.g. AA:BB:CC:DD:EE:FF" class="border p-2 rounded w-full">
+                    <div class="filter-hint">Click a Calling Station ID in the table to filter</div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">Date From</label>
+                    <input type="datetime-local" id="dateFrom" class="border p-2 rounded w-full">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">Date To</label>
+                    <input type="datetime-local" id="dateTo" class="border p-2 rounded w-full">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-1">Result</label>
+                    <select id="replyFilter" class="border p-2 rounded w-full">
+                        <option value="">All</option>
+                        <option value="Access-Accept">Accept</option>
+                        <option value="Access-Reject">Reject</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Max Records</label>
+                    <select id="limitFilter" class="border p-2 rounded w-full">
+                        <option value="100" selected>100</option>
+                        <option value="250">250</option>
+                        <option value="500">500</option>
+                        <option value="1000">1,000</option>
+                        <option value="2500">2,500</option>
+                        <option value="5000">5,000</option>
+                        <option value="10000">10,000</option>
+                    </select>
+                </div>
+
+                <div class="flex items-end gap-2">
+                    <button onclick="loadLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">Apply</button>
+                    <button onclick="clearFilters()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 transition-colors">Clear</button>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="resultCount" class="text-sm text-gray-500 mb-2"></div>
+        <div class="bg-white p-4 rounded shadow overflow-x-auto">
+            <table class="w-full text-left text-sm" id="logsTable">
+                <thead>
+                    <tr class="bg-gray-100">
+                        <th class="p-2">Username</th>
+                        <th class="p-2">Reply</th>
+                        <th class="p-2">NAS IP</th>
+                        <th class="p-2">Calling Station ID</th>
+                        <th class="p-2">Reply Message</th>
+                        <th class="p-2">Date/Time</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+    <script src="/js/layout.js"></script>
+    <script>
+        function setFilter(field, value) {
+            if (!value) return;
+            document.getElementById(field).value = value;
+            loadLogs();
+        }
+
+        function escHtml(str) {
+            return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Convert authdate string (e.g. "2025-03-31 09:45:00") to datetime-local format
+        function toDatetimeLocal(str) {
+            if (!str) return '';
+            // MySQL datetime: "YYYY-MM-DD HH:MM:SS"
+            return str.replace(' ', 'T').slice(0, 16);
+        }
+
+        async function loadLogs() {
+            const username = document.getElementById('usernameFilter').value.trim();
+            const nasip = document.getElementById('nasipFilter').value.trim();
+            const callingstation = document.getElementById('callingStationFilter').value.trim();
+            const dateFrom = document.getElementById('dateFrom').value;
+            const dateTo = document.getElementById('dateTo').value;
+            const limit = document.getElementById('limitFilter').value;
+            const reply = document.getElementById('replyFilter').value;
+
+            const params = new URLSearchParams();
+            if (username) params.set('username', username);
+            if (nasip) params.set('nasip', nasip);
+            if (callingstation) params.set('callingstationid', callingstation);
+            if (dateFrom) params.set('date_from', dateFrom);
+            if (dateTo) params.set('date_to', dateTo);
+            if (reply) params.set('reply', reply);
+            params.set('limit', limit);
+
+            const url = '/api/logs/auth' + (params.toString() ? '?' + params.toString() : '');
+            const res = await apiFetch(url);
+
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('resultCount').textContent = data.length === 0 ? '' : `Showing ${data.length.toLocaleString()} record${data.length !== 1 ? 's' : ''}`;
+                document.querySelector('#logsTable tbody').innerHTML = data.length === 0
+                    ? '<tr><td colspan="6" class="p-4 text-center text-gray-400">No results found</td></tr>'
+                    : data.map(l => {
+                        const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
+                        const username = escHtml(l.username);
+                        const nasip = escHtml(l.nasipaddress);
+                        const callingstation = escHtml(l.callingstationid);
+                        const replymsg = escHtml(l.replymessage);
+                        const authdate = escHtml(l.authdate);
+                        const authdateLocal = toDatetimeLocal(l.authdate);
+
+                        return `<tr class="hover:bg-gray-50 transition-colors">
+                    <td class="p-2 border-b font-bold">
+                      <span class="filterable" title="Filter by this username" onclick="setFilter('usernameFilter', '${username}')">${username}</span>
+                    </td>
+                    <td class="p-2 border-b">
+                      <span class="px-2 py-1 text-xs rounded text-white ${badge}">${escHtml(l.reply)}</span>
+                    </td>
+                    <td class="p-2 border-b text-xs text-gray-600">
+                      ${nasip ? `<span class="filterable" title="Filter by this NAS IP" onclick="setFilter('nasipFilter', '${nasip}')">${nasip}</span>` : ''}
+                    </td>
+                    <td class="p-2 border-b text-xs font-mono text-gray-600">
+                      ${callingstation ? `<span class="filterable" title="Filter by this Calling Station ID" onclick="setFilter('callingStationFilter', '${callingstation}')">${callingstation}</span>` : ''}
+                    </td>
+                    <td class="p-2 border-b text-xs text-gray-600 truncate max-w-xs" title="${replymsg}">${replymsg}</td>
+                    <td class="p-2 border-b text-xs">
+                      ${authdateLocal ? `<span class="filterable" title="Set as Date To filter" onclick="setFilter('dateTo', '${authdateLocal}')">${authdate}</span>` : authdate}
+                    </td>
+                  </tr>`;
+                    }).join('');
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('usernameFilter').value = '';
+            document.getElementById('nasipFilter').value = '';
+            document.getElementById('callingStationFilter').value = '';
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            document.getElementById('replyFilter').value = '';
+            document.getElementById('limitFilter').value = '100';
+            loadLogs();
+        }
+
+        // Pre-fill from URL query params
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('username')) document.getElementById('usernameFilter').value = urlParams.get('username');
+        if (urlParams.has('nasip')) document.getElementById('nasipFilter').value = urlParams.get('nasip');
+        if (urlParams.has('callingstationid')) document.getElementById('callingStationFilter').value = urlParams.get('callingstationid');
+        if (urlParams.has('date_from')) document.getElementById('dateFrom').value = urlParams.get('date_from');
+        if (urlParams.has('date_to')) document.getElementById('dateTo').value = urlParams.get('date_to');
+
+        loadLogs();
+    </script>
+</body>
+</html>
