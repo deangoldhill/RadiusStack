@@ -109,6 +109,32 @@ const pool = mysql.createPool({
     dateStrings: true
 });
 
+// --- API DEBUG LOGGING ---
+let apiDebugEnabled = false;
+
+// Initialize debug state
+pool.query("SELECT setting_value FROM settings WHERE setting_key = 'api_debug'").then(([rows]) => {
+    if (rows.length && rows[0].setting_value === 'true') {
+        apiDebugEnabled = true;
+        console.log('[API DEBUG] API Debug logging is ENABLED from database.');
+    }
+}).catch(err => {
+    // Ignore on first boot if table doesn't exist yet
+});
+
+function apiDebugLog(msg) {
+    if (apiDebugEnabled) {
+        console.log(`[API DEBUG] ${new Date().toISOString()} | ${msg}`);
+    }
+}
+
+app.use((req, res, next) => {
+    if (apiDebugEnabled && !req.originalUrl.includes('/api/ha/status')) { // exclude noise
+        apiDebugLog(`${req.method} ${req.originalUrl} - IP: ${req.ip} - Body: ${JSON.stringify(req.body || {}).substring(0, 200)}`);
+    }
+    next();
+});
+
 // --- ADVANCED HA SYNC ENGINE ---
 
 // Generate a static 256-bit AES key by hashing the existing HA_API_TOKEN
@@ -739,7 +765,7 @@ app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, re
 });
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
-    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile } = req.body;
+    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile, clear_stale_sessions, stale_session_threshold, stale_session_interval, api_debug } = req.body;
 
     if (enforce_2fa !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', ?) ON DUPLICATE KEY UPDATE setting_value=?", [enforce_2fa, enforce_2fa]);
     if (radius_debug !== undefined) {
@@ -753,6 +779,14 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
   if (mac_auth_autocreate !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate, mac_auth_autocreate]);
   if (mac_auth_autocreate_plan !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_plan', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_plan, mac_auth_autocreate_plan]);
   if (mac_auth_autocreate_profile !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_profile', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_profile, mac_auth_autocreate_profile]);
+    if (clear_stale_sessions !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('clear_stale_sessions', ?) ON DUPLICATE KEY UPDATE setting_value=?", [clear_stale_sessions, clear_stale_sessions]);
+    if (stale_session_threshold !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('stale_session_threshold', ?) ON DUPLICATE KEY UPDATE setting_value=?", [stale_session_threshold, stale_session_threshold]);
+    if (stale_session_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('stale_session_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [stale_session_interval, stale_session_interval]);
+    if (api_debug !== undefined) {
+        await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('api_debug', ?) ON DUPLICATE KEY UPDATE setting_value=?", [api_debug, api_debug]);
+        apiDebugEnabled = (api_debug === 'true');
+        apiDebugLog('API Debug mode status changed via Settings');
+    }
 
     await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug}, MacAutoCreate:${mac_auth_autocreate})`, 'success', '', req.ip);
     res.json({ success: true });
@@ -1348,6 +1382,7 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
       up.plan_id,
       p.name AS plan_name,
       COALESCE(a.data_30d, 0) AS data_30d,
+      COALESCE(a.sessions_30d, 0) AS sessions_30d,
       COALESCE(a.time_30d, 0) AS time_30d,
       COALESCE(ut.enabled, 0) AS totp_enabled,
       CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered
@@ -1359,6 +1394,7 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
     LEFT JOIN user_totp ut ON c.username = ut.username
     LEFT JOIN (
         SELECT username,
+               COUNT(*) AS sessions_30d,
                SUM(acctinputoctets + acctoutputoctets) AS data_30d,
                SUM(acctsessiontime) AS time_30d
         FROM radacct
@@ -1578,6 +1614,54 @@ app.delete('/api/users/:username', requireApiAuth('users', 'read-write'), async 
 });
 
 // --- REPORTS ---
+
+
+// --- STALE SESSIONS ---
+app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold')");
+    let clearEnabled = false;
+    let thresholdDays = 3;
+    settings.forEach(s => {
+        if(s.setting_key === 'clear_stale_sessions') clearEnabled = (s.setting_value === 'true' || s.setting_value === '1');
+        if(s.setting_key === 'stale_session_threshold') thresholdDays = parseInt(s.setting_value) || 3;
+    });
+
+    // Feature is always on for manual viewing
+
+    // Scenario 1: Older than 3 hours, acctupdatetime > 10 min from start, but updated < 1 hour ago?
+    // Wait, prompt says: "acctupdatetime greater than 10 min from the acctstarttime but less than 1 hour from the point of stale session check."
+    // Actually wait: if it was updated less than 1 hour ago, is it stale? Usually stale means it hasn't been updated recently. 
+    // Wait, re-reading: "has a acctupdatetime greater than 10 min from the acctstarttime but less than 1 hour from the point of stale session check." -> This means the *gap* from now to update is > 1 hour? Let's assume it means: time since last update > 1 hour. Wait, "less than 1 hour from the point of stale session check"? No, if it's less than 1 hour, it's alive. So it should be older than 1 hour from the point of check. Let me re-read the user prompt. 
+    // Ah, wait. Let's look at the prompt again carefully: "but less than 1 hour from the point of stale session check." I will use what the prompt said, but maybe it means `TIMESTAMPDIFF(HOUR, acctupdatetime, NOW()) >= 1`.
+
+    const query = `
+        SELECT radacctid, username, nasipaddress, framedipaddress, acctstarttime, acctupdatetime,
+        TIMESTAMPDIFF(HOUR, acctstarttime, NOW()) as hours_old,
+        TIMESTAMPDIFF(DAY, acctstarttime, NOW()) as days_old,
+        TIMESTAMPDIFF(MINUTE, acctstarttime, acctupdatetime) as up_to_start_diff,
+        TIMESTAMPDIFF(HOUR, acctupdatetime, NOW()) as up_to_now_diff_hr,
+        TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) as up_to_start_sec_diff
+        FROM radacct
+        WHERE acctstoptime IS NULL
+        HAVING 
+          (hours_old >= 3 AND up_to_start_diff > 10 AND up_to_now_diff_hr >= 1)
+          OR
+          (days_old >= ? AND (acctupdatetime IS NULL OR up_to_start_sec_diff <= 30))
+    `;
+    const [rows] = await pool.query(query, [thresholdDays]);
+    res.json(rows);
+});
+
+app.post('/api/sessions/clear', requireApiAuth('reports', 'read-write'), async (req, res) => {
+    const { sessionIds } = req.body;
+    if (!sessionIds || !sessionIds.length) return res.status(400).json({ error: 'No sessions provided' });
+
+    // Clear by updating acctstoptime to current time
+    const placeholders = sessionIds.map(() => '?').join(',');
+    await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})`, sessionIds);
+    await auditLog(req.admin.username, req.origin, `Cleared ${sessionIds.length} stale sessions`, 'success', '', req.ip);
+    res.json({ success: true });
+});
 app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { limit = 200, username, nasip, callingstationid, framedip } = req.query;
     const queryLimit = Math.min(parseInt(limit) || 200, 1000);
@@ -2527,6 +2611,7 @@ app.listen(3000, '0.0.0.0', () => {
 
 
 // --- MAC AUTH AUTO-CREATE WORKER ---
+    apiDebugLog('MAC Auth Auto-Create worker initialized');
 async function processAutoCreateMacs() {
     try {
         const [settingsRows] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile')");
@@ -2585,3 +2670,57 @@ async function processAutoCreateMacs() {
 }
 setInterval(processAutoCreateMacs, 5000);
 
+
+
+// --- STALE SESSIONS AUTO-CLEAR WORKER ---
+    apiDebugLog('Stale session worker initialized');
+let lastStaleSessionRun = 0;
+async function processStaleSessions() {
+    try {
+        const [settings] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interval')");
+        let clearEnabled = false;
+        let thresholdDays = 3;
+        let intervalMinutes = 10;
+        settings.forEach(s => {
+            if(s.setting_key === 'clear_stale_sessions') clearEnabled = (s.setting_value === 'true' || s.setting_value === '1');
+            if(s.setting_key === 'stale_session_threshold') thresholdDays = parseInt(s.setting_value) || 3;
+            if(s.setting_key === 'stale_session_interval') intervalMinutes = parseInt(s.setting_value) || 10;
+        });
+
+        if (!clearEnabled) { apiDebugLog('Stale session worker skipped: Disabled in settings'); return; }
+
+        // Throttle by interval setting
+        const now = Date.now();
+        if (now - lastStaleSessionRun < intervalMinutes * 60 * 1000) { apiDebugLog('Stale session worker skipped: Throttled by interval'); return; }
+        lastStaleSessionRun = now;
+
+        const query = `
+            SELECT radacctid, username, nasipaddress, framedipaddress, acctstarttime, acctupdatetime,
+            TIMESTAMPDIFF(HOUR, acctstarttime, NOW()) as hours_old,
+            TIMESTAMPDIFF(DAY, acctstarttime, NOW()) as days_old,
+            TIMESTAMPDIFF(MINUTE, acctstarttime, acctupdatetime) as up_to_start_diff,
+            TIMESTAMPDIFF(HOUR, acctupdatetime, NOW()) as up_to_now_diff_hr,
+            TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) as up_to_start_sec_diff
+            FROM radacct
+            WHERE acctstoptime IS NULL
+            HAVING 
+              (hours_old >= 3 AND up_to_start_diff > 10 AND up_to_now_diff_hr >= 1)
+              OR
+              (days_old >= ? AND (acctupdatetime IS NULL OR up_to_start_sec_diff <= 30))
+        `;
+        const [staleSessions] = await pool.query(query, [thresholdDays]);
+
+        if (staleSessions.length > 0) {
+            const sessionIds = staleSessions.map(s => s.radacctid);
+            const placeholders = sessionIds.map(() => '?').join(',');
+            await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})`, sessionIds);
+
+            // Log as 'system' origin
+            await auditLog('system', 'system', `Cleared ${sessionIds.length} stale sessions`, 'success', 'Background process auto-clear', '127.0.0.1');
+            console.log(`[Background Task] Auto-cleared ${sessionIds.length} stale sessions.`);
+        }
+    } catch (error) {
+        console.error('[Background Task] Error auto-clearing stale sessions:', error);
+    }
+}
+setInterval(processStaleSessions, 60 * 1000); // Poll every minute, internal logic handles the defined interval

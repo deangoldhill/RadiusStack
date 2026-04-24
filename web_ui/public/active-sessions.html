@@ -31,21 +31,71 @@
         .row-in {
             animation: fadeIn 0.2s ease forwards;
         }
-    </style>
+    
+.stat-card {
+            background: #f9fafb;
+            border: 1px solid #f0f0f0;
+            border-radius: 0.75rem;
+            padding: 1rem;
+        }
+.label {
+                font-size: 0.7rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: #9ca3af;
+                margin-bottom: 0.25rem;
+            }
+.val-24h {
+                font-size: 1.25rem;
+                font-weight: 800;
+                color: #1f2937;
+                line-height: 1.2;
+            }
+.val-7d {
+                font-size: 0.8rem;
+                color: #6b7280;
+                margin-top: 0.15rem;
+            }
+.progress-bar-track {
+            background: #e5e7eb;
+            border-radius: 9999px;
+            height: 8px;
+            overflow: hidden;
+        }
+.progress-bar-fill {
+            height: 100%;
+            border-radius: 9999px;
+            transition: width 0.6s ease;
+        }
+</style>
 </head>
 <body>
     <main>
         <div class="flex items-center justify-between mb-6">
             <div>
-                <h1 class="text-3xl font-bold text-gray-800">Active Sessions</h1>
-                <p class="text-sm text-gray-500 mt-1">Live view of all currently connected RADIUS sessions</p>
+                <h1 id="pageTitle" class="text-3xl font-bold text-gray-800">Active Sessions</h1>
+                <p id="pageSubtitle" class="text-sm text-gray-500 mt-1">Live view of all currently connected RADIUS sessions</p>
             </div>
             <div class="flex items-center gap-3">
                 <span class="inline-flex items-center gap-1.5 text-sm font-bold text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-full">
                     <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
                     <span id="sessionCount">—</span> Active
                 </span>
-                <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">⏱ Auto-refresh: ON</button>
+                
+                <button id="staleSessionsBtn" onclick="toggleStaleSessions()" class="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-md border border-yellow-300 hover:bg-yellow-200 text-sm font-medium transition-colors">
+                    Stale Sessions
+                </button>
+                
+                <button id="clearAllStaleBtn" onclick="clearAllStaleSessions()" class="hidden px-3 py-1.5 bg-red-600 text-white rounded-md border border-red-700 hover:bg-red-700 text-sm font-medium transition-colors shadow-sm">
+                    Clear All Stale Sessions
+                </button>
+
+                <button id="clearAllStaleBtn" onclick="clearAllStaleSessions()" class="hidden px-3 py-1.5 bg-orange-100 text-orange-700 rounded-md border border-orange-300 hover:bg-orange-200 text-sm font-medium transition-colors shadow-sm">Clear All Stale</button>
+                <button id="clearSessionsBtn" onclick="clearSelectedSessions()" class="hidden px-3 py-1.5 bg-red-100 text-red-700 rounded-md border border-red-300 hover:bg-red-200 text-sm font-medium transition-colors">
+                    Clear Selected
+                </button>
+                <button id="autoRefreshBtn"  onclick="toggleAutoRefresh()" class="text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">⏱ Auto-refresh: ON</button>
                 <button onclick="loadSessions()" class="flex items-center gap-1 text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">
                     <svg id="refreshIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6" /><path d="M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
                     Refresh
@@ -85,7 +135,8 @@
             <table class="w-full text-left text-sm whitespace-nowrap" id="sessTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600 text-xs font-bold uppercase border-b">
-                        <th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th>
+                        <th class="p-3 w-10 text-center"><input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll(this)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"></th>
+                        <th onclick="sortTable(\'username\')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th>
                         <th onclick="sortTable('framedipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">Framed IP</th>
                         <th onclick="sortTable('nasipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">NAS IP</th>
                         <th onclick="sortTable('callingstationid')" class="cursor-pointer hover:bg-gray-100 p-3">Calling Station</th>
@@ -97,7 +148,7 @@
                     </tr>
                 </thead>
                 <tbody id="sessBody">
-                    <tr><td colspan="9" class="p-8 text-center text-gray-400 text-sm">Loading sessions…</td></tr>
+                    <tr><td colspan="10" class="p-8 text-center text-gray-400 text-sm">Loading sessions…</td></tr>
                 </tbody>
             </table>
         </div>
@@ -105,13 +156,16 @@
 
     <!-- Details Modal -->
     <div id="detailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50 p-4">
-        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden">
             <div class="flex justify-between items-center p-4 border-b bg-gray-50">
                 <div>
                     <h2 class="text-xl font-bold text-gray-800">Session Details</h2>
                     <p class="text-xs text-gray-500 mt-0.5" id="modalSubtitle"></p>
                 </div>
-                <button onclick="hideModal()" class="text-gray-400 hover:text-red-500 font-bold text-2xl leading-none transition-colors">&times;</button>
+                <div class="flex items-center gap-3">
+                    <button id="modalClearBtn" onclick="clearModalSession()" class="px-3 py-1.5 bg-red-100 text-red-700 rounded-md border border-red-300 hover:bg-red-200 text-sm font-medium transition-colors shadow-sm">Clear Session</button>
+                    <button onclick="hideModal()" class="text-gray-400 hover:text-red-500 font-bold text-2xl leading-none transition-colors">&times;</button>
+                </div>
             </div>
             <div class="p-5 overflow-y-auto flex-1">
                 <!-- KPI strip -->
@@ -123,9 +177,43 @@
                 </table>
             </div>
             <div class="p-4 border-t bg-gray-50 flex justify-between items-center">
-                <a id="modalUserLink" href="#" class="text-xs text-blue-600 hover:underline font-medium">View full user report →</a>
+                <a id="modalUserLink" href="#" class="text-xs text-blue-600 hover:underline font-medium">View user details →</a>
                 <button onclick="hideModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-bold transition-colors">Close</button>
             </div>
+        </div>
+    </div>
+
+    
+    <div id="userDetailOverlay" class="fixed inset-0 bg-black/30 z-40 hidden" onclick="closeDetailPanel()"></div>
+    <div id="userDetailPanel" class="fixed top-0 right-0 h-full w-full max-w-5xl bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
+        <div class="px-6 py-5 border-b border-gray-100 flex items-start justify-between bg-white">
+            <div class="flex items-center gap-4 min-w-0">
+                <div id="dpAvatar" class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-3xl">U</div>
+                <div class="min-w-0">
+                    <h2 id="dpUsername" class="text-2xl font-black text-gray-800 truncate leading-tight">User</h2>
+                    <div id="dpSubtitle" class="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap"></div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="dpRefreshBtn" onclick="refreshDetailPanel()" class="text-gray-400 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="Refresh">
+                    <svg id="dpRefreshIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                </button>
+                <button onclick="closeDetailPanel()" class="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition-colors">✕</button>
+            </div>
+        </div>
+        <div class="border-b bg-white flex-shrink-0 px-6">
+            <button onclick="switchTab('overview')" id="tab-overview" class="dp-tab active px-4 py-3 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 -mb-px">Overview</button>
+            <button onclick="switchTab('sessions')" id="tab-sessions" class="dp-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Sessions</button>
+            <button onclick="switchTab('authlogs')" id="tab-authlogs" class="dp-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Auth Logs</button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6" id="dpBody"></div>
+        <div class="border-t bg-white p-5 flex justify-between items-center gap-3 sticky bottom-0">
+            <div class="flex gap-3">
+                <button id="dpEditBtn" class="px-4 py-2 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700">Edit User</button>
+                <button id="dpResetPlanBtn" class="hidden px-4 py-2 rounded-lg font-bold bg-amber-100 text-amber-800 hover:bg-amber-200">Reset Usage</button>
+            </div>
+            <button id="dpDeleteBtn" class="px-4 py-2 rounded-lg font-bold border border-red-200 text-red-600 hover:bg-red-50">Delete</button>
+            
         </div>
     </div>
 
@@ -177,11 +265,513 @@
             renderTable();
         }
 
+        
+        
+        let currentModalSessionId = null;
+
+        async function clearModalSession() {
+            if(!currentModalSessionId) return;
+            if(!confirm(`Are you sure you want to clear this session?`)) return;
+            try {
+                const res = await apiFetch('/api/sessions/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionIds: [currentModalSessionId] })
+                });
+                if(res.ok) {
+                    hideModal();
+                    loadSessions();
+                } else {
+                    alert('Failed to clear session');
+                }
+            } catch (err) { console.error(err); alert('Error clearing session'); }
+        }
+
+        async function clearAllStaleSessions() {
+            if(!allSessions || !allSessions.length) return alert('No stale sessions to clear.');
+            if(!confirm(`Are you sure you want to clear ALL ${allSessions.length} stale session(s)?`)) return;
+
+            const ids = allSessions.map(s => s.radacctid);
+            try {
+                const res = await apiFetch('/api/sessions/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionIds: ids })
+                });
+                if(res.ok) {
+                    loadSessions();
+                } else {
+                    alert('Failed to clear sessions');
+                }
+            } catch (err) { console.error(err); alert('Error clearing sessions'); }
+        }
+
+        let showingStale = false;
+
+        
+        function toggleStaleSessions() {
+            showingStale = !showingStale;
+            const btn = document.getElementById('staleSessionsBtn');
+            const clearAllBtn = document.getElementById('clearAllStaleBtn');
+            const title = document.getElementById('pageTitle');
+            const subtitle = document.getElementById('pageSubtitle');
+
+            if(showingStale) {
+                btn.classList.add('ring-2', 'ring-yellow-400', 'bg-yellow-200');
+                btn.textContent = 'View All Sessions';
+                if (title) title.textContent = 'Stale Sessions';
+                if (subtitle) subtitle.textContent = 'View and clear stale RADIUS sessions';
+                if (clearAllBtn) clearAllBtn.classList.remove('hidden');
+            } else {
+                btn.classList.remove('ring-2', 'ring-yellow-400', 'bg-yellow-200');
+                btn.textContent = 'Stale Sessions';
+                if (title) title.textContent = 'Active Sessions';
+                if (subtitle) subtitle.textContent = 'Live view of all currently connected RADIUS sessions';
+                if (clearAllBtn) clearAllBtn.classList.add('hidden');
+            }
+            // Reset state
+            const cb = document.getElementById('selectAllCheckbox');
+            if(cb) cb.checked = false;
+            updateClearButton();
+            loadSessions();
+        }
+
+
+        function toggleSelectAll(master) {
+            document.querySelectorAll('.session-checkbox').forEach(cb => cb.checked = master.checked);
+            updateClearButton();
+        }
+
+        function updateClearButton() {
+            const anyChecked = document.querySelectorAll('.session-checkbox:checked').length > 0;
+            const btn = document.getElementById('clearSessionsBtn');
+            if (btn) {
+                if (anyChecked) btn.classList.remove('hidden');
+                else btn.classList.add('hidden');
+            }
+        }
+
+        async function clearSelectedSessions() {
+            const selected = Array.from(document.querySelectorAll('.session-checkbox:checked')).map(cb => cb.value);
+            if (!selected.length) return;
+
+            if(!confirm(`Are you sure you want to clear ${selected.length} session(s)?`)) return;
+
+            try {
+                const res = await apiFetch('/api/sessions/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionIds: selected })
+                });
+                if(res.ok) {
+                    const cb = document.getElementById('selectAllCheckbox');
+                    if(cb) cb.checked = false;
+                    updateClearButton();
+                    loadSessions();
+                } else {
+                    alert('Failed to clear sessions');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Error clearing sessions');
+            }
+        }
+
+
+        let currentDetailUser = null;
+        let currentDetailData = null;
+        let currentDetailTab = 'overview';
+        let detailPlans = [];
+
+        async function ensureDetailPlans() {
+            if (detailPlans.length) return;
+            try {
+                const res = await apiFetch('/api/plans');
+                if (res.ok) detailPlans = await res.json();
+            } catch (e) { console.error(e); }
+        }
+
+        function fmtBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const b = Number(bytes);
+            if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+            if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
+            if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+            return b + ' B';
+        }
+        function fmtDuration(seconds) {
+            if (!seconds || seconds === 0) return '0s';
+            const s = Number(seconds);
+            const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m`;
+            if (m > 0) return `${m}m ${sec}s`;
+            return `${sec}s`;
+        }
+        function fmtDateShort(dt) {
+            if (!dt) return '—';
+            return new Date(dt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        function detailKpi(label, main, sub='') {
+            return `<div class="stat-card"><div class="label">${label}</div><div class="val-24h">${main}</div>${sub ? `<div class="val-7d">${sub}</div>` : ''}</div>`;
+        }
+
+        function renderPlanUsage(s, user) {
+            if (!user.plan_id) {
+                return `<div class="mb-5 p-4 bg-gray-50 rounded-xl border border-gray-100 text-sm text-gray-500">No billing plan assigned — unlimited access.</div>`;
+            }
+            const plan = detailPlans.find(p => String(p.id) === String(user.plan_id));
+            if (!plan || !s) return '';
+
+            const dataLimit = Number(plan.data_limit_mb) * 1048576;
+            const timeLimit = Number(plan.time_limit_seconds);
+            const dataUsed = Number(s.cycle_data_used || 0);
+            const timeUsed = Number(s.cycle_time_used || 0);
+            const dataPct = dataLimit > 0 ? Math.min(100, (dataUsed / dataLimit) * 100) : null;
+            const timePct = timeLimit > 0 ? Math.min(100, (timeUsed / timeLimit) * 100) : null;
+
+            const cycleStart = s.cycle_started_at ? new Date(s.cycle_started_at) : null;
+            const resetPeriod = plan.reset_period || 'never';
+            let nextReset = null;
+            if (cycleStart && resetPeriod !== 'never') {
+                nextReset = new Date(cycleStart);
+                if (resetPeriod === 'daily') nextReset.setDate(nextReset.getDate() + 1);
+                else if (resetPeriod === 'weekly') nextReset.setDate(nextReset.getDate() + 7);
+                else if (resetPeriod === 'monthly') nextReset.setMonth(nextReset.getMonth() + 1);
+            }
+            const now = new Date();
+            const msUntilReset = nextReset ? Math.max(0, nextReset - now) : null;
+            const daysUntil = msUntilReset !== null ? Math.floor(msUntilReset / 86400000) : null;
+            const hoursUntil = msUntilReset !== null ? Math.floor((msUntilReset % 86400000) / 3600000) : null;
+            const timeUntilStr = msUntilReset !== null ? (daysUntil > 0 ? `${daysUntil}d ${hoursUntil}h` : `${hoursUntil}h`) : null;
+
+            const barColor = (pct) => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+
+            return `
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${plan.name} <span class="normal-case text-gray-400 font-normal">(resets ${resetPeriod})</span></h3>
+              <div class="bg-gray-50 rounded-xl border border-gray-100 p-4 space-y-4">
+
+                ${dataPct !== null ? `
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="font-semibold text-gray-700">Data Used</span>
+                    <span class="font-bold ${dataPct >= 90 ? 'text-red-600' : 'text-gray-700'}">${fmtBytes(dataUsed)} / ${fmtBytes(dataLimit)} (${dataPct.toFixed(1)}%)</span>
+                  </div>
+                  <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${dataPct}%;background:${barColor(dataPct)}"></div></div>
+                  ${dataPct >= 100 ? '<div class="text-xs text-red-600 font-bold mt-1">⚠ Data limit reached</div>' : `<div class="text-xs text-gray-400 mt-1">${fmtBytes(dataLimit - dataUsed)} remaining</div>`}
+                </div>` : `<div class="text-xs text-gray-500">Data limit: <span class="font-semibold">Unlimited</span></div>`}
+
+                ${timePct !== null ? `
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="font-semibold text-gray-700">Time Used</span>
+                    <span class="font-bold ${timePct >= 90 ? 'text-red-600' : 'text-gray-700'}">${fmtDuration(timeUsed)} / ${fmtDuration(timeLimit)} (${timePct.toFixed(1)}%)</span>
+                  </div>
+                  <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${timePct}%;background:${barColor(timePct)}"></div></div>
+                  ${timePct >= 100 ? '<div class="text-xs text-red-600 font-bold mt-1">⚠ Time limit reached</div>' : `<div class="text-xs text-gray-400 mt-1">${fmtDuration(timeLimit - timeUsed)} remaining</div>`}
+                </div>` : `<div class="text-xs text-gray-500">Time limit: <span class="font-semibold">Unlimited</span></div>`}
+
+                <div class="flex flex-wrap gap-4 text-xs text-gray-500 pt-1 border-t border-gray-200">
+                  ${cycleStart ? `<span>Cycle started: <strong class="text-gray-700">${fmtDateShort(cycleStart)}</strong></span>` : ''}
+                  ${nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
+                </div>
+              </div>
+            </div>
+          `;
+        }
+        function renderSessionsTab(data) {
+            const acct = (data.report || {}).accounting || [];
+            if (!acct.length) return '<div class="text-sm text-gray-400 text-center py-12">No session records found.</div>';
+            return `
+            <div class="rounded-xl border border-gray-100 overflow-x-auto">
+              <table class="w-full text-xs whitespace-nowrap">
+                <thead><tr class="bg-gray-50 text-gray-500">
+                  <th class="px-3 py-2 text-left">Start</th>
+                  <th class="px-3 py-2 text-left">Stop</th>
+                  <th class="px-3 py-2 text-right">Duration</th>
+                  <th class="px-3 py-2 text-right">Data</th>
+                  <th class="px-3 py-2 text-left">NAS IP</th>
+                  <th class="px-3 py-2 text-left">Framed IP</th>
+                  <th class="px-3 py-2 text-left">Cause</th>
+                </tr></thead>
+                <tbody>${acct.slice(0, 100).map(a => {
+                const isActive = !a.acctstoptime;
+                const dataBytes = (Number(a.acctinputoctets) || 0) + (Number(a.acctoutputoctets) || 0);
+                return `
+                  <tr class="border-t border-gray-50 ${isActive ? 'bg-green-50' : ''}">
+                    <td class="px-3 py-2 font-mono">${fmtDateShort(a.acctstarttime)}</td>
+                    <td class="px-3 py-2 font-mono">${isActive ? '<span class="text-green-600 font-bold">Active</span>' : fmtDateShort(a.acctstoptime)}</td>
+                    <td class="px-3 py-2 text-right font-mono">${fmtDuration(a.acctsessiontime)}</td>
+                    <td class="px-3 py-2 text-right font-mono">${fmtBytes(dataBytes)}</td>
+                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${a.framedipaddress || '—'}</td>
+                    <td class="px-3 py-2 text-gray-400">${a.acctterminatecause || (isActive ? '—' : '—')}</td>
+                  </tr>`;
+            }).join('')}
+                </tbody>
+              </table>
+              ${acct.length > 100 ? `<div class="text-center text-xs text-gray-400 py-2">Showing 100 of ${acct.length} sessions</div>` : ''}
+            </div>
+          `;
+        }
+        function renderAuthLogsTab(data) {
+            const auth = (data.report || {}).postauth || [];
+            if (!auth.length) return '<div class="text-sm text-gray-400 text-center py-12">No authentication records found.</div>';
+            return `
+            <div class="rounded-xl border border-gray-100 overflow-x-auto">
+              <table class="w-full text-xs whitespace-nowrap">
+                <thead><tr class="bg-gray-50 text-gray-500">
+                  <th class="px-3 py-2 text-left">Date / Time</th>
+                  <th class="px-3 py-2 text-left">Result</th>
+                  <th class="px-3 py-2 text-left">NAS IP</th>
+                  <th class="px-3 py-2 text-left">Calling Station</th>
+                  <th class="px-3 py-2 text-left">Class</th>
+                  <th class="px-3 py-2 text-left">Reply Message</th>
+                </tr></thead>
+                <tbody>${auth.slice(0, 200).map(a => {
+                const isAccept = a.reply === 'Access-Accept';
+                return `
+                  <tr class="border-t border-gray-50">
+                    <td class="px-3 py-2 font-mono">${fmtDateShort(a.authdate)}</td>
+                    <td class="px-3 py-2">
+                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${a.reply}</span>
+                    </td>
+                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${a.callingstationid || '—'}</td>
+                    <td class="px-3 py-2 text-gray-500">${a.class || '—'}</td>
+                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${a.replymessage || '—'}</td>
+                  </tr>`;
+            }).join('')}
+                </tbody>
+              </table>
+              ${auth.length > 200 ? `<div class="text-center text-xs text-gray-400 py-2">Showing 200 of ${auth.length} records</div>` : ''}
+            </div>
+          `;
+        }
+        function renderOverviewTab(data) {
+            const s = data.stats || {};
+            const r = data.report || {};
+            const rs = r.stats || {};
+            const user = data.user || {};
+
+            // Plan usage calculation
+            const planInfo = renderPlanUsage(s, user);
+
+            // Auth stats
+            const accepts = (r.authStats || []).find(a => a.reply === 'Access-Accept');
+            const rejects = (r.authStats || []).find(a => a.reply === 'Access-Reject');
+            const totalAuths = (r.authStats || []).reduce((n, a) => n + Number(a.count), 0);
+
+            return `
+            <!-- Quick KPI row: 24h / 7d -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Activity — Last 24 h vs Last 7 d</h3>
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+
+                <div class="stat-card">
+                  <div class="label">Auth Requests</div>
+                  <div class="val-24h">${s.auths_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span>${s.auths_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Sessions</div>
+                  <div class="val-24h">${s.sessions_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span>${s.sessions_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Rejects</div>
+                  <div class="val-24h ${Number(s.rejects_24h) > 0 ? 'text-red-600' : ''}">${s.rejects_24h ?? '—'}</div>
+                  <div class="val-7d">7d: <span class="${Number(s.rejects_7d) > 0 ? 'text-red-600' : ''}">${s.rejects_7d ?? '—'}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Data Used</div>
+                  <div class="val-24h">${fmtBytes(s.data_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtBytes(s.data_7d)}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Time Online</div>
+                  <div class="val-24h">${fmtDuration(s.time_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtDuration(s.time_7d)}</span></div>
+                </div>
+
+                <div class="stat-card">
+                  <div class="label">Avg Session</div>
+                  <div class="val-24h">${fmtDuration(s.avg_session_24h)}</div>
+                  <div class="val-7d">7d: <span>${fmtDuration(s.avg_session_7d)}</span></div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Plan Usage -->
+            ${planInfo}
+
+            <!-- Auth Summary -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Authentication Summary (All Time)</h3>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="stat-card text-center">
+                  <div class="label">Total Auths</div>
+                  <div class="val-24h">${totalAuths.toLocaleString()}</div>
+                </div>
+                <div class="stat-card text-center">
+                  <div class="label">Accepts</div>
+                  <div class="val-24h text-green-600">${accepts ? Number(accepts.count).toLocaleString() : '0'}</div>
+                </div>
+                <div class="stat-card text-center">
+                  <div class="label">Rejects</div>
+                  <div class="val-24h text-red-600">${rejects ? Number(rejects.count).toLocaleString() : '0'}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- All-time stats -->
+            <div class="mb-5">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">All-Time Accounting</h3>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="stat-card">
+                  <div class="label">Total Sessions</div>
+                  <div class="val-24h">${rs.total_sessions ? Number(rs.total_sessions).toLocaleString() : '0'}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Total Data</div>
+                  <div class="val-24h">${fmtBytes((Number(rs.total_input) || 0) + (Number(rs.total_output) || 0))}</div>
+                  <div class="val-7d">↑ ${fmtBytes(rs.total_input)} ↓ ${fmtBytes(rs.total_output)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Total Time Online</div>
+                  <div class="val-24h">${fmtDuration(rs.total_time)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Avg Session Length</div>
+                  <div class="val-24h">${fmtDuration(rs.avg_session_time)}</div>
+                  <div class="val-7d">Longest: <span>${fmtDuration(rs.longest_session)}</span></div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">First Seen</div>
+                  <div class="val-24h text-sm font-semibold">${fmtDateShort(rs.first_seen)}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="label">Last Seen</div>
+                  <div class="val-24h text-sm font-semibold">${fmtDateShort(rs.last_seen)}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NAS Breakdown -->
+            ${(r.nasStats && r.nasStats.length > 0) ? `
+            <div class="mb-4">
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">NAS Breakdown</h3>
+              <div class="rounded-xl border border-gray-100 overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead><tr class="bg-gray-50 text-gray-500 text-xs"><th class="px-3 py-2 text-left">NAS IP</th><th class="px-3 py-2 text-right">Sessions</th><th class="px-3 py-2 text-right">Data</th><th class="px-3 py-2 text-right">Avg Duration</th></tr></thead>
+                  <tbody>${r.nasStats.map(n => `
+                    <tr class="border-t border-gray-50">
+                      <td class="px-3 py-2 font-mono text-xs">${n.nasipaddress}</td>
+                      <td class="px-3 py-2 text-right font-bold">${Number(n.session_count).toLocaleString()}</td>
+                      <td class="px-3 py-2 text-right text-gray-600">${fmtBytes(n.total_bytes)}</td>
+                      <td class="px-3 py-2 text-right text-gray-600">${fmtDuration(n.avg_duration)}</td>
+                    </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>` : ''}
+          `;
+        }
+        function renderDetailTab(tab, data) {
+            const body = document.getElementById('dpBody');
+            if (tab === 'overview') body.innerHTML = renderOverviewTab(data);
+            else if (tab === 'sessions') body.innerHTML = renderSessionsTab(data);
+            else if (tab === 'authlogs') body.innerHTML = renderAuthLogsTab(data);
+        }
+
+        function setActiveTabs(active) {
+            ['overview', 'sessions', 'authlogs'].forEach(t => {
+                const el = document.getElementById('tab-' + t);
+                if (!el) return;
+                if (t === active) { el.classList.add('active'); el.classList.remove('text-gray-500'); el.classList.add('text-blue-600'); }
+                else { el.classList.remove('active'); el.classList.add('text-gray-500'); el.classList.remove('text-blue-600'); }
+            });
+        }
+
+        async function openDetailPanel(username) {
+            await ensureDetailPlans();
+            currentDetailUser = username;
+            currentDetailTab = 'overview';
+            const panel = document.getElementById('userDetailPanel');
+            const overlay = document.getElementById('userDetailOverlay');
+            document.getElementById('dpUsername').textContent = username;
+            document.getElementById('dpAvatar').textContent = (username || 'U').charAt(0).toUpperCase();
+            document.getElementById('dpSubtitle').textContent = 'Loading...';
+            document.getElementById('dpBody').innerHTML = '<div class="flex items-center justify-center h-32 text-gray-400 text-sm">Loading user data...</div>';
+            overlay.classList.remove('hidden');
+            panel.classList.remove('translate-x-full');
+            setActiveTabs('overview');
+            await loadDetailData(username);
+        }
+
+        function closeDetailPanel() {
+            document.getElementById('userDetailPanel').classList.add('translate-x-full');
+            document.getElementById('userDetailOverlay').classList.add('hidden');
+            currentDetailUser = null; currentDetailData = null;
+        }
+
+        async function refreshDetailPanel() {
+            if (!currentDetailUser) return;
+            const icon = document.getElementById('dpRefreshIcon');
+            icon.classList.add('spinning');
+            await loadDetailData(currentDetailUser);
+            icon.classList.remove('spinning');
+        }
+
+        function switchTab(tab) {
+            currentDetailTab = tab;
+            setActiveTabs(tab);
+            if (currentDetailData) renderDetailTab(tab, currentDetailData);
+        }
+
+        async function loadDetailData(username) {
+            try {
+                const [statsRes, reportRes, usersRes] = await Promise.all([
+                    apiFetch(`/api/users/${encodeURIComponent(username)}/stats`),
+                    apiFetch(`/api/reports/user/${encodeURIComponent(username)}`),
+                    apiFetch(`/api/users?username=${encodeURIComponent(username)}`)
+                ]);
+                const stats = statsRes.ok ? await statsRes.json() : null;
+                const report = reportRes.ok ? await reportRes.json() : null;
+                let userData = { username };
+                if (usersRes.ok) {
+                    const usersData = await usersRes.json();
+                    userData = (Array.isArray(usersData) ? usersData.find(u => u.username === username) : null) || userData;
+                }
+                currentDetailData = { stats, report, user: userData };
+                const plan = userData.plan_name || 'No Plan';
+                const profile = userData.profile || 'No Profile';
+                document.getElementById('dpSubtitle').innerHTML = `
+                  <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
+                  <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>`;
+                document.getElementById('dpResetPlanBtn').classList.toggle('hidden', !userData.plan_id);
+                document.getElementById('dpEditBtn').onclick = () => { window.location.href = 'users.html'; };
+                document.getElementById('dpDeleteBtn').onclick = () => { window.location.href = 'users.html'; };
+                document.getElementById('dpResetPlanBtn').onclick = () => { window.location.href = 'users.html'; };
+                renderDetailTab(currentDetailTab, currentDetailData);
+            } catch (e) {
+                document.getElementById('dpBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
+            }
+        }
+
+
         async function loadSessions() {
             var icon = document.getElementById('refreshIcon');
             icon.classList.add('spinning');
             try {
-                var res = await apiFetch('/api/sessions/active?limit=1000');
+                var res = await apiFetch((showingStale ? '/api/sessions/stale' : '/api/sessions/active?limit=1000'));
                 if (!res.ok) { icon.classList.remove('spinning'); return; }
                 allSessions = await res.json();
                 renderTable();
@@ -212,7 +802,7 @@
             if (countEl) countEl.textContent = filtered.length;
 
             if (!filtered.length) {
-                tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
                 return;
             }
 
@@ -220,6 +810,7 @@
             tbody.innerHTML = filtered.map(function (s) {
                 var idx = allSessions.indexOf(s);
                 return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + idx + ')">' +
+                    '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="session-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="' + s.radacctid + '" onchange="updateClearButton()"></td>' +
                     '<td class="p-3 font-bold text-gray-800">' + s.username + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.framedipaddress || '—') + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.nasipaddress || '—') + '</td>' +
@@ -235,8 +826,10 @@
 
         function showModal(idx) {
             var s = allSessions[idx];
+            currentModalSessionId = s.radacctid;
             document.getElementById('modalSubtitle').textContent = 'Session ID: ' + (s.radacctid || s.acctuniqueid || '—') + ' · ' + s.username;
-            document.getElementById('modalUserLink').href = 'reports.html';
+            document.getElementById('modalUserLink').href = '#';
+            document.getElementById('modalUserLink').onclick = function(e){ e.preventDefault(); hideModal(); openDetailPanel(s.username); };
 
             var totalBytes = (Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0);
             document.getElementById('modalKpis').innerHTML =

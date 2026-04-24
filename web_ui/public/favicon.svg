@@ -1,12 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <defs>
-    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#d97706;stop-opacity:1" />
-    </linearGradient>
-  </defs>
-  <rect width="100" height="100" rx="20" fill="#111827" />
-  <path d="M 15 50 Q 25 20 45 40 T 75 40 Q 85 20 95 35" fill="none" stroke="#6b7280" stroke-width="8" stroke-linecap="round" />
-  <path d="M 55 5 L 25 50 L 45 55 L 35 95 L 75 45 L 55 40 Z" fill="url(#boltGrad)" />
-  <path d="M 5 60 Q 25 80 50 60 T 80 65 Q 95 85 95 65" fill="none" stroke="#9ca3af" stroke-width="8" stroke-linecap="round" />
+	<defs>
+		<linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+			<stop offset="0%" stop-color="#3b82f6"/>
+			<stop offset="100%" stop-color="#1d4ed8"/>
+		</linearGradient>
+		<clipPath id="shieldClip">
+			<path d="M50 8 L88 22 L88 52 C88 72 70 88 50 94 C30 88 12 72 12 52 L12 22 Z"/>
+		</clipPath>
+	</defs>
+
+	<!-- Shield body -->
+	<path d="M50 8 L88 22 L88 52 C88 72 70 88 50 94 C30 88 12 72 12 52 L12 22 Z"
+		  fill="url(#shieldGrad)"/>
+
+	<!-- Shield inner highlight -->
+	<path d="M50 14 L83 26 L83 52 C83 69 67 84 50 89 C33 84 17 69 17 52 L17 26 Z"
+		  fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+
+	<!-- Signal arcs clipped to shield -->
+	<g clip-path="url(#shieldClip)" fill="none" stroke="white" stroke-linecap="round">
+		<!-- Outer arc -->
+		<path d="M28 56 A26 26 0 0 1 72 56" stroke-width="5.5" stroke-opacity="0.5"/>
+		<!-- Middle arc -->
+		<path d="M34 62 A18 18 0 0 1 66 62" stroke-width="5.5" stroke-opacity="0.75"/>
+		<!-- Inner arc -->
+		<path d="M40 68 A10 10 0 0 1 60 68" stroke-width="5.5"/>
+		<!-- Center dot -->
+		<circle cx="50" cy="72" r="4.5" fill="white" stroke="none"/>
+	</g>
 </svg>

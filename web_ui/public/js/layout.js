@@ -107,27 +107,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.body.insertAdjacentHTML('afterbegin', `
     <div class="w-64 bg-gray-900 text-white h-screen p-5 flex flex-col shadow-2xl rounded-r-3xl border-r border-gray-800 relative z-20">
-      <div class="flex items-center mb-10 space-x-3 bg-gray-800 p-3 rounded-2xl border border-gray-700">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="w-10 h-10 drop-shadow-md">
+      <div class="flex items-center mb-10 gap-3 px-3 py-3 rounded-2xl" style="background:linear-gradient(135deg,#1e2736 0%,#1a2234 100%);border:1px solid rgba(59,130,246,0.2);">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="w-10 h-10 flex-shrink-0 drop-shadow-lg" aria-label="RadiusStack">
           <defs>
-            <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1"/>
-              <stop offset="100%" style="stop-color:#d97706;stop-opacity:1"/>
+            <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="100%" stop-color="#1d4ed8"/>
             </linearGradient>
-            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="3" result="blur"/>
-              <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-            </filter>
+            <clipPath id="shieldClip">
+              <path d="M50 8 L88 22 L88 52 C88 72 70 88 50 94 C30 88 12 72 12 52 L12 22 Z"/>
+            </clipPath>
           </defs>
-          <path d="M 15 50 Q 25 20 45 40 T 75 40 Q 85 20 95 35" fill="none" stroke="#6b7280" stroke-width="8" stroke-linecap="round"/>
-          <path d="M 55 5 L 25 50 L 45 55 L 35 95 L 75 45 L 55 40 Z" fill="url(#boltGrad)" filter="url(#glow)"/>
-          <path d="M 5 60 Q 25 80 50 60 T 80 65 Q 95 85 95 65" fill="none" stroke="#9ca3af" stroke-width="8" stroke-linecap="round"/>
-          <circle cx="25" cy="50" r="4" fill="#374151"/>
-          <circle cx="75" cy="50" r="4" fill="#374151"/>
+          <path d="M50 8 L88 22 L88 52 C88 72 70 88 50 94 C30 88 12 72 12 52 L12 22 Z" fill="url(#shieldGrad)"/>
+          <path d="M50 14 L83 26 L83 52 C83 69 67 84 50 89 C33 84 17 69 17 52 L17 26 Z" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+          <g clip-path="url(#shieldClip)" fill="none" stroke="white" stroke-linecap="round">
+            <path d="M28 56 A26 26 0 0 1 72 56" stroke-width="5.5" stroke-opacity="0.5"/>
+            <path d="M34 62 A18 18 0 0 1 66 62" stroke-width="5.5" stroke-opacity="0.75"/>
+            <path d="M40 68 A10 10 0 0 1 60 68" stroke-width="5.5"/>
+            <circle cx="50" cy="72" r="4.5" fill="white" stroke="none"/>
+          </g>
         </svg>
-        <div>
-          <h1 class="text-2xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-gray-400">Radius<span class="${theme.text}">Stack</span></h1>
-          ${window.currentAdmin ? `<p class="text-xs text-gray-500 truncate max-w-xs">${window.currentAdmin}</p>` : ''}
+        <div class="min-w-0">
+          <div style="font-size:1.1rem;font-weight:800;letter-spacing:-0.02em;line-height:1.2;">
+            <span style="color:#f1f5f9;">Radius</span><span style="color:#3b82f6;">Stack</span>
+          </div>
+          <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#475569;font-weight:600;margin-top:1px;">Network Auth</div>
+          ${window.currentAdmin ? `<p class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;">${window.currentAdmin}</p>` : ''}
         </div>
       </div>
       <nav class="flex-1 space-y-2 font-medium overflow-y-auto pr-2 custom-scrollbar" id="sideNav">
