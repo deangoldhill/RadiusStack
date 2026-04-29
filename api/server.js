@@ -758,6 +758,28 @@ app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) =>
     res.json(rows);
 });
 
+app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
+    try {
+        const { username, nasip, callingstationid, date_from, date_to, reply } = req.query;
+        let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
+        const conditions = [], params = [];
+        if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+        if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
+        if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
+        if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
+        if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
+        if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        const [result] = await pool.query(query, params);
+        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip);
+        res.json({ deleted: result.affectedRows });
+    } catch (err) {
+        console.error('DELETE /api/logs/auth error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 // --- SETTINGS ---
 app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM settings');
@@ -765,7 +787,8 @@ app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, re
 });
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
-    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile, clear_stale_sessions, stale_session_threshold, stale_session_interval, api_debug } = req.body;
+  try {
+    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile, mac_auth_autocreate_interval, authlogs_purge_enabled, authlogs_purge_days, authlogs_purge_interval, clear_stale_sessions, stale_session_threshold, stale_session_interval, api_debug } = req.body;
 
     if (enforce_2fa !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', ?) ON DUPLICATE KEY UPDATE setting_value=?", [enforce_2fa, enforce_2fa]);
     if (radius_debug !== undefined) {
@@ -779,6 +802,11 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
   if (mac_auth_autocreate !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate, mac_auth_autocreate]);
   if (mac_auth_autocreate_plan !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_plan', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_plan, mac_auth_autocreate_plan]);
   if (mac_auth_autocreate_profile !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_profile', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_profile, mac_auth_autocreate_profile]);
+    if (mac_auth_autocreate_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [mac_auth_autocreate_interval, mac_auth_autocreate_interval]);
+    if (authlogs_purge_enabled !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('authlogs_purge_enabled', ?) ON DUPLICATE KEY UPDATE setting_value=?", [authlogs_purge_enabled, authlogs_purge_enabled]);
+    if (authlogs_purge_days !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('authlogs_purge_days', ?) ON DUPLICATE KEY UPDATE setting_value=?", [authlogs_purge_days, authlogs_purge_days]);
+    if (authlogs_purge_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('authlogs_purge_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [authlogs_purge_interval, authlogs_purge_interval]);
+
     if (clear_stale_sessions !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('clear_stale_sessions', ?) ON DUPLICATE KEY UPDATE setting_value=?", [clear_stale_sessions, clear_stale_sessions]);
     if (stale_session_threshold !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('stale_session_threshold', ?) ON DUPLICATE KEY UPDATE setting_value=?", [stale_session_threshold, stale_session_threshold]);
     if (stale_session_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('stale_session_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [stale_session_interval, stale_session_interval]);
@@ -790,6 +818,10 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
 
     await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug}, MacAutoCreate:${mac_auth_autocreate})`, 'success', '', req.ip);
     res.json({ success: true });
+  } catch (err) {
+    console.error('Settings save error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- SYSTEM HEALTH ---
@@ -1699,6 +1731,28 @@ app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, re
     res.json(rows);
 });
 
+app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
+    try {
+        const { username, nasip, callingstationid, date_from, date_to, reply } = req.query;
+        let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
+        const conditions = [], params = [];
+        if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+        if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
+        if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
+        if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
+        if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
+        if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
+        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        const [result] = await pool.query(query, params);
+        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip);
+        res.json({ deleted: result.affectedRows });
+    } catch (err) {
+        console.error('DELETE /api/logs/auth error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 // LIVE STATS DASHBOARD
 app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
@@ -2209,9 +2263,11 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (r
         const radreply = await safeQuery('SELECT * FROM radreply');
         const radgroupcheck = await safeQuery('SELECT * FROM radgroupcheck');
         const radgroupreply = await safeQuery('SELECT * FROM radgroupreply');
+        const radusergroup = await safeQuery('SELECT * FROM radusergroup');
         const mac_auth_devices = await safeQuery('SELECT * FROM mac_auth_devices');
         const user_plans = await safeQuery('SELECT * FROM user_plans');
         const user_plan_usage = await safeQuery('SELECT * FROM user_plan_usage');
+        const settings = await safeQuery('SELECT * FROM settings');
 
         const macSet = new Set(mac_auth_devices.map(d => d.mac_address.toLowerCase()));
         const radcheck_users = radcheck.filter(r => !macSet.has(r.username.toLowerCase()));
@@ -2231,6 +2287,8 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (r
                 radgroupreply,
                 user_plans,
                 user_plan_usage,
+                radusergroup,
+                settings,
             }
         };
 
@@ -2372,6 +2430,21 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer
             await conn.query('DELETE FROM radgroupreply');
             await chunkInsert(conn, 'radgroupreply', data.radgroupreply);
             results.radgroupreply = data.radgroupreply.length;
+        }
+
+        // --- radusergroup (assigned profiles) ---
+        if (data.radusergroup?.length) {
+            await conn.query('DELETE FROM radusergroup');
+            await chunkInsert(conn, 'radusergroup', data.radusergroup);
+            results.radusergroup = data.radusergroup.length;
+        }
+
+        // --- Settings ---
+        if (data.settings?.length) {
+            for (const s of data.settings) {
+                await conn.query('INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?', [s.setting_key, s.setting_value, s.setting_value]);
+            }
+            results.settings = data.settings.length;
         }
 
         // --- Plan assignments + snapshots ---
@@ -2614,10 +2687,16 @@ app.listen(3000, '0.0.0.0', () => {
     apiDebugLog('MAC Auth Auto-Create worker initialized');
 async function processAutoCreateMacs() {
     try {
-        const [settingsRows] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile')");
+        const [settingsRows] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval')");
         const config = settingsRows.reduce((acc, row) => ({ ...acc, [row.setting_key]: row.setting_value }), {});
 
         if (config.mac_auth_autocreate !== 'true') return;
+
+        const intervalSeconds = parseInt(config.mac_auth_autocreate_interval) || 5;
+        const now = Date.now();
+        if (now - lastAutoCreateMacRun < intervalSeconds * 1000) return;
+        lastAutoCreateMacRun = now;
+
 
         const plan_id = config.mac_auth_autocreate_plan || '';
         const profile = config.mac_auth_autocreate_profile || '';
@@ -2668,13 +2747,47 @@ async function processAutoCreateMacs() {
         console.error('[MAC Auto-Create Worker] Error:', err);
     }
 }
-setInterval(processAutoCreateMacs, 5000);
+setInterval(processAutoCreateMacs, 1000);
 
 
 
 // --- STALE SESSIONS AUTO-CLEAR WORKER ---
     apiDebugLog('Stale session worker initialized');
 let lastStaleSessionRun = 0;
+
+let lastAuthLogPurgeRun = 0;
+let lastAutoCreateMacRun = 0;
+
+async function processAuthLogPurge() {
+    try {
+        const [settings] = await pool.query(
+            "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('authlogs_purge_enabled', 'authlogs_purge_days', 'authlogs_purge_interval')"
+        );
+        let purgeEnabled = false;
+        let purgeDays = 30;
+        let intervalMinutes = 60;
+        settings.forEach(s => {
+            if (s.setting_key === 'authlogs_purge_enabled') purgeEnabled = (s.setting_value === 'true' || s.setting_value === '1');
+            if (s.setting_key === 'authlogs_purge_days') purgeDays = parseInt(s.setting_value) || 30;
+            if (s.setting_key === 'authlogs_purge_interval') intervalMinutes = parseInt(s.setting_value) || 60;
+        });
+        if (!purgeEnabled) return;
+        const now = Date.now();
+        if (now - lastAuthLogPurgeRun < intervalMinutes * 60 * 1000) return;
+        lastAuthLogPurgeRun = now;
+        const [result] = await pool.query(
+            'DELETE FROM radpostauth WHERE authdate < DATE_SUB(NOW(), INTERVAL ? DAY)',
+            [purgeDays]
+        );
+        if (result.affectedRows > 0) {
+            await auditLog('system', 'system', `Auto-purged ${result.affectedRows} auth log entries older than ${purgeDays} days`, 'success', 'Background process auth log purge', '127.0.0.1');
+            console.log(`[Background Task] Auto-purged ${result.affectedRows} auth log entries.`);
+        }
+    } catch (error) {
+        console.error('[Background Task] Error auto-purging auth logs:', error);
+    }
+}
+
 async function processStaleSessions() {
     try {
         const [settings] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interval')");
@@ -2723,4 +2836,5 @@ async function processStaleSessions() {
         console.error('[Background Task] Error auto-clearing stale sessions:', error);
     }
 }
-setInterval(processStaleSessions, 60 * 1000); // Poll every minute, internal logic handles the defined interval
+setInterval(processStaleSessions, 60 * 1000);
+setInterval(processAuthLogPurge, 60 * 1000); // Poll every minute, internal logic handles the defined interval

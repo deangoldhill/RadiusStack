@@ -229,7 +229,10 @@
         function fmtDuration(seconds) {
             if (!seconds || seconds === 0) return '0s';
             const s = Number(seconds);
-            const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            const d = Math.floor(s / 86400),
+                h = Math.floor((s % 86400) / 3600),
+                m = Math.floor((s % 3600) / 60),
+                sec = Math.floor(s % 60);  // ← Add Math.floor() here
             if (d > 0) return `${d}d ${h}h ${m}m`;
             if (h > 0) return `${h}h ${m}m`;
             if (m > 0) return `${m}m ${sec}s`;

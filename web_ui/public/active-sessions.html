@@ -402,7 +402,10 @@
         function fmtDuration(seconds) {
             if (!seconds || seconds === 0) return '0s';
             const s = Number(seconds);
-            const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            const d = Math.floor(s / 86400),
+                h = Math.floor((s % 86400) / 3600),
+                m = Math.floor((s % 3600) / 60),
+                sec = Math.floor(s % 60);  // ← Add Math.floor() here
             if (d > 0) return `${d}d ${h}h ${m}m`;
             if (h > 0) return `${h}h ${m}m`;
             if (m > 0) return `${m}m ${sec}s`;
@@ -738,31 +741,66 @@
 
         async function loadDetailData(username) {
             try {
-                const [statsRes, reportRes, usersRes] = await Promise.all([
+                // Fetch all necessary data concurrently
+                const [statsRes, reportRes, usersRes, macRes] = await Promise.all([
                     apiFetch(`/api/users/${encodeURIComponent(username)}/stats`),
                     apiFetch(`/api/reports/user/${encodeURIComponent(username)}`),
-                    apiFetch(`/api/users?username=${encodeURIComponent(username)}`)
+                    apiFetch(`/api/users?username=${encodeURIComponent(username)}`),
+                    apiFetch(`/api/mac-auth`)
                 ]);
+
                 const stats = statsRes.ok ? await statsRes.json() : null;
                 const report = reportRes.ok ? await reportRes.json() : null;
+
                 let userData = { username };
-                if (usersRes.ok) {
-                    const usersData = await usersRes.json();
-                    userData = (Array.isArray(usersData) ? usersData.find(u => u.username === username) : null) || userData;
+                let isMacDevice = false;
+
+                // 1. Try to match as a MAC auth device first (checking BOTH mac_address and mac_id)
+                if (macRes.ok) {
+                    const macData = await macRes.json();
+                    if (Array.isArray(macData)) {
+                        const macMatch = macData.find(d =>
+                            d.mac_address === username || d.mac_id === username
+                        );
+
+                        if (macMatch) {
+                            userData = { ...macMatch, username: macMatch.mac_address };
+                            isMacDevice = true;
+                        }
+                    }
                 }
+
+                // 2. If not found in MAC auth, try regular users
+                if (!isMacDevice && usersRes.ok) {
+                    const usersData = await usersRes.json();
+                    if (Array.isArray(usersData)) {
+                        const userMatch = usersData.find(u => u.username === username);
+                        if (userMatch) userData = userMatch;
+                    }
+                }
+
                 currentDetailData = { stats, report, user: userData };
+
+                // Update UI Badges
                 const plan = userData.plan_name || 'No Plan';
                 const profile = userData.profile || 'No Profile';
                 document.getElementById('dpSubtitle').innerHTML = `
-                  <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
-                  <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>`;
+          <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
+          <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>`;
+
                 document.getElementById('dpResetPlanBtn').classList.toggle('hidden', !userData.plan_id);
-                document.getElementById('dpEditBtn').onclick = () => { window.location.href = 'users.html'; };
-                document.getElementById('dpDeleteBtn').onclick = () => { window.location.href = 'users.html'; };
-                document.getElementById('dpResetPlanBtn').onclick = () => { window.location.href = 'users.html'; };
+
+                // Route footer buttons to the correct management page
+                const targetPage = isMacDevice ? 'mac-auth.html' : 'users.html';
+                document.getElementById('dpEditBtn').onclick = () => { window.location.href = targetPage; };
+                document.getElementById('dpDeleteBtn').onclick = () => { window.location.href = targetPage; };
+                document.getElementById('dpResetPlanBtn').onclick = () => { window.location.href = targetPage; };
+
+                // Render the tab content
                 renderDetailTab(currentDetailTab, currentDetailData);
             } catch (e) {
-                document.getElementById('dpBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
+                document.getElementById('dpBody').innerHTML =
+                    `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
             }
         }
 
