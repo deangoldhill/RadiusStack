@@ -211,7 +211,39 @@
                 </div>
             </div>
         </div>
-    </main>
+    
+        <!-- ── ROW 4: RADIUS Server Stats ──────────────────────────────────── -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <h3 class="font-bold text-gray-700 text-sm">RADIUS Auth Server</h3>
+                </div>
+                <div id="radiusAuthStats" class="space-y-2 text-xs"></div>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-8 h-8 rounded-lg bg-cyan-50 flex items-center justify-center">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0891b2" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                    </div>
+                    <h3 class="font-bold text-gray-700 text-sm">RADIUS Acct Server</h3>
+                </div>
+                <div id="radiusAcctStats" class="space-y-2 text-xs"></div>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    </div>
+                    <h3 class="font-bold text-gray-700 text-sm">Server Health</h3>
+                </div>
+                <div id="radiusHealth" class="space-y-3"></div>
+            </div>
+        </div>
+
+</main>
 
     <script src="/js/layout.js"></script>
     <script>
@@ -348,7 +380,69 @@
             } catch (e) { document.getElementById('containerList').innerHTML = '<div class="text-xs text-red-400">Failed to load</div>'; }
         }
 
-        async function loadAll() { await Promise.all([loadOverview(), loadContainers()]); }
+        
+        function fmtUptime(sec) {
+            if (sec === null || sec < 0) return '—';
+            var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm';
+        }
+
+        function statRow(label, value, colorClass) {
+            colorClass = colorClass || 'text-gray-700';
+            return '<div class="flex justify-between items-center py-1 border-b border-gray-50 last:border-0">' +
+                '<span class="text-gray-500">' + label + '</span>' +
+                '<span class="font-bold ' + colorClass + '">' + value + '</span></div>';
+        }
+
+        async function loadRadiusStats() {
+            try {
+                var res = await apiFetch('/api/radius/stats');
+                if (!res.ok) {
+                    document.getElementById('radiusAuthStats').innerHTML = '<div class="text-gray-400">Not available</div>';
+                    document.getElementById('radiusAcctStats').innerHTML = '<div class="text-gray-400">Not available</div>';
+                    document.getElementById('radiusHealth').innerHTML = '<div class="text-gray-400">Not available</div>';
+                    return;
+                }
+                var d = await res.json();
+                var a = d.auth, ac = d.acct;
+                if (a) {
+                    document.getElementById('radiusAuthStats').innerHTML =
+                        statRow('Requests', Number(a.total_requests).toLocaleString()) +
+                        statRow('Accepts',  Number(a.total_accepts).toLocaleString(),  'text-green-600') +
+                        statRow('Rejects',  Number(a.total_rejects).toLocaleString(),  'text-red-500') +
+                        statRow('Challenges', Number(a.total_challenges).toLocaleString(), 'text-amber-500') +
+                        statRow('Duplicates', Number(a.dup_requests).toLocaleString()) +
+                        statRow('Malformed', Number(a.malformed_requests).toLocaleString(), Number(a.malformed_requests) > 0 ? 'text-red-400' : '') +
+                        statRow('Dropped',   Number(a.dropped_requests).toLocaleString(),  Number(a.dropped_requests) > 0 ? 'text-red-400' : '');
+                } else document.getElementById('radiusAuthStats').innerHTML = '<div class="text-gray-400 text-xs py-2">No data yet</div>';
+
+                if (ac) {
+                    document.getElementById('radiusAcctStats').innerHTML =
+                        statRow('Requests',  Number(ac.total_requests).toLocaleString()) +
+                        statRow('Responses', Number(ac.total_responses).toLocaleString(), 'text-green-600') +
+                        statRow('Duplicates', Number(ac.dup_requests).toLocaleString()) +
+                        statRow('Malformed', Number(ac.malformed_requests).toLocaleString(), Number(ac.malformed_requests) > 0 ? 'text-red-400' : '') +
+                        statRow('Dropped',   Number(ac.dropped_requests).toLocaleString(),  Number(ac.dropped_requests) > 0 ? 'text-red-400' : '');
+                } else document.getElementById('radiusAcctStats').innerHTML = '<div class="text-gray-400 text-xs py-2">No data yet</div>';
+
+                var rate = d.acceptRate !== null ? d.acceptRate + '%' : '—';
+                var rateColor = d.acceptRate >= 90 ? 'text-green-600' : d.acceptRate >= 70 ? 'text-amber-500' : 'text-red-500';
+                document.getElementById('radiusHealth').innerHTML =
+                    '<div class="bg-gray-50 rounded-lg p-3 text-center border">' +
+                        '<div class="text-xs text-gray-500 font-bold uppercase mb-1">Accept Rate</div>' +
+                        '<div class="text-3xl font-black ' + rateColor + '">' + rate + '</div>' +
+                    '</div>' +
+                    '<div class="bg-gray-50 rounded-lg p-3 text-center border">' +
+                        '<div class="text-xs text-gray-500 font-bold uppercase mb-1">Server Uptime</div>' +
+                        '<div class="text-xl font-black text-indigo-600">' + fmtUptime(d.uptimeSeconds) + '</div>' +
+                    '</div>' +
+                    (a ? '<div class="text-xs text-gray-400 text-center">Last polled: ' + new Date(a.collected_at).toLocaleTimeString() + '</div>' : '');
+            } catch (e) {}
+        }
+
+        async function loadAll() { await Promise.all([loadOverview(), loadContainers(), loadRadiusStats()]); }
         loadAll();
         setInterval(loadAll, 30000);
     </script>

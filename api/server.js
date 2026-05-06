@@ -10,6 +10,7 @@ const multer = require('multer');
 const fs = require('fs').promises;
 const puppeteer = require('puppeteer');
 const crypto = require('crypto');
+require('./workers/radiusStatsWorker');
 
 const app = express();
 const cors = require('cors');
@@ -1757,17 +1758,67 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
 app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
         const [[{ active_sessions }]] = await pool.query("SELECT COUNT(*) AS active_sessions FROM radacct WHERE acctstoptime IS NULL");
-        const [[{ accepts_1h }]] = await pool.query("SELECT COUNT(*) AS accepts_1h FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
-        const [[{ rejects_1h }]] = await pool.query("SELECT COUNT(*) AS rejects_1h FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
-        const [[{ accepts_24h }]] = await pool.query("SELECT COUNT(*) AS accepts_24h FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
-        const [[{ rejects_24h }]] = await pool.query("SELECT COUNT(*) AS rejects_24h FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
-        const [[{ unique_users_24h }]] = await pool.query("SELECT COUNT(DISTINCT username) AS unique_users_24h FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
-        const [nas_breakdown] = await pool.query("SELECT nasipaddress, COUNT(*) AS session_count FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY session_count DESC LIMIT 8");
-        const [hourly_trend] = await pool.query("SELECT DATE_FORMAT(authdate,'%H:00') AS hour_label, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY DATE_FORMAT(authdate,'%Y-%m-%d %H:00:00') ORDER BY MIN(authdate)");
         const [[{ avg_session_min }]] = await pool.query("SELECT ROUND(AVG(acctsessiontime)/60,1) AS avg_session_min FROM radacct WHERE acctstoptime IS NOT NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
-        res.json({ active_sessions: Number(active_sessions), accepts_1h: Number(accepts_1h), rejects_1h: Number(rejects_1h), accepts_24h: Number(accepts_24h), rejects_24h: Number(rejects_24h), unique_users_24h: Number(unique_users_24h), avg_session_min: Number(avg_session_min) || 0, nas_breakdown, hourly_trend });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        const [nas_breakdown] = await pool.query("SELECT nasipaddress, COUNT(*) AS session_count FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY session_count DESC LIMIT 8");
+        const [[{ unique_users_24h }]] = await pool.query("SELECT COUNT(DISTINCT username) AS unique_users_24h FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+
+        let accepts_1h = 0;
+        let rejects_1h = 0;
+        let accepts_24h = 0;
+        let rejects_24h = 0;
+        let hourly_trend = [];
+
+        try {
+            const tzOffset = new Date().getTimezoneOffset() * 60000;
+            const nowMsLocal = Date.now() - tzOffset;
+            const nowStr = new Date(nowMsLocal).toISOString().slice(0, 19).replace('T', ' ');
+
+            const d1h = new Date(nowMsLocal - 3600000).toISOString().slice(0, 19).replace('T', ' ');
+            const stats1h = await calculateRadiusStats(pool, 'auth', d1h, nowStr);
+
+            const d24h = new Date(nowMsLocal - 86400000).toISOString().slice(0, 19).replace('T', ' ');
+            const stats24h = await calculateRadiusStats(pool, 'auth', d24h, nowStr);
+
+            hourly_trend = await calculateTrendHourly(pool, 'auth', 24);
+
+            accepts_1h = stats1h ? Number(stats1h.total_accepts || 0) : 0;
+            rejects_1h = stats1h ? Number(stats1h.total_rejects || 0) : 0;
+            accepts_24h = stats24h ? Number(stats24h.total_accepts || 0) : 0;
+            rejects_24h = stats24h ? Number(stats24h.total_rejects || 0) : 0;
+        } catch (e) {
+            console.error('[live-stats radius_stats fallback]', e);
+
+            const [[a1h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+            const [[r1h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+            const [[a24h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            const [[r24h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            const [fallbackTrend] = await pool.query("SELECT DATE_FORMAT(authdate,'%H:00') AS hour_label, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY DATE_FORMAT(authdate,'%Y-%m-%d %H:00:00') ORDER BY MIN(authdate)");
+
+            accepts_1h = Number(a1h.cnt);
+            rejects_1h = Number(r1h.cnt);
+            accepts_24h = Number(a24h.cnt);
+            rejects_24h = Number(r24h.cnt);
+            hourly_trend = fallbackTrend;
+        }
+
+        res.json({
+            active_sessions: Number(active_sessions),
+            accepts_1h,
+            rejects_1h,
+            accepts_24h,
+            rejects_24h,
+            unique_users_24h: Number(unique_users_24h),
+            avg_session_min: Number(avg_session_min) || 0,
+            nas_breakdown,
+            hourly_trend
+        });
+    } catch (err) {
+        console.error('[/api/reports/live-stats]', err);
+        res.status(500).json({ error: err.message });
+    }
 });
+
+
 
 // PER-USER QUICK STATS
 app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), async (req, res) => {
@@ -2034,22 +2085,70 @@ app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'
         const [[plans]] = await pool.query("SELECT COUNT(*) AS cnt FROM plans");
         const [[activeSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct WHERE acctstoptime IS NULL");
         const [[totalSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct");
-        const [[authToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE authdate >= CURDATE()");
-        const [[rejectToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply='Access-Reject' AND authdate >= CURDATE()");
         const [[dataToday]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE DATE(acctstarttime)=CURDATE()");
         const [[dataWeek]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(),INTERVAL 7 DAY)");
         const [recentAuths] = await pool.query("SELECT p.reply, COALESCE(m.mac_id,p.username) AS username, p.nasipaddress, p.authdate FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username ORDER BY p.authdate DESC LIMIT 8");
-        const [authTrend7d] = await pool.query("SELECT DATE(authdate) AS day, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(authdate) ORDER BY day ASC");
         const [nasLoad] = await pool.query("SELECT nasipaddress, COUNT(*) AS active FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY active DESC LIMIT 6");
         const [profileDist] = await pool.query("SELECT groupname, COUNT(*) AS cnt FROM radusergroup GROUP BY groupname ORDER BY cnt DESC LIMIT 8");
         const [planDist] = await pool.query("SELECT p.name, COUNT(up.plan_id) AS cnt FROM plans p LEFT JOIN user_plans up ON up.plan_id=p.id GROUP BY p.id ORDER BY cnt DESC LIMIT 8");
+
+        let authTodayCnt = 0;
+        let rejectTodayCnt = 0;
+        let authTrend7d = [];
+
+        try {
+            const tzOffset = new Date().getTimezoneOffset() * 60000;
+            const nowMsLocal = Date.now() - tzOffset;
+            const nowStr = new Date(nowMsLocal).toISOString().slice(0, 19).replace('T', ' ');
+            const startOfTodayStr = new Date(nowMsLocal).toISOString().split('T')[0] + ' 00:00:00';
+
+            const todayStats = await calculateRadiusStats(pool, 'auth', startOfTodayStr, nowStr);
+            authTodayCnt = todayStats
+                ? Number(todayStats.total_accepts || 0) + Number(todayStats.total_rejects || 0)
+                : 0;
+            rejectTodayCnt = todayStats ? Number(todayStats.total_rejects || 0) : 0;
+
+            authTrend7d = await calculateTrendDaily(pool, 'auth', 7);
+        } catch (e) {
+            console.error('[dashboard-overview radius_stats fallback]', e);
+
+            const [[authToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE authdate >= CURDATE()");
+            const [[rejectToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply='Access-Reject' AND authdate >= CURDATE()");
+            const [fallbackTrend] = await pool.query("SELECT DATE(authdate) AS day, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(authdate) ORDER BY day ASC");
+
+            authTodayCnt = Number(authToday.cnt);
+            rejectTodayCnt = Number(rejectToday.cnt);
+            authTrend7d = fallbackTrend;
+        }
+
         res.json({
-            counts: { users: Number(users.cnt), macs: Number(macs.cnt), nas: Number(nas.cnt), plans: Number(plans.cnt), activeSessions: Number(activeSess.cnt), totalSessions: Number(totalSess.cnt), authToday: Number(authToday.cnt), rejectToday: Number(rejectToday.cnt) },
-            data: { today: Number(dataToday.bytes), week: Number(dataWeek.bytes) },
-            recentAuths, authTrend7d, nasLoad, profileDist, planDist
+            counts: {
+                users: Number(users.cnt),
+                macs: Number(macs.cnt),
+                nas: Number(nas.cnt),
+                plans: Number(plans.cnt),
+                activeSessions: Number(activeSess.cnt),
+                totalSessions: Number(totalSess.cnt),
+                authToday: authTodayCnt,
+                rejectToday: rejectTodayCnt
+            },
+            data: {
+                today: Number(dataToday.bytes),
+                week: Number(dataWeek.bytes)
+            },
+            recentAuths,
+            authTrend7d,
+            nasLoad,
+            profileDist,
+            planDist
         });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        console.error('[/api/reports/dashboard-overview]', err);
+        res.status(500).json({ error: err.message });
+    }
 });
+
+
 
 // === ACCOUNTING HISTORY API ===
 app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, res) => {
@@ -2675,6 +2774,187 @@ app.delete('/api/mac-auth/:macAddress', requireApiAuth('users', 'read-write'), a
         res.status(500).json({ error: err.message });
     } finally {
         conn.release();
+    }
+});
+
+
+// ─── CALCULATE INCREMENTAL RADIUS STATS ───────────────────────────────────────
+async function calculateRadiusStats(pool, statType, startDate, endDate) {
+    const params = [statType];
+    let timeFilter = '';
+
+    if (startDate && endDate) {
+        timeFilter = ' AND collected_at >= (SELECT COALESCE((SELECT MAX(collected_at) FROM radius_stats WHERE stat_type = ? AND collected_at < ?), ?)) AND collected_at <= ?';
+        params.push(statType, startDate, startDate, endDate);
+    } else {
+        const hours = 24;
+        timeFilter = ' AND collected_at >= (SELECT COALESCE((SELECT MAX(collected_at) FROM radius_stats WHERE stat_type = ? AND collected_at < DATE_SUB(NOW(), INTERVAL ? HOUR)), DATE_SUB(NOW(), INTERVAL ? HOUR)))';
+        params.push(statType, hours, hours);
+    }
+
+    const [rows] = await pool.query(
+        `SELECT * FROM radius_stats WHERE stat_type = ? ${timeFilter} ORDER BY collected_at ASC`,
+        params
+    );
+
+    if (rows.length === 0) return null;
+
+    const fields = [
+        'total_requests', 'total_accepts', 'total_rejects', 'total_challenges',
+        'total_responses', 'dup_requests', 'malformed_requests', 'invalid_requests',
+        'dropped_requests', 'unknown_types'
+    ];
+
+    const result = {};
+    for (const f of fields) result[f] = 0;
+
+    let prev = rows[0];
+    let startIdx = 1;
+
+    let winStart;
+    if (startDate) {
+        winStart = new Date(startDate.replace(' ', 'T') + 'Z').getTime();
+    } else {
+        winStart = Date.now() - (24 * 3600000);
+    }
+
+    const firstRowMs = new Date(rows[0].collected_at).getTime();
+    if (firstRowMs >= winStart) {
+        prev = {};
+        for (const f of fields) prev[f] = 0;
+        startIdx = 0;
+    }
+
+    for (let i = startIdx; i < rows.length; i++) {
+        const row = rows[i];
+        for (const f of fields) {
+            const currVal = Number(row[f] || 0);
+            const prevVal = Number(prev[f] || 0);
+            if (currVal >= prevVal) {
+                result[f] += (currVal - prevVal);
+            } else {
+                result[f] += currVal;
+            }
+        }
+        prev = row;
+    }
+
+    result.server_start_time = rows[rows.length - 1].server_start_time;
+    result.collected_at = rows[rows.length - 1].collected_at;
+
+    return result;
+}
+
+async function calculateTrendDaily(pool, statType, days) {
+    const [rows] = await pool.query(
+        `SELECT collected_at, total_accepts, total_rejects 
+         FROM radius_stats 
+         WHERE stat_type = ? 
+         AND collected_at >= (SELECT COALESCE((SELECT MAX(collected_at) FROM radius_stats WHERE stat_type = ? AND collected_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)), DATE_SUB(CURDATE(), INTERVAL ? DAY)))
+         ORDER BY collected_at ASC`, [statType, statType, days, days]
+    );
+
+    const map = {};
+    for(let i=days-1; i>=0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        map[d.toISOString().split('T')[0]] = { accepts: 0, rejects: 0 };
+    }
+
+    if (rows.length === 0) return Object.keys(map).sort().map(day => ({ day, accepts: 0, rejects: 0 }));
+
+    let prev = rows[0];
+    let startIdx = 1;
+
+    const winStartObj = new Date();
+    winStartObj.setDate(winStartObj.getDate() - days);
+    winStartObj.setHours(0,0,0,0);
+    const winStartMs = winStartObj.getTime();
+
+    if (new Date(rows[0].collected_at).getTime() >= winStartMs) {
+        prev = { total_accepts: 0, total_rejects: 0 };
+        startIdx = 0;
+    }
+
+    for (let i = startIdx; i < rows.length; i++) {
+        const r = rows[i];
+        const dayStr = new Date(r.collected_at).toISOString().split('T')[0];
+        if (!map[dayStr]) map[dayStr] = { accepts: 0, rejects: 0 };
+
+        const cA = Number(r.total_accepts || 0), pA = Number(prev.total_accepts || 0);
+        const cR = Number(r.total_rejects || 0), pR = Number(prev.total_rejects || 0);
+
+        map[dayStr].accepts += (cA >= pA) ? (cA - pA) : cA;
+        map[dayStr].rejects += (cR >= pR) ? (cR - pR) : cR;
+        prev = r;
+    }
+    return Object.keys(map).sort().map(day => ({ day, accepts: map[day].accepts, rejects: map[day].rejects }));
+}
+
+async function calculateTrendHourly(pool, statType, hours) {
+    const [rows] = await pool.query(
+        `SELECT collected_at, total_accepts, total_rejects 
+         FROM radius_stats 
+         WHERE stat_type = ? 
+         AND collected_at >= (SELECT COALESCE((SELECT MAX(collected_at) FROM radius_stats WHERE stat_type = ? AND collected_at < DATE_SUB(NOW(), INTERVAL ? HOUR)), DATE_SUB(NOW(), INTERVAL ? HOUR)))
+         ORDER BY collected_at ASC`, [statType, statType, hours, hours]
+    );
+
+    const arr = [];
+    for(let i=hours-1; i>=0; i--) {
+        const d = new Date(); d.setHours(d.getHours() - i);
+        arr.push({ dateObj: d, hour_label: d.getHours().toString().padStart(2, '0') + ':00', accepts: 0, rejects: 0 });
+    }
+
+    if (rows.length === 0) return arr.map(({hour_label, accepts, rejects}) => ({hour_label, accepts, rejects}));
+
+    let prev = rows[0];
+    let startIdx = 1;
+
+    const winStartMs = Date.now() - (hours * 3600000);
+    if (new Date(rows[0].collected_at).getTime() >= winStartMs) {
+        prev = { total_accepts: 0, total_rejects: 0 };
+        startIdx = 0;
+    }
+
+    for (let i = startIdx; i < rows.length; i++) {
+        const r = rows[i];
+        const rd = new Date(r.collected_at);
+
+        const bin = arr.find(b => b.dateObj.getHours() === rd.getHours() && b.dateObj.getDate() === rd.getDate());
+
+        const cA = Number(r.total_accepts || 0), pA = Number(prev.total_accepts || 0);
+        const cR = Number(r.total_rejects || 0), pR = Number(prev.total_rejects || 0);
+
+        if (bin) {
+            bin.accepts += (cA >= pA) ? (cA - pA) : cA;
+            bin.rejects += (cR >= pR) ? (cR - pR) : cR;
+        }
+        prev = r;
+    }
+    return arr.map(({hour_label, accepts, rejects}) => ({hour_label, accepts, rejects}));
+}
+
+// ─── RADIUS SERVER STATS ──────────────────────────────────────────────────────
+app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    try {
+        const { start_date, end_date } = req.query;
+
+        const auth = await calculateRadiusStats(pool, 'auth', start_date, end_date);
+        const acct = await calculateRadiusStats(pool, 'acct', start_date, end_date);
+
+        let uptimeSeconds = null;
+        if (auth && auth.server_start_time > 0) {
+            uptimeSeconds = Math.floor(Date.now() / 1000) - auth.server_start_time;
+        }
+
+        const totalReq = Number(auth?.total_requests || 0);
+        const totalAcc = Number(auth?.total_accepts || 0);
+        const acceptRate = totalReq > 0 ? parseFloat(((totalAcc / totalReq) * 100).toFixed(1)) : null;
+
+        res.json({ auth, acct, uptimeSeconds, acceptRate });
+    } catch (err) {
+        console.error('[/api/radius/stats]', err);
+        res.status(500).json({ error: err.message });
     }
 });
 

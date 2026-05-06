@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS radius_stats (
+  id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+  collected_at        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  stat_type           ENUM('auth','acct') NOT NULL,
+  total_requests      BIGINT UNSIGNED DEFAULT 0,
+  total_accepts       BIGINT UNSIGNED DEFAULT 0,
+  total_rejects       BIGINT UNSIGNED DEFAULT 0,
+  total_challenges    BIGINT UNSIGNED DEFAULT 0,
+  total_responses     BIGINT UNSIGNED DEFAULT 0,
+  dup_requests        BIGINT UNSIGNED DEFAULT 0,
+  malformed_requests  BIGINT UNSIGNED DEFAULT 0,
+  invalid_requests    BIGINT UNSIGNED DEFAULT 0,
+  dropped_requests    BIGINT UNSIGNED DEFAULT 0,
+  unknown_types       BIGINT UNSIGNED DEFAULT 0,
+  server_start_time   INT UNSIGNED DEFAULT 0,
+  server_hup_time     INT UNSIGNED DEFAULT 0,
+  raw_vsas            JSON,
+  KEY idx_rs_time     (collected_at),
+  KEY idx_rs_type_time (stat_type, collected_at)
+);

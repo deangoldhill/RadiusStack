@@ -168,6 +168,10 @@ RUN awk '\
 ' /opt/etc/raddb/sites-available/default > /tmp/default.tmp \
  && mv /tmp/default.tmp /opt/etc/raddb/sites-available/default
 
+RUN ln -sf /opt/etc/raddb/sites-available/status /opt/etc/raddb/sites-enabled/status
+RUN sed -i 's/ipaddr = 127\.0\.0\.1/ipaddr = 0.0.0.0/g' /opt/etc/raddb/sites-available/status || true
+RUN sed -i '/client admin {/,/}/c\client docker_internal {\n\tipaddr = 172.16.0.0/12 \n\tsecret = RADIUS_STATUS_SECRET_GENERIC\n}' /opt/etc/raddb/sites-available/status
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
