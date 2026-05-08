@@ -6,8 +6,6 @@ services:
     - --auto-increment-offset=${HA_DB_OFFSET:-1}
     container_name: radius_db
     restart: unless-stopped
-    env_file:
-    - container_config.env
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: radius
@@ -27,8 +25,6 @@ services:
     restart: unless-stopped
     depends_on:
     - mariadb
-    env_file:
-    - container_config.env
     environment:
       RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
       RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
@@ -52,8 +48,6 @@ services:
     restart: unless-stopped
     depends_on:
     - mariadb
-    env_file:
-    - container_config.env
     environment:
     - DB_HOST=mariadb
     - DB_USER=${DB_USER}
@@ -94,8 +88,6 @@ services:
     restart: unless-stopped
     depends_on:
     - mariadb
-    env_file:
-    - container_config.env
     environment:
       PMA_HOST: mariadb
       PMA_USER: root

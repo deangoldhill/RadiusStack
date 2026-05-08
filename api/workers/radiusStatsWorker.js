@@ -3,26 +3,21 @@ const dgram  = require('dgram');
 const crypto = require('crypto');
 const mysql  = require('mysql2/promise');
 
-const STATUS_HOST      = 'radius_server';
-const STATUS_PORT      = '18121';
-const STATUS_SECRET    = 'RADIUS_STATUS_SECRET_GENERIC';
-const POLL_MS          = parseInt(process.env.STATUS_POLL_INTERVAL || '60000', 10);
+const STATUS_HOST   = 'radius_server';
+const STATUS_PORT   = '18121';
+const STATUS_SECRET = 'RADIUS_STATUS_SECRET_GENERIC';
+const FR_VENDOR     = 11344;
 
-const FR_VENDOR = 11344;
-// FreeRADIUS-Statistics-Type ID is 127.
-// 1 = Auth, 2 = Acct, 3 = Both
-
-// Maps based on dictionary.freeradius
 const AUTH_MAP = {
-  128: 'total_requests', 129: 'total_accepts', 130: 'total_rejects', 
-  131: 'total_challenges', 132: 'total_responses', 133: 'dup_requests', 
-  134: 'malformed_requests', 135: 'invalid_requests', 136: 'dropped_requests', 
+  128: 'total_requests', 129: 'total_accepts', 130: 'total_rejects',
+  131: 'total_challenges', 132: 'total_responses', 133: 'dup_requests',
+  134: 'malformed_requests', 135: 'invalid_requests', 136: 'dropped_requests',
   137: 'unknown_types', 176: 'server_start_time', 177: 'server_hup_time'
 };
 
 const ACCT_MAP = {
-  148: 'total_requests', 149: 'total_responses', 150: 'dup_requests', 
-  151: 'malformed_requests', 152: 'invalid_requests', 153: 'dropped_requests', 
+  148: 'total_requests', 149: 'total_responses', 150: 'dup_requests',
+  151: 'malformed_requests', 152: 'invalid_requests', 153: 'dropped_requests',
   154: 'unknown_types', 176: 'server_start_time', 177: 'server_hup_time'
 };
 
@@ -33,32 +28,55 @@ const db = mysql.createPool({
   database: process.env.DB_NAME || 'radius',
 });
 
+// Runtime config — reloaded from the settings table on every poll cycle
+let POLL_MS              = 60000;   // fallback default
+let PURGE_DAYS           = 7;
+let PURGE_INTERVAL_MS    = 60 * 60 * 1000;  // 60 minutes
+let lastPurgeRun         = 0;
+let pollTimer            = null;
+
+async function loadConfig() {
+  try {
+    const [rows] = await db.query(
+      `SELECT setting_key, setting_value FROM settings
+       WHERE setting_key IN (
+         'radius_stats_poll_interval',
+         'radius_stats_retention_days',
+         'radius_stats_purge_interval'
+       )`
+    );
+    rows.forEach(r => {
+      if (r.setting_key === 'radius_stats_poll_interval') {
+        const ms = parseInt(r.setting_value, 10);
+        if (ms >= 5000) POLL_MS = ms;
+      }
+      if (r.setting_key === 'radius_stats_retention_days') {
+        const d = parseInt(r.setting_value, 10);
+        if (d >= 1) PURGE_DAYS = d;
+      }
+      if (r.setting_key === 'radius_stats_purge_interval') {
+        const m = parseInt(r.setting_value, 10);
+        if (m >= 1) PURGE_INTERVAL_MS = m * 60 * 1000;
+      }
+    });
+  } catch (e) {
+    // Settings table may not exist on first boot — use defaults
+  }
+}
+
 function buildPacket(secret, statTypeInt) {
   const id = Math.floor(Math.random() * 256);
   const reqAuth = crypto.randomBytes(16);
-
-  // Header(20) + VSA for Statistics-Type(12) + Message-Authenticator(18) = 50 bytes
   const buf = Buffer.alloc(50);
-  buf[0] = 12; // Status-Server
-  buf[1] = id; 
+  buf[0] = 12; buf[1] = id;
   buf.writeUInt16BE(50, 2);
   reqAuth.copy(buf, 4);
-
-  // FreeRADIUS-Statistics-Type VSA (Type 26, Len 12)
-  buf[20] = 26; // VSA
-  buf[21] = 12; // Length
-  buf.writeUInt32BE(FR_VENDOR, 22); // Vendor ID 11344
-  buf[26] = 127; // FreeRADIUS-Statistics-Type
-  buf[27] = 6;   // Sub-Length
-  buf.writeUInt32BE(statTypeInt, 28); // 1=Auth, 2=Acct
-
-  // Message-Authenticator (Type 80, Len 18)
-  buf[32] = 80; 
-  buf[33] = 18;
-
-  // Calculate HMAC-MD5 over the whole packet with zeroed MA field
-  const mac = crypto.createHmac('md5', Buffer.from(secret, 'utf8')).update(buf).digest();
-  mac.copy(buf, 34);
+  buf[20] = 26; buf[21] = 12;
+  buf.writeUInt32BE(FR_VENDOR, 22);
+  buf[26] = 127; buf[27] = 6;
+  buf.writeUInt32BE(statTypeInt, 28);
+  buf[32] = 80; buf[33] = 18;
+  crypto.createHmac('md5', Buffer.from(secret, 'utf8')).update(buf).digest().copy(buf, 34);
   return { buf, id };
 }
 
@@ -85,7 +103,7 @@ function parseVSAs(msg) {
   return vsas;
 }
 
-function query(host, port, secret, statTypeInt) {
+function queryRadius(host, port, secret, statTypeInt) {
   return new Promise((resolve, reject) => {
     const { buf, id } = buildPacket(secret, statTypeInt);
     const sock = dgram.createSocket('udp4');
@@ -101,39 +119,71 @@ function query(host, port, secret, statTypeInt) {
 }
 
 function toRow(vsas, attrMap) {
-  const row = { total_requests: 0, total_accepts: 0, total_rejects: 0, total_challenges: 0, total_responses: 0, dup_requests: 0, malformed_requests: 0, invalid_requests: 0, dropped_requests: 0, unknown_types: 0, server_start_time: 0, server_hup_time: 0 };
-  for (const [vt, col] of Object.entries(attrMap)) if (vsas[vt] !== undefined) row[col] = vsas[vt];
+  const row = {
+    total_requests: 0, total_accepts: 0, total_rejects: 0, total_challenges: 0,
+    total_responses: 0, dup_requests: 0, malformed_requests: 0, invalid_requests: 0,
+    dropped_requests: 0, unknown_types: 0, server_start_time: 0, server_hup_time: 0
+  };
+  for (const [vt, col] of Object.entries(attrMap)) {
+    if (vsas[vt] !== undefined) row[col] = vsas[vt];
+  }
   return row;
 }
 
 async function poll() {
+  // Always reload config — picks up any changes saved via the Settings page
+  await loadConfig();
+
   const rows = {};
-
-  // 1 = Auth stats, 2 = Acct stats. Both can be queried from the same status port (18121)
-  const targets = [
-    ['auth', 1, AUTH_MAP], 
-    ['acct', 2, ACCT_MAP]
-  ];
-
-  for (const [statType, statTypeInt, attrMap] of targets) {
+  for (const [statType, statTypeInt, attrMap] of [['auth', 1, AUTH_MAP], ['acct', 2, ACCT_MAP]]) {
     try {
-      const vsas = await query(STATUS_HOST, STATUS_PORT, STATUS_SECRET, statTypeInt);
+      const vsas = await queryRadius(STATUS_HOST, STATUS_PORT, STATUS_SECRET, statTypeInt);
       rows[statType] = { ...toRow(vsas, attrMap), raw_vsas: JSON.stringify(vsas) };
-    } catch (e) { console.error(`[RadiusStats] ${statType} poll failed: ${e.message}`); }
+    } catch (e) {
+      console.error(`[RadiusStats] ${statType} poll failed: ${e.message}`);
+    }
   }
 
   for (const [statType, row] of Object.entries(rows)) {
     try {
       await db.query(
-        `INSERT INTO radius_stats (stat_type, total_requests, total_accepts, total_rejects, total_challenges, total_responses, dup_requests, malformed_requests, invalid_requests, dropped_requests, unknown_types, server_start_time, server_hup_time, raw_vsas) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [statType, row.total_requests, row.total_accepts, row.total_rejects, row.total_challenges, row.total_responses, row.dup_requests, row.malformed_requests, row.invalid_requests, row.dropped_requests, row.unknown_types, row.server_start_time, row.server_hup_time, row.raw_vsas]
+        `INSERT INTO radius_stats
+           (stat_type, total_requests, total_accepts, total_rejects, total_challenges,
+            total_responses, dup_requests, malformed_requests, invalid_requests,
+            dropped_requests, unknown_types, server_start_time, server_hup_time, raw_vsas)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [statType, row.total_requests, row.total_accepts, row.total_rejects,
+         row.total_challenges, row.total_responses, row.dup_requests,
+         row.malformed_requests, row.invalid_requests, row.dropped_requests,
+         row.unknown_types, row.server_start_time, row.server_hup_time, row.raw_vsas]
       );
-    } catch (e) { console.error(`[RadiusStats] DB write failed: ${e.message}`); }
+    } catch (e) {
+      console.error(`[RadiusStats] DB write failed: ${e.message}`);
+    }
   }
-  try { await db.query(`DELETE FROM radius_stats WHERE collected_at < DATE_SUB(NOW(), INTERVAL 7 DAY)`); } catch (e) {}
+
+  // Purge expired rows only at the configured interval — not every poll
+  const now = Date.now();
+  if (now - lastPurgeRun >= PURGE_INTERVAL_MS) {
+    lastPurgeRun = now;
+    try {
+      const [result] = await db.query(
+        'DELETE FROM radius_stats WHERE collected_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        [PURGE_DAYS]
+      );
+      if (result.affectedRows > 0) {
+        console.log(`[RadiusStats] Purged ${result.affectedRows} rows older than ${PURGE_DAYS} days.`);
+      }
+    } catch (e) {
+      console.error(`[RadiusStats] Purge failed: ${e.message}`);
+    }
+  }
+
+  // Schedule next poll using the (possibly updated) POLL_MS value
+  pollTimer = setTimeout(poll, POLL_MS);
 }
 
 setTimeout(() => {
-  console.log(`[RadiusStats] Worker started — polling every ${POLL_MS / 1000}s`);
-  poll(); setInterval(poll, POLL_MS);
+  console.log('[RadiusStats] Worker started — config will be loaded from the settings table.');
+  poll();
 }, 30000);

@@ -16,7 +16,7 @@ const app = express();
 const cors = require('cors');
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
 const upload = multer({ dest: '/tmp/' });
@@ -204,7 +204,7 @@ pool.query = async function() {
     const result = await originalPoolQuery.apply(this, args);
     const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
 
-    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
         await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
     }
     return result;
@@ -224,7 +224,7 @@ pool.getConnection = async function() {
         const result = await originalConnQuery.apply(this, args);
         const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
 
-        if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+        if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
             await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
         }
         return result;
@@ -243,7 +243,7 @@ pool.execute = async function() {
     const result = await originalPoolExecute.apply(this, args);
     const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
 
-    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE')) {
+    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
         await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
     }
     return result;
@@ -416,7 +416,7 @@ app.post('/api/ha/full-sync', async (req, res) => {
 
         for (let t of tables) {
             const tableName = t[dbName];
-            if (['ha_queue', 'ha_sync_state'].includes(tableName)) continue;
+            if (['ha_queue', 'ha_sync_state', 'radius_stats'].includes(tableName)) continue;
 
             const [rows] = await originalPoolQuery.call(pool, `SELECT * FROM ${tableName}`, [], { isSync: true });
             for (let row of rows) {
@@ -556,6 +556,9 @@ async function initDb() {
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', 'false')");
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_plan', '')");
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate_profile', '')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_retention_days', '7')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_purge_interval', '60')");
+  await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_poll_interval', '60000')");
 
     const [rows] = await pool.query('SELECT COUNT(*) as count FROM admins');
     if (rows[0].count === 0) {
@@ -789,7 +792,7 @@ app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, re
 
 app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
   try {
-    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile, mac_auth_autocreate_interval, authlogs_purge_enabled, authlogs_purge_days, authlogs_purge_interval, clear_stale_sessions, stale_session_threshold, stale_session_interval, api_debug } = req.body;
+    const { enforce_2fa, radius_debug, custom_reply_attributes, ui_theme, totp_enrollment_hours, mask_user_passwords, mac_auth_autocreate, mac_auth_autocreate_plan, mac_auth_autocreate_profile, mac_auth_autocreate_interval, authlogs_purge_enabled, authlogs_purge_days, authlogs_purge_interval, clear_stale_sessions, stale_session_threshold, stale_session_interval, api_debug, radius_stats_retention_days, radius_stats_purge_interval, radius_stats_poll_interval } = req.body;
 
     if (enforce_2fa !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', ?) ON DUPLICATE KEY UPDATE setting_value=?", [enforce_2fa, enforce_2fa]);
     if (radius_debug !== undefined) {
@@ -816,6 +819,10 @@ app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, 
         apiDebugEnabled = (api_debug === 'true');
         apiDebugLog('API Debug mode status changed via Settings');
     }
+
+    if (radius_stats_retention_days !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('radius_stats_retention_days', ?) ON DUPLICATE KEY UPDATE setting_value=?", [radius_stats_retention_days, radius_stats_retention_days]);
+    if (radius_stats_purge_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('radius_stats_purge_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [radius_stats_purge_interval, radius_stats_purge_interval]);
+    if (radius_stats_poll_interval !== undefined) await pool.query("INSERT INTO settings (setting_key, setting_value) VALUES ('radius_stats_poll_interval', ?) ON DUPLICATE KEY UPDATE setting_value=?", [radius_stats_poll_interval, radius_stats_poll_interval]);
 
     await auditLog(req.admin.username, req.origin, `Updated settings (2FA:${enforce_2fa}, Debug:${radius_debug}, MacAutoCreate:${mac_auth_autocreate})`, 'success', '', req.ip);
     res.json({ success: true });
