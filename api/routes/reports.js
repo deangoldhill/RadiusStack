@@ -6,37 +6,52 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
 
 // --- STALE SESSIONS ---
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold')");
+    const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes')");
     let clearEnabled = false;
     let thresholdDays = 3;
+    let interimThresholdMinutes = 180;
     settings.forEach(s => {
-        if(s.setting_key === 'clear_stale_sessions') clearEnabled = (s.setting_value === 'true' || s.setting_value === '1');
-        if(s.setting_key === 'stale_session_threshold') thresholdDays = parseInt(s.setting_value) || 3;
+        if (s.setting_key === 'clear_stale_sessions') clearEnabled = (s.setting_value === 'true' || s.setting_value === '1');
+        if (s.setting_key === 'stale_session_threshold') thresholdDays = parseInt(s.setting_value, 10) || 3;
+        if (s.setting_key === 'stale_session_interim_threshold_minutes') interimThresholdMinutes = parseInt(s.setting_value, 10) || 180;
     });
 
-    // Feature is always on for manual viewing
-
-    // Scenario 1: Older than 3 hours, acctupdatetime > 10 min from start, but updated < 1 hour ago?
-    // Wait, prompt says: "acctupdatetime greater than 10 min from the acctstarttime but less than 1 hour from the point of stale session check."
-    // Actually wait: if it was updated less than 1 hour ago, is it stale? Usually stale means it hasn't been updated recently. 
-    // Wait, re-reading: "has a acctupdatetime greater than 10 min from the acctstarttime but less than 1 hour from the point of stale session check." -> This means the *gap* from now to update is > 1 hour? Let's assume it means: time since last update > 1 hour. Wait, "less than 1 hour from the point of stale session check"? No, if it's less than 1 hour, it's alive. So it should be older than 1 hour from the point of check. Let me re-read the user prompt. 
-    // Ah, wait. Let's look at the prompt again carefully: "but less than 1 hour from the point of stale session check." I will use what the prompt said, but maybe it means `TIMESTAMPDIFF(HOUR, acctupdatetime, NOW()) >= 1`.
-
     const query = `
-        SELECT radacctid, username, nasipaddress, framedipaddress, acctstarttime, acctupdatetime,
-        TIMESTAMPDIFF(HOUR, acctstarttime, NOW()) as hours_old,
-        TIMESTAMPDIFF(DAY, acctstarttime, NOW()) as days_old,
-        TIMESTAMPDIFF(MINUTE, acctstarttime, acctupdatetime) as up_to_start_diff,
-        TIMESTAMPDIFF(HOUR, acctupdatetime, NOW()) as up_to_now_diff_hr,
-        TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) as up_to_start_sec_diff
+        SELECT
+            radacctid,
+            username,
+            nasipaddress,
+            framedipaddress,
+            acctstarttime,
+            acctupdatetime,
+            acctinterval,
+            TIMESTAMPDIFF(DAY, acctstarttime, NOW()) AS days_since_start,
+            TIMESTAMPDIFF(MINUTE, acctupdatetime, NOW()) AS minutes_since_update,
+            TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) AS update_after_start_seconds,
+            CASE
+                WHEN acctupdatetime IS NULL OR TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) <= 10 THEN 'start-only'
+                ELSE 'interim-stale'
+            END AS stale_reason
         FROM radacct
         WHERE acctstoptime IS NULL
-        HAVING 
-          (hours_old >= 3 AND up_to_start_diff > 10 AND up_to_now_diff_hr >= 1)
-          OR
-          (days_old >= ? AND (acctupdatetime IS NULL OR up_to_start_sec_diff <= 30))
+          AND (
+                (
+                    acctstarttime <= DATE_SUB(NOW(), INTERVAL ? DAY)
+                    AND (
+                        acctupdatetime IS NULL
+                        OR TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) <= 10
+                    )
+                )
+                OR
+                (
+                    acctupdatetime IS NOT NULL
+                    AND TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) > 10
+                    AND acctupdatetime <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+                )
+              )
+        ORDER BY acctstarttime ASC
     `;
-    const [rows] = await pool.query(query, [thresholdDays]);
+    const [rows] = await pool.query(query, [thresholdDays, interimThresholdMinutes]);
     res.json(rows);
 });
 

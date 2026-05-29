@@ -247,8 +247,9 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer
             }
         }
 
-        // --- Admins (INSERT IGNORE — don't overwrite existing passwords/keys) ---
+        // --- Admins (overwrite existing rows so full restore restores admin passwords/keys) ---
         if (data.admins?.length) {
+            await conn.query('DELETE FROM admins');
             await chunkInsert(conn, 'admins', data.admins);
             results.admins = data.admins.length;
         }

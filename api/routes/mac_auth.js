@@ -13,7 +13,8 @@ app.get('/api/mac-auth', requireApiAuth('users', 'read-only'), async (req, res) 
                 p.name AS plan_name,
                 COALESCE(a.data_30d, 0) AS data_30d,
                 COALESCE(a.time_30d, 0) AS time_30d,
-                COALESCE(a.sessions_30d, 0) AS sessions_30d
+                COALESCE(a.sessions_30d, 0) AS sessions_30d,
+                a.last_online
             FROM mac_auth_devices m
             LEFT JOIN radusergroup g ON g.username = m.mac_address
             LEFT JOIN user_plans up ON up.username = m.mac_address
@@ -23,7 +24,8 @@ app.get('/api/mac-auth', requireApiAuth('users', 'read-only'), async (req, res) 
                     username,
                     SUM(acctinputoctets + acctoutputoctets) AS data_30d,
                     SUM(acctsessiontime) AS time_30d,
-                    COUNT(*) AS sessions_30d
+                    COUNT(*) AS sessions_30d,
+                    MAX(acctstarttime) AS last_online
                 FROM radacct
                 WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
                 GROUP BY username

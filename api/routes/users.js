@@ -13,6 +13,7 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
       COALESCE(a.data_30d, 0) AS data_30d,
       COALESCE(a.sessions_30d, 0) AS sessions_30d,
       COALESCE(a.time_30d, 0) AS time_30d,
+      a.last_online,
       COALESCE(ut.enabled, 0) AS totp_enabled,
       CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered
     FROM radcheck c
@@ -25,7 +26,8 @@ app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => 
         SELECT username,
                COUNT(*) AS sessions_30d,
                SUM(acctinputoctets + acctoutputoctets) AS data_30d,
-               SUM(acctsessiontime) AS time_30d
+               SUM(acctsessiontime) AS time_30d,
+               MAX(acctstarttime) AS last_online
         FROM radacct
         WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)
         GROUP BY username

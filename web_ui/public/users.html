@@ -56,7 +56,7 @@
 
         <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
-                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th><th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th><th onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th><th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th><th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th><th onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th><th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th onclick="sortTable('lastOnline')" class="cursor-pointer hover:bg-gray-100 p-3">Last Online</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -210,7 +210,7 @@
         }
 
         function getSortValue(u, field) {
-            switch(field) { case 'username': return u.username || ''; case 'value': return u.password || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; case 'totp': return Number(u.totp_enabled) || 0; default: return ''; }
+            switch(field) { case 'username': return u.username || ''; case 'value': return u.password || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; case 'totp': return Number(u.totp_enabled) || 0; case 'lastOnline': return u.last_online || ''; default: return ''; }
         }
 
         let originalUsername = null;
@@ -328,6 +328,7 @@
               <td class="p-3 font-mono text-xs text-gray-600">${u.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d || 0) / 3600).toFixed(1)} hrs</td>
+              <td class="p-3 font-mono text-xs text-gray-500">${u.last_online ? new Date(u.last_online).toLocaleString() : '—'}</td>
               <td class="p-3" onclick="event.stopPropagation()">
                 <div class="flex items-center gap-2">
                   <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp('${escapeJS(u.username)}', this.checked)" class="h-4 w-4 text-blue-600 rounded">
@@ -347,7 +348,7 @@
             </tr>
             ${window.totpEnrollments && window.totpEnrollments[u.username] ? `
               <tr class="bg-blue-50 border-b border-blue-100">
-                <td colspan="8" class="px-4 py-3">
+                <td colspan="9" class="px-4 py-3">
                   <div class="flex flex-wrap gap-4 items-start">
                     <div class="font-semibold text-blue-800 text-sm">🔑 TOTP Enrollment Pending for <strong>${u.username}</strong></div>
                     <div>

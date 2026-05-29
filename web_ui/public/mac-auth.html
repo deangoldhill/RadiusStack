@@ -56,6 +56,7 @@
                         <th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th>
                         <th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th>
                         <th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th>
+                        <th onclick="sortTable('lastOnline')" class="cursor-pointer hover:bg-gray-100 p-3">Last Online</th>
                         <th class="p-3 text-right rounded-tr-lg">Actions</th>
                     </tr>
                 </thead>
@@ -206,7 +207,7 @@
         }
 
         function getSortValue(u, field) {
-            switch(field) { case 'username': return u.username || ''; case 'callingstationid': return u.callingstationid || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; default: return ''; }
+            switch(field) { case 'username': return u.username || ''; case 'callingstationid': return u.callingstationid || ''; case 'planName': return u.plan_name || ''; case 'profileName': return u.profile || ''; case 'data': return Number(u.data_30d) || 0; case 'sessions': return Number(u.sessions_30d) || 0; case 'time': return Number(u.time_30d) || 0; case 'lastOnline': return u.last_online || ''; default: return ''; }
         }
 
         let originalMacAddress = null;
@@ -265,6 +266,7 @@
               <td class="p-3 font-mono text-xs text-gray-600">${d.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.time_30d || 0) / 3600).toFixed(1)} hrs</td>
+              <td class="p-3 font-mono text-xs text-gray-500">${d.last_online ? new Date(d.last_online).toLocaleString() : '—'}</td>
               <td class="p-3 text-right" onclick="event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1">
                   ${d.plan_id ? `<button onclick="resetPlan('${escapeJS(d.mac_address)}')" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">Reset Usage</button>` : ''}
