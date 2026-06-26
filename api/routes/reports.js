@@ -70,7 +70,7 @@ app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (r
     const queryLimit = Math.min(parseInt(limit) || 200, 1000);
     const conditions = ['a.acctstoptime IS NULL'];
     const params = [];
-    if (username) { conditions.push('(a.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+    if (username) { conditions.push('(a.username LIKE ? OR m.mac_id LIKE ?)'); params.push('%' + username + '%', '%' + username + '%'); }
     if (nasip) { conditions.push('a.nasipaddress = ?'); params.push(nasip); }
     if (callingstationid) { conditions.push('a.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
     if (framedip) { conditions.push('a.framedipaddress LIKE ?'); params.push('%' + framedip + '%'); }
@@ -86,7 +86,7 @@ app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, re
     const { username, nasip, callingstationid, date_from, date_to, reply, limit = 100 } = req.query;
     let query = 'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
     const conditions = [], params = [];
-    if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+    if (username) { conditions.push('(p.username LIKE ? OR m.mac_id LIKE ?)'); params.push('%' + username + '%', '%' + username + '%'); }
     if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
     if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
     if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
@@ -107,7 +107,7 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
         const { username, nasip, callingstationid, date_from, date_to, reply } = req.query;
         let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
         const conditions = [], params = [];
-        if (username) { conditions.push('(p.username = ? OR m.mac_id = ?)'); params.push(username, username); }
+        if (username) { conditions.push('(p.username LIKE ? OR m.mac_id LIKE ?)'); params.push('%' + username + '%', '%' + username + '%'); }
         if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
         if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
         if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
@@ -533,7 +533,7 @@ app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, r
     `;
     const params = [];
 
-    if (username) { query += ' AND (a.username = ? OR m.mac_id = ?)'; params.push(username, username); }
+    if (username) { query += ' AND (a.username LIKE ? OR m.mac_id LIKE ?)'; params.push('%' + username + '%', '%' + username + '%'); }
     if (nasip) { query += ' AND nasipaddress = ?'; params.push(nasip); }
     if (start_date) { query += ' AND acctstarttime >= ?'; params.push(start_date); }
     if (end_date) { query += ' AND acctstarttime <= ?'; params.push(end_date + ' 23:59:59'); }
@@ -564,7 +564,7 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
     let query = 'DELETE FROM radacct WHERE 1=1';
     const params = [];
 
-    if (username) { query += ' AND username = ?'; params.push(username); }
+    if (username) { query += ' AND (username LIKE ? OR username IN (SELECT mac_address FROM mac_auth_devices WHERE mac_id LIKE ?))'; params.push('%' + username + '%', '%' + username + '%'); }
     if (nasip) { query += ' AND nasipaddress = ?'; params.push(nasip); }
     if (start_date) { query += ' AND acctstarttime >= ?'; params.push(start_date); }
     if (end_date) { query += ' AND acctstarttime <= ?'; params.push(end_date + ' 23:59:59'); }
