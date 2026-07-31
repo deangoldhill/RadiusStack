@@ -712,9 +712,9 @@ const routeDependencies = {
     bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, puppeteer, multer,
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
+    signTotpEnrollmentToken, verifyTotpEnrollmentToken,
     apiDebugLog, setApiDebugMode
 };
-
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
 
 // ─── CALCULATE INCREMENTAL RADIUS STATS ───────────────────────────────────────

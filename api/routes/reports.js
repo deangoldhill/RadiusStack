@@ -1,6 +1,5 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
-
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
 // --- REPORTS ---
 
 
