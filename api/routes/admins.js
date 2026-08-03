@@ -3,7 +3,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
 
 // --- ADMINS ---
 app.get('/api/admins', requireApiAuth('admins', 'read-only'), async (req, res) => {
-    const [rows] = await pool.query('SELECT id, username, require_password_change, two_factor_enabled, two_factor_setup_complete, api_key, permissions FROM admins');
+    const [rows] = await pool.query('SELECT id, username, require_password_change, two_factor_enabled, two_factor_setup_complete, permissions FROM admins');
     res.json(rows);
 });
 

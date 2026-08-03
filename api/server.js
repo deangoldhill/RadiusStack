@@ -515,6 +515,8 @@ async function auditLog(admin_username, origin, action, result, details = '', ip
             'INSERT INTO admin_audit_log (admin_username, origin, action, result, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
             [admin_username, origin, action, result, details, ip]
         );
+        const syslog = require('./utils/syslog');
+        syslog.sendAuditLog({ admin_username, origin, action, result, details, ip_address: ip }).catch(e => console.error('[Syslog] auditLog error:', e.message));
     } catch (err) {
         console.error('Audit log failed:', err);
     }
@@ -559,6 +561,12 @@ async function initDb() {
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_retention_days', '7')");
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_purge_interval', '60')");
   await pool.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('radius_stats_poll_interval', '60000')");
+
+    
+    require('./utils/syslog').init(pool);
+    const syslogAuthWorker = require('./workers/syslogAuthWorker');
+    await syslogAuthWorker.init(pool);
+    setInterval(() => syslogAuthWorker.poll(), 5000);
 
     const [rows] = await pool.query('SELECT COUNT(*) as count FROM admins');
     if (rows[0].count === 0) {

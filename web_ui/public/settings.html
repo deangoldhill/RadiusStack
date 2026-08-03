@@ -283,6 +283,66 @@
       </div>
 
 
+<!-- Syslog / SIEM Forwarding -->
+    <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+          <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0120 9.414V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <h2 class="text-base font-bold text-gray-800">Syslog / SIEM Forwarding</h2>
+      </div>
+      <div class="p-6 space-y-5">
+        <label class="flex items-start gap-3 cursor-pointer group">
+          <input type="checkbox" id="syslogEnabled" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" onchange="document.getElementById('syslogFields').classList.toggle('opacity-40', !this.checked); document.getElementById('syslogFields').classList.toggle('pointer-events-none', !this.checked);">
+          <div>
+            <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Enable Syslog Forwarding</span>
+            <p class="text-xs text-gray-400 mt-0.5">Send audit and/or auth log events to an external syslog server (RFC 5424)</p>
+          </div>
+        </label>
+        <div id="syslogFields" class="space-y-4 opacity-40 pointer-events-none transition-opacity">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Syslog Server Host / IP</label>
+              <input type="text" id="syslogHost" placeholder="192.168.1.50" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Port</label>
+              <input type="number" id="syslogPort" value="514" min="1" max="65535" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Transport Protocol</label>
+            <select id="syslogProtocol" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+              <option value="udp">UDP (RFC 5424 standard)</option>
+              <option value="tcp">TCP (reliable delivery)</option>
+            </select>
+          </div>
+          <div class="space-y-3 pt-1">
+            <label class="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox" id="syslogSendAudit" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+              <div>
+                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Audit Logs</span>
+                <p class="text-xs text-gray-400 mt-0.5">Admin actions, configuration changes</p>
+              </div>
+            </label>
+            <label class="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox" id="syslogSendAuthlogs" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+              <div>
+                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Auth Logs</span>
+                <p class="text-xs text-gray-400 mt-0.5">RADIUS Accept / Reject events</p>
+              </div>
+            </label>
+          </div>
+          <div class="pt-1 flex items-center gap-3">
+            <button type="button" onclick="testSyslog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">Send Test Message</button>
+            <span id="syslogTestResult" class="text-sm font-semibold"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
 <!-- ── Row 2: Backup & Restore ── -->
     <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
@@ -682,7 +742,22 @@
       if (document.getElementById('clearStaleSessions')) document.getElementById('clearStaleSessions').checked = data.clear_stale_sessions === 'true';
       if (document.getElementById('staleSessionThreshold') && data.stale_session_threshold) document.getElementById('staleSessionThreshold').value = data.stale_session_threshold;
       if (document.getElementById('staleSessionInterimThresholdMinutes') && data.stale_session_interim_threshold_minutes) document.getElementById('staleSessionInterimThresholdMinutes').value = data.stale_session_interim_threshold_minutes;
+      
       if (document.getElementById('staleSessionInterval') && data.stale_session_interval) document.getElementById('staleSessionInterval').value = data.stale_session_interval;
+
+      // Syslog
+      const s_en = data.syslog_enabled === 'true';
+      if (document.getElementById('syslogEnabled')) document.getElementById('syslogEnabled').checked = s_en;
+      if (document.getElementById('syslogHost')) document.getElementById('syslogHost').value = data.syslog_host || '';
+      if (document.getElementById('syslogPort')) document.getElementById('syslogPort').value = data.syslog_port || '514';
+      if (document.getElementById('syslogProtocol')) document.getElementById('syslogProtocol').value = data.syslog_protocol || 'udp';
+      if (document.getElementById('syslogSendAudit')) document.getElementById('syslogSendAudit').checked = data.syslog_send_audit === 'true';
+      if (document.getElementById('syslogSendAuthlogs')) document.getElementById('syslogSendAuthlogs').checked = data.syslog_send_authlogs === 'true';
+      if (document.getElementById('syslogFields')) {
+          document.getElementById('syslogFields').classList.toggle('opacity-40', !s_en);
+          document.getElementById('syslogFields').classList.toggle('pointer-events-none', !s_en);
+      }
+
     }
   }
 
@@ -708,7 +783,13 @@
       clear_stale_sessions: (document.getElementById('clearStaleSessions') && document.getElementById('clearStaleSessions').checked) ? 'true' : 'false',
       stale_session_threshold: document.getElementById('staleSessionThreshold') ? document.getElementById('staleSessionThreshold').value : '3',
       stale_session_interim_threshold_minutes: document.getElementById('staleSessionInterimThresholdMinutes') ? document.getElementById('staleSessionInterimThresholdMinutes').value : '180',
-      stale_session_interval: document.getElementById('staleSessionInterval') ? document.getElementById('staleSessionInterval').value : '10'
+      stale_session_interval: document.getElementById('staleSessionInterval') ? document.getElementById('staleSessionInterval').value : '10',
+      syslog_enabled: document.getElementById('syslogEnabled') && document.getElementById('syslogEnabled').checked ? 'true' : 'false',
+      syslog_host: document.getElementById('syslogHost') ? document.getElementById('syslogHost').value.trim() : '',
+      syslog_port: document.getElementById('syslogPort') ? document.getElementById('syslogPort').value : '514',
+      syslog_protocol: document.getElementById('syslogProtocol') ? document.getElementById('syslogProtocol').value : 'udp',
+      syslog_send_audit: document.getElementById('syslogSendAudit') && document.getElementById('syslogSendAudit').checked ? 'true' : 'false',
+      syslog_send_authlogs: document.getElementById('syslogSendAuthlogs') && document.getElementById('syslogSendAuthlogs').checked ? 'true' : 'false'
     };
     const res = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     if (res.ok) {
@@ -854,6 +935,22 @@
     finally { btn.disabled = false; btn.textContent = 'Upload & Restart RADIUS'; }
   };
 
+  
+  async function testSyslog() {
+    const host = document.getElementById('syslogHost').value.trim();
+    const port = document.getElementById('syslogPort').value || '514';
+    const protocol = document.getElementById('syslogProtocol').value || 'udp';
+    const resEl = document.getElementById('syslogTestResult');
+    if (!host) { resEl.textContent = '⚠ Enter a host first'; resEl.className = 'text-sm font-semibold text-yellow-600'; return; }
+    resEl.textContent = 'Sending...'; resEl.className = 'text-sm font-semibold text-gray-500';
+    try {
+      const res = await apiFetch('/api/settings/syslog/test', { method: 'POST', body: JSON.stringify({ host, port, protocol }) });
+      const data = await res.json();
+      if (res.ok && data.success) { resEl.textContent = '✓ Test sent'; resEl.className = 'text-sm font-semibold text-green-600'; }
+      else { resEl.textContent = '✗ ' + (data.error || 'Failed'); resEl.className = 'text-sm font-semibold text-red-600'; }
+    } catch (e) { resEl.textContent = '✗ Error: ' + e.message; resEl.className = 'text-sm font-semibold text-red-600'; }
+    setTimeout(() => resEl.textContent = '', 5000);
+  }
   // ─── INIT ─────────────────────────────────────────────────────────────────
   loadSettings();
   loadHealth();

@@ -15,4 +15,5 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     require('./reports')(app, pool, requireApiAuth, auditLog, dependencies);
     require('./backup')(app, pool, requireApiAuth, auditLog, dependencies);
     require('./mac_auth')(app, pool, requireApiAuth, auditLog, dependencies);
+    require('./syslog')(app, pool, requireApiAuth, auditLog, dependencies);
 };

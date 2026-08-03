@@ -28,6 +28,14 @@ INSERT INTO settings (setting_key, setting_value) VALUES ('enforce_2fa', 'false'
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('ui_theme', 'blue');
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('mac_auth_autocreate', 'false');
 
+
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_enabled', 'false');
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_host', '');
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_port', '514');
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_protocol', 'udp');
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_send_audit', 'false');
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('syslog_send_authlogs', 'false');
+
 CREATE TABLE IF NOT EXISTS plans (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) UNIQUE,
