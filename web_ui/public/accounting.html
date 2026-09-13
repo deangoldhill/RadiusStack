@@ -37,6 +37,7 @@
         <thead><tr class="bg-gray-50 text-gray-600 cursor-pointer select-none">
           <th class="p-3 rounded-tl-lg hover:bg-gray-100" onclick="sort('acctstarttime')">Start Time</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('acctstoptime')">Stop Time</th>
+          <th class="p-3 hover:bg-gray-100">Tenant</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('username')">Username</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('nasipaddress')">NAS IP</th>
           <th class="p-3 hover:bg-gray-100" onclick="sort('acctsessiontime')">Duration</th>
@@ -46,6 +47,9 @@
         </tr></thead>
         <tbody></tbody>
       </table>
+    </div>
+    <div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm">
+      <span id="pageSummary" class="text-gray-500"></span><div class="flex items-center gap-2"><label>Rows <select id="pageSize" onchange="changePageSize()" class="border rounded p-1"><option>25</option><option>50</option><option>100</option></select></label><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div>
     </div>
   </main>
 
@@ -71,7 +75,7 @@
   <script>
     let currentSort = 'acctstarttime';
     let currentOrder = 'desc';
-    let allRecords = [];
+    let allRecords = []; let currentPage = 1; let totalRecords = 0; let totalPages = 1;
 
     async function init() {
         const nRes = await apiFetch('/api/nas');
@@ -85,7 +89,7 @@
     function sort(field) {
       if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
       else { currentSort = field; currentOrder = 'asc'; }
-      fetchAcct();
+      currentPage = 1; fetchAcct();
     }
 
     function clearFilters() {
@@ -93,7 +97,7 @@
         document.getElementById('fNas').value = '';
         document.getElementById('fStart').value = '';
         document.getElementById('fEnd').value = '';
-        fetchAcct();
+        currentPage = 1; fetchAcct();
     }
 
     function getFilterParams() {
@@ -106,7 +110,7 @@
 
     async function fetchAcct() {
       const filters = getFilterParams();
-      const q = new URLSearchParams({ sort: currentSort, order: currentOrder, limit: 300 });
+      const q = new URLSearchParams({ sort: currentSort, order: currentOrder, page: currentPage, page_size: document.getElementById('pageSize').value });
       if(filters.username) q.append('username', filters.username);
       if(filters.nasip) q.append('nasip', filters.nasip);
       if(filters.start_date) q.append('start_date', filters.start_date);
@@ -114,10 +118,11 @@
 
       const res = await apiFetch(`/api/accounting?${q.toString()}`);
       if (res.ok) {
-        allRecords = await res.json();
+        const payload = await res.json(); allRecords = payload.items; totalRecords = payload.total; totalPages = payload.totalPages; updatePagination();
         document.querySelector('#acctTable tbody').innerHTML = allRecords.map((a, index) => `<tr class="border-b border-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onclick="showDetails(${index})">
           <td class="p-3 text-xs text-gray-500">${new Date(a.acctstarttime).toLocaleString()}</td>
           <td class="p-3 text-xs text-gray-500">${a.acctstoptime ? new Date(a.acctstoptime).toLocaleString() : '<span class="px-2 py-0.5 bg-green-100 text-green-800 rounded font-bold border border-green-200">Active</span>'}</td>
+          <td class="p-3 text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${a.tenant_name||'Global'}</span></td>
           <td class="p-3 font-bold text-gray-800">${a.username}</td>
           <td class="p-3 font-mono text-gray-600 text-xs">${a.nasipaddress}</td>
           <td class="p-3 font-mono text-gray-600 text-xs">${(a.acctsessiontime/3600).toFixed(2)} hr</td>
@@ -128,6 +133,9 @@
       }
     }
 
+    function updatePagination() { const start=totalRecords ? (currentPage-1)*Number(document.getElementById('pageSize').value)+1 : 0; const end=Math.min(currentPage*Number(document.getElementById('pageSize').value),totalRecords); document.getElementById('pageSummary').textContent=`Showing ${start}-${end} of ${totalRecords}`; document.getElementById('prevPage').disabled=currentPage<=1; document.getElementById('nextPage').disabled=currentPage>=totalPages; }
+    function changePage(delta) { const next=currentPage+delta; if(next>=1&&next<=totalPages){currentPage=next;fetchAcct();} }
+    function changePageSize() { currentPage=1; fetchAcct(); }
     function showDetails(index) {
         const record = allRecords[index];
         const tbody = document.getElementById('modalBody');

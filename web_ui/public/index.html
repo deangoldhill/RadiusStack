@@ -96,7 +96,7 @@
         <!-- ── ROW 1: 7-day trend + Container Health ──────────────────────────── -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
 
-            <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div id="authTrendWidget" class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                 <div class="flex items-center gap-2 mb-3">
                     <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
@@ -106,7 +106,7 @@
                 <div class="relative h-48"><canvas id="trendChart"></canvas></div>
             </div>
 
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div id="containerHealthWidget" hidden class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                 <div class="flex items-center gap-2 mb-4">
                     <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" /></svg>
@@ -212,7 +212,8 @@
             </div>
         </div>
     
-        <!-- ── ROW 4: RADIUS Server Stats ──────────────────────────────────── -->
+        <!-- ── ROW 4: RADIUS Server Stats (Global only) ───────────────────── -->
+        <section id="globalDashboardWidgets" hidden>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                 <div class="flex items-center gap-2 mb-4">
@@ -242,6 +243,7 @@
                 <div id="radiusHealth" class="space-y-3"></div>
             </div>
         </div>
+        </section>
 
 </main>
 
@@ -442,9 +444,29 @@
             } catch (e) {}
         }
 
-        async function loadAll() { await Promise.all([loadOverview(), loadContainers(), loadRadiusStats()]); }
-        loadAll();
-        setInterval(loadAll, 30000);
+        function isGlobalTenantContext() {
+            return !window.multiTenantEnabled || localStorage.getItem('activeTenantId') === 'global';
+        }
+
+        async function loadAll() {
+            var global = isGlobalTenantContext();
+            document.getElementById('containerHealthWidget').hidden = !global;
+            document.getElementById('globalDashboardWidgets').hidden = !global;
+            const authTrendWidget = document.getElementById('authTrendWidget');
+            authTrendWidget.classList.toggle('lg:col-span-3', !global);
+            authTrendWidget.classList.toggle('lg:col-span-2', global);
+            var tasks = [loadOverview()];
+            if (isGlobalTenantContext()) tasks.push(loadContainers(), loadRadiusStats());
+            await Promise.all(tasks);
+        }
+        let dashboardStarted = false;
+        function startDashboard() {
+            if (dashboardStarted) return;
+            dashboardStarted = true;
+            loadAll();
+            setInterval(loadAll, 30000);
+        }
+        document.addEventListener('radiusstack:tenant-context-ready', startDashboard);
     </script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+# RadiusStack controlled VSA dictionary. Saved structured entries are included below.
+# The built-in FreeRADIUS dictionary already owns common Cisco, Juniper, and MikroTik names.
+VENDOR RadiusStack-41112 41112
+BEGIN-VENDOR RadiusStack-41112
+ATTRIBUTE Ubiquiti-Rate-Limit 1 string
+ATTRIBUTE Ubiquiti-Rate-Limit-DL 2 string
+ATTRIBUTE Ubiquiti-Rate-Limit-UL 3 string
+END-VENDOR RadiusStack-41112
+
+# Palo Alto guide entries intentionally omitted: they remain unavailable until an authoritative
+# vendor-id / attribute-id / type definition is saved as a structured custom VSA.
+$INCLUDE radiusstack-generated/dictionary.custom-vsa

@@ -25,25 +25,25 @@
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search Users</label>
-                    <input type="text" id="userSearch" placeholder="Type username, profile or plan..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+                    <input type="text" id="userSearch" oninput="resetUsersPage(); loadData()" placeholder="Type username, profile or plan..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Plan</label>
-                    <select id="planFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                    <select id="planFilter" onchange="resetUsersPage(); loadData()" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
                         <option value="">All Plans</option>
                         <option value="__NO_PLAN__">No Plan</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assigned Profile</label>
-                    <select id="profileFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                    <select id="profileFilter" onchange="resetUsersPage(); loadData()" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
                         <option value="">All Profiles</option>
                         <option value="__NO_PROFILE__">No Profile</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">TOTP</label>
-                    <select id="totpFilter" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
+                    <select id="totpFilter" onchange="resetUsersPage(); loadData()" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none text-sm">
                         <option value="">All</option>
                         <option value="enabled">Enabled</option>
                         <option value="disabled">Disabled</option>
@@ -56,9 +56,19 @@
 
         <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap" id="usersTable">
-                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th><th onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th><th onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th><th onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th onclick="sortTable('lastOnline')" class="cursor-pointer hover:bg-gray-100 p-3">Last Online</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+                <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 w-10 rounded-tl-lg"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" class="cursor-pointer"></th><th data-sort-field="username" onclick="sortTable('username')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th><th data-sort-field="value" onclick="sortTable('value')" class="cursor-pointer hover:bg-gray-100 p-3">Password</th><th data-sort-field="planName" onclick="sortTable('planName')" class="cursor-pointer hover:bg-gray-100 p-3">Assigned Plan</th><th data-sort-field="profileName" onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3">Profile</th><th data-sort-field="sessions" onclick="sortTable('sessions')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Sessions</th><th data-sort-field="data" onclick="sortTable('data')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Data</th><th data-sort-field="time" onclick="sortTable('time')" class="cursor-pointer hover:bg-gray-100 p-3">30-Day Time</th><th data-sort-field="lastOnline" onclick="sortTable('lastOnline')" class="cursor-pointer hover:bg-gray-100 p-3">Last Online</th><th onclick="sortTable('totp')" class="cursor-pointer hover:bg-gray-100 p-3">TOTP</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
+        <div class="flex flex-col gap-3 pt-4 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between" id="usersPagination">
+          <div id="usersPaginationSummary" aria-live="polite"></div>
+          <div class="flex items-center gap-2">
+            <label for="usersPageSize" class="text-xs font-bold uppercase tracking-wider text-gray-500">Rows</label>
+            <select id="usersPageSize" onchange="setUsersPageSize(this.value)" class="border rounded-lg p-2 bg-gray-50"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+            <button id="usersPreviousPage" onclick="previousUsersPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+            <span id="usersPageIndicator" class="min-w-20 text-center"></span>
+            <button id="usersNextPage" onclick="nextUsersPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+          </div>
+        </div>
         </div>
     </main>
 
@@ -74,6 +84,10 @@
                 <div>
                     <label class="block text-sm font-bold text-gray-700">Cleartext Password</label>
                     <input type="text" id="upass" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Static IPv4 Address <span class="font-normal text-gray-400">(optional)</span></label>
+                    <input type="text" id="staticIp" inputmode="decimal" pattern="(?:[0-9]{1,3}\.){3}[0-9]{1,3}" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none" placeholder="e.g. 192.0.2.10">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-gray-700">Billing Plan</label>
@@ -198,15 +212,26 @@
     </style>
 
     <script src="/js/layout.js"></script>
+    <script src="/js/table-pagination.js"></script>
     <script>
 
         let currentSort = null;
         let currentOrder = 'asc';
+        let usersPage = 1;
+        let usersPageSize = 25;
+        let usersTotal = 0;
+        let usersTotalPages = 1;
+        let usersLookupsLoaded = false;
+        function resetUsersPage() { usersPage = 1; }
+        function setUsersPageSize(value) { usersPageSize = Number(value); usersPage = 1; loadData(); }
+        function previousUsersPage() { usersPage -= 1; loadData(); }
+        function nextUsersPage() { usersPage += 1; loadData(); }
 
         function sortTable(field) {
             if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
             else { currentSort = field; currentOrder = 'asc'; }
-            renderUsers();
+            usersPage = 1;
+            loadData();
         }
 
         function getSortValue(u, field) {
@@ -217,6 +242,8 @@
         let allUsers = [];
         let allPlans = [];
         let userSettings = { mask_user_passwords: 'false' };
+        // Keep the render path defined even before settings finish loading.
+        let maskPasswords = false;
         let currentDetailUser = null;
         let currentDetailTab = 'overview';
         let currentDetailData = null;
@@ -294,31 +321,9 @@
 
         // ---- Render table ----
         function renderUsers() {
-            const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
-            const planFilter = document.getElementById('planFilter')?.value || '';
-            const profileFilter = document.getElementById('profileFilter')?.value || '';
-            const totpFilter = document.getElementById('totpFilter')?.value || '';
-            const maskPasswords = userSettings.mask_user_passwords === 'true';
-
-            const filtered = allUsers.filter(u => {
-                const planName = u.plan_name || '';
-                const profileName = u.profile || '';
-                const totpEnabled = Number(u.totp_enabled) === 1;
-                const totpRegistered = Number(u.totp_registered) === 1;
-                const matchesSearch = !search || [u.username, u.password, planName, profileName].filter(Boolean).some(v => String(v).toLowerCase().includes(search));
-                const matchesPlan = !planFilter || (planFilter === '__NO_PLAN__' ? !u.plan_id : String(u.plan_id) === planFilter);
-                const matchesProfile = !profileFilter || (profileFilter === '__NO_PROFILE__' ? !profileName : profileName === profileFilter);
-                const matchesTotp = !totpFilter
-                    || (totpFilter === 'enabled' && totpEnabled)
-                    || (totpFilter === 'disabled' && !totpEnabled)
-                    || (totpFilter === 'registered' && totpEnabled && totpRegistered)
-                    || (totpFilter === 'pending' && totpEnabled && !totpRegistered);
-                return matchesSearch && matchesPlan && matchesProfile && matchesTotp;
-            });
-
-            
-            if (currentSort) { filtered.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
-            document.querySelector('#usersTable tbody').innerHTML = filtered.map(u => `
+            const filtered = allUsers;
+            const pagination = { rows: filtered, totalRows: usersTotal, totalPages: usersTotalPages, page: usersPage, pageSize: usersPageSize };
+document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u => `
             <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeJS(u.username)}')">
               <td class="p-3 w-10" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeJS(u.username)}" class="row-checkbox cursor-pointer" onchange="updateMultiSelect()"></td>
               <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${u.username}</td>
@@ -373,6 +378,17 @@
                   </div>
                 </td>
               </tr>` : ''}`).join('');
+            const startRow = pagination.totalRows ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
+            const endRow = Math.min(pagination.page * pagination.pageSize, pagination.totalRows);
+            document.getElementById('usersPaginationSummary').textContent = pagination.totalRows ? `Showing ${startRow}–${endRow} of ${pagination.totalRows} users` : '0 users';
+            document.getElementById('usersPageIndicator').textContent = `Page ${pagination.page} of ${pagination.totalPages}`;
+            document.getElementById('usersPreviousPage').disabled = pagination.page <= 1;
+            document.getElementById('usersNextPage').disabled = pagination.page >= pagination.totalPages;
+            document.querySelectorAll('[data-sort-field]').forEach(header => {
+              const active = header.dataset.sortField === currentSort;
+              header.setAttribute('aria-sort', active ? (currentOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+              header.textContent = header.textContent.replace(/ [▲▼]$/, '') + (active ? (currentOrder === 'asc' ? ' ▲' : ' ▼') : '');
+            });
         }
 
         // ============================================================
@@ -755,30 +771,39 @@
         }
 
         async function loadData() {
-            const settingsRes = await apiFetch('/api/settings');
-            if (settingsRes.ok) { userSettings = await settingsRes.json(); }
-
-            allPlans = [];
-            const plRes = await apiFetch('/api/plans');
-            if (plRes.ok) {
-                allPlans = await plRes.json();
-                document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + allPlans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+            if (!usersLookupsLoaded) {
+                const settingsRes = await apiFetch('/api/settings');
+                if (settingsRes.ok) userSettings = await settingsRes.json();
+                maskPasswords = userSettings.mask_user_passwords === true || userSettings.mask_user_passwords === 'true';
+                const [plansResponse, profilesResponse] = await Promise.all([apiFetch('/api/plans?limit=500'), apiFetch('/api/profiles?limit=500')]);
+                allPlans = plansResponse.ok ? await plansResponse.json() : [];
+                const profiles = profilesResponse.ok ? await profilesResponse.json() : [];
+                // Rendering 100,000 native select options blocks the page; server-side name search covers the complete catalog.
+                const visiblePlans = allPlans.slice(0, 500);
+                const visibleProfiles = profiles.slice(0, 500);
+                document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + visiblePlans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+                document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + visibleProfiles.map(x => `<option value="${x}">${x}</option>`).join('');
+                populateFilters(visiblePlans, visibleProfiles);
+                usersLookupsLoaded = true;
             }
-
-            let profiles = [];
-            const pRes = await apiFetch('/api/profiles');
-            if (pRes.ok) {
-                profiles = await pRes.json();
-                document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
-            }
-
-            populateFilters(allPlans, profiles);
-
-            const res = await apiFetch('/api/users');
-            if (res.ok) {
-                allUsers = await res.json();
-                renderUsers();
-            }
+            const params = new URLSearchParams({ page: usersPage, page_size: usersPageSize, sort: currentSort || 'username', order: currentOrder });
+            const search = document.getElementById('userSearch').value.trim();
+            const plan = document.getElementById('planFilter').value;
+            const profile = document.getElementById('profileFilter').value;
+            if (search) params.set('search', search);
+            if (plan) params.set('plan', plan);
+            if (profile) params.set('profile', profile);
+            const totp = document.getElementById('totpFilter').value;
+            if (totp) params.set('totp', totp);
+            const res = await apiFetch('/api/users?' + params.toString());
+            if (!res.ok) { document.querySelector('#usersTable tbody').innerHTML = '<tr><td colspan="12" class="p-6 text-center text-red-500">Unable to load users.</td></tr>'; return; }
+            const payload = await res.json();
+            allUsers = payload.items;
+            usersTotal = payload.total;
+            usersPage = payload.page;
+            usersPageSize = payload.pageSize;
+            usersTotalPages = payload.totalPages;
+            renderUsers();
         }
 
         async function resetPlan(username) {
@@ -797,6 +822,20 @@
 
         function closeModal() { document.getElementById('userModal').classList.add('hidden'); }
 
+        // The initial lookup is deliberately bounded; preserve an edited user's assigned value even when it is outside that first batch.
+        function ensureAssignedSelectOption(selectId, value, label) {
+            if (value === undefined || value === null || value === '') return;
+            const select = document.getElementById(selectId);
+            select.querySelectorAll('option[data-assigned-option="true"]').forEach(option => option.remove());
+            if (![...select.options].some(option => String(option.value) === String(value))) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = label || String(value);
+                option.dataset.assignedOption = 'true';
+                select.appendChild(option);
+            }
+        }
+
         function editUser(username) {
             const u = allUsers.find(x => x.username === username);
             if (!u) return;
@@ -806,7 +845,10 @@
             document.getElementById('uname').readOnly = true;
             document.getElementById('uname').classList.add('bg-gray-100');
             document.getElementById('upass').value = u.password || '';
+            ensureAssignedSelectOption('uprofile', u.profile, u.profile);
+            ensureAssignedSelectOption('uplan', u.plan_id, u.plan_name || `Plan ${u.plan_id}`);
             document.getElementById('uprofile').value = u.profile || '';
+            document.getElementById('staticIp').value = u.static_ip || '';
             document.getElementById('uplan').value = u.plan_id || '';
         }
 
@@ -822,7 +864,7 @@
             const p = document.getElementById('upass').value;
             const prof = document.getElementById('uprofile').value;
             const plan = document.getElementById('uplan').value;
-            const payload = { username: u, password: p, profile: prof, plan_id: plan };
+            const payload = { username: u, password: p, profile: prof, plan_id: plan, static_ip: document.getElementById('staticIp').value.trim() };
             if (originalUsername) {
                 const res = await apiFetch(`/api/users/${originalUsername}`, { method: 'PUT', body: JSON.stringify(payload) });
                 if (res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }
@@ -834,7 +876,7 @@
 
         ['userSearch', 'planFilter', 'profileFilter', 'totpFilter'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', renderUsers);
+            if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', () => { resetUsersPage(); loadData(); });
         });
 
         loadData();

@@ -1,8 +1,8 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
 // --- SYSTEM HEALTH ---
-app.get('/api/system/status', requireApiAuth('settings', 'read-only'), (req, res) => {
+app.get('/api/system/status', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, (req, res) => {
     exec('docker ps -a --format "{{.Names}}|{{.State}}|{{.Status}}" | grep radius_', (error, stdout) => {
         if (error) return res.json([]);
         const containers = stdout.trim().split('\n').filter(Boolean).map(line => {
@@ -13,7 +13,7 @@ app.get('/api/system/status', requireApiAuth('settings', 'read-only'), (req, res
     });
 });
 
-app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-write'), (req, res) => {
+app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, (req, res) => {
     const { container } = req.params;
     if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
 
@@ -27,7 +27,7 @@ app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-writ
     });
 });
 
-app.get('/api/system/logs/:container', requireApiAuth('settings', 'read-only'), (req, res) => {
+app.get('/api/system/logs/:container', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, (req, res) => {
     const { container } = req.params;
     if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
 

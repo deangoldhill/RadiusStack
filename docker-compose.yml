@@ -28,6 +28,9 @@ services:
     environment:
       RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
       RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
+      DB_HOST: mariadb
+      DB_USER: ${DB_USER}
+      DB_NAME: radius
       DB_PASSWORD: ${DB_PASSWORD}
       HA_ENABLED: ${HA_ENABLED:-false}
       HA_ROLE: ${HA_ROLE:-primary}
@@ -39,6 +42,7 @@ services:
     - ${RADIUS_ACCT_PORT:-1813}:1813/udp
     volumes:
     - certs_volume:/certs_shared
+    - ./radius/generated:/opt/etc/raddb/radiusstack-generated
     networks:
     - radius_net
   api:

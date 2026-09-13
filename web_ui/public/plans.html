@@ -6,11 +6,26 @@
       <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Create Plan</button>
     </div>
 
+    <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
+      <label for="planSearch" class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search plans</label>
+      <input id="planSearch" type="search" oninput="setPlanSearch(this.value)" placeholder="Plan name, reset cycle, or limit..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+    </div>
+
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
       <table class="w-full text-left text-sm whitespace-nowrap" id="plansTable">
-        <thead><tr class="bg-gray-50 text-gray-600"><th onclick="sortTable('name')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Plan Name</th><th onclick="sortTable('data_limit_mb')" class="cursor-pointer hover:bg-gray-100 p-3">Data Limit (MB)</th><th onclick="sortTable('time_limit_seconds')" class="cursor-pointer hover:bg-gray-100 p-3">Time Limit (Hours)</th><th onclick="sortTable('reset_period')" class="cursor-pointer hover:bg-gray-100 p-3">Reset Cycle</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <thead><tr class="bg-gray-50 text-gray-600"><th data-sort-field="name" onclick="sortTable('name')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Plan Name</th><th data-sort-field="data_limit_mb" onclick="sortTable('data_limit_mb')" class="cursor-pointer hover:bg-gray-100 p-3">Data Limit (MB)</th><th data-sort-field="time_limit_seconds" onclick="sortTable('time_limit_seconds')" class="cursor-pointer hover:bg-gray-100 p-3">Time Limit (Hours)</th><th data-sort-field="reset_period" onclick="sortTable('reset_period')" class="cursor-pointer hover:bg-gray-100 p-3">Reset Cycle</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
         <tbody></tbody>
       </table>
+      <div class="flex flex-col gap-3 pt-4 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between" id="planPagination">
+        <div id="planPaginationSummary" aria-live="polite"></div>
+        <div class="flex items-center gap-2">
+          <label for="planPageSize" class="text-xs font-bold uppercase tracking-wider text-gray-500">Rows</label>
+          <select id="planPageSize" onchange="setPlanPageSize(this.value)" class="border rounded-lg p-2 bg-gray-50"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+          <button id="planPreviousPage" onclick="previousPlansPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+          <span id="planPageIndicator" class="min-w-20 text-center"></span>
+          <button id="planNextPage" onclick="nextPlansPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -126,53 +141,65 @@
   </div>
 
   <script src="/js/layout.js"></script>
+  <script src="/js/plan-table.js"></script>
   <script>
 
-        let currentSort = null;
+        let currentSort = 'name';
         let currentOrder = 'asc';
+        let planSearch = '';
+        let planPage = 1;
+        let planPageSize = 25;
+        let plansList = [];
 
         function sortTable(field) {
             if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
             else { currentSort = field; currentOrder = 'asc'; }
+            planPage = 1;
             renderTable();
         }
 
-        function getSortValue(p, field) {
-            return p[field];
+            function formatUsageMegabytes(megabytes) {
+              const value = Number(megabytes) || 0;
+              return value >= 1024 ? `${(value / 1024).toFixed(1)} GB` : `${value.toFixed(1)} MB`;
+            }
+
+        function setPlanSearch(value) { planSearch = value; planPage = 1; renderTable(); }
+        function setPlanPageSize(value) { planPageSize = Number(value); planPage = 1; renderTable(); }
+        function previousPlansPage() { planPage -= 1; renderTable(); }
+        function nextPlansPage() { planPage += 1; renderTable(); }
+
+        async function loadPlans() {
+          const res = await apiFetch('/api/plans');
+          if (res.ok) { plansList = await res.json(); renderTable(); }
         }
 
-    let plansList = [];
-
-    async function loadPlans() {
-      const res = await apiFetch('/api/plans');
-      if (res.ok) {
-        plansList = await res.json();
-        renderTable();
-      }
-    }
-
-    function renderTable() {
-      let sortedPlans = [...plansList];
-      if (currentSort) {
-        sortedPlans.sort((a,b) => {
-          let vA = getSortValue(a, currentSort);
-          let vB = getSortValue(b, currentSort);
-          let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true});
-          return currentOrder==='asc'?c:-c;
-        });
-      }
-      document.querySelector('#plansTable tbody').innerHTML = sortedPlans.map(p => `
+        function renderTable() {
+          const pageState = PlanTableCore.applyPlanTableState(plansList, { search: planSearch, sort: currentSort, order: currentOrder, page: planPage, pageSize: planPageSize });
+          planPage = pageState.page;
+          const tbody = document.querySelector('#plansTable tbody');
+          tbody.innerHTML = pageState.totalRows ? pageState.rows.map(p => `
             <tr class="border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer" onclick="showPlanDetails(${p.id})">
             <td class="p-3 font-bold text-blue-600">${p.name}</td>
             <td class="p-3 font-mono text-gray-600">${p.data_limit_mb > 0 ? p.data_limit_mb : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
             <td class="p-3 font-mono text-gray-600">${p.time_limit_seconds > 0 ? (p.time_limit_seconds/3600).toFixed(1) : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
             <td class="p-3 text-xs capitalize"><span class="px-2 py-1 bg-gray-100 rounded border font-bold">${p.reset_period}</span></td>
-            <td class="p-3 text-right space-x-2">
+            <td class="p-3 text-right space-x-2" onclick="event.stopPropagation()">
                 <button onclick="openModal(${p.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
                 <button onclick="deletePlan(${p.id}, '${p.name}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
             </td>
-            </tr>`).join('');
-    }
+            </tr>`).join('') : '<tr><td colspan="5" class="p-6 text-center text-sm text-gray-400">No plans match this search.</td></tr>';
+          const startRow = pageState.totalRows ? (pageState.page - 1) * pageState.pageSize + 1 : 0;
+          const endRow = Math.min(pageState.page * pageState.pageSize, pageState.totalRows);
+          document.getElementById('planPaginationSummary').textContent = pageState.totalRows ? `Showing ${startRow}–${endRow} of ${pageState.totalRows} plans` : '0 plans';
+          document.getElementById('planPageIndicator').textContent = `Page ${pageState.page} of ${pageState.totalPages}`;
+          document.getElementById('planPreviousPage').disabled = pageState.page <= 1;
+          document.getElementById('planNextPage').disabled = pageState.page >= pageState.totalPages;
+          document.querySelectorAll('[data-sort-field]').forEach(header => {
+            const active = header.dataset.sortField === currentSort;
+            header.setAttribute('aria-sort', active ? (currentOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+            header.textContent = header.textContent.replace(/ [▲▼]$/, '') + (active ? (currentOrder === 'asc' ? ' ▲' : ' ▼') : '');
+          });
+        }
 
     
 // Plan detail panel functions
@@ -219,7 +246,7 @@ async function showPlanDetails(id) {
                 <div class="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
                     <div>
                         <div class="font-bold text-sm text-gray-800">${u.username}</div>
-                        <div class="text-xs text-gray-500 mt-0.5">${u.data_used_mb} MB / ${(u.time_used_sec/60).toFixed(0)} min</div>
+                        <div class="text-xs text-gray-500 mt-0.5">${formatUsageMegabytes(u.data_used_mb)} / ${(u.time_used_sec/60).toFixed(0)} min</div>
                     </div>
                     <div>
                         ${isDepleted 

@@ -32,6 +32,7 @@
         <div><label class="block text-sm font-bold text-gray-700">Description</label>
         <input type="text" id="nDesc" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none"></div>
 
+        <details id="dynamicAuthAdvanced" class="border rounded-lg p-3 bg-gray-50"><summary class="cursor-pointer text-sm font-bold text-gray-700">Advanced: CoA / PoD packet attributes</summary><p class="text-xs text-gray-500 mt-2">Defaults preserve current behavior; profile reply attributes apply only to CoA.</p><p class="text-sm font-bold mt-2">CoA packet attributes</p><div id="coaDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div><p class="text-sm font-bold mt-3">PoD packet attributes</p><div id="podDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div></details>
         <div class="flex justify-end space-x-3 pt-4 border-t">
           <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
           <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
@@ -43,6 +44,12 @@
   <script src="/js/layout.js"></script>
   <script>
     let nasList = [];
+    const dynamicAuthDefaults=['User-Name','Acct-Session-Id','NAS-IP-Address','NAS-Identifier','Calling-Station-Id','Framed-IP-Address','Profile-Reply-Attributes'];
+    let customDynamicAuthAttributes=[];
+    function dynamicAuthOptions() { return [...dynamicAuthDefaults, ...customDynamicAuthAttributes.filter(name => !dynamicAuthDefaults.includes(name))]; }
+    function renderDynamicAuthChoices(config={coa_attributes:dynamicAuthDefaults,pod_attributes:dynamicAuthDefaults.filter(x=>x!=='Profile-Reply-Attributes')}){for(const [kind,id] of [['coa','coaDynamicAuthChoices'],['pod','podDynamicAuthChoices']])document.getElementById(id).innerHTML=dynamicAuthOptions().filter(name=>kind==='coa'||name!=='Profile-Reply-Attributes').map(name=>`<label><input class="${kind}-dynamic-auth-choice" type="checkbox" value="${name}" ${(config[kind+'_attributes']||[]).includes(name)?'checked':''}> ${name==='Profile-Reply-Attributes'?'Profile reply attributes (CoA only)':name}</label>`).join('');}
+    async function loadCustomDynamicAuthAttributes() { const res=await apiFetch('/api/settings'); if (!res.ok) return; const data=await res.json(); let saved=[]; try { saved=Array.isArray(data.custom_reply_attributes)?data.custom_reply_attributes:JSON.parse(data.custom_reply_attributes || '[]'); } catch (_) { saved=String(data.custom_reply_attributes || '').split(',').map(name=>name.trim()).filter(Boolean); } customDynamicAuthAttributes=saved.map(attribute=>typeof attribute==='string'?attribute:attribute.name).filter(name=>typeof name==='string'&&name); }
+    function selectedDynamicAuthAttributes(){return {coa_attributes:Array.from(document.querySelectorAll('.coa-dynamic-auth-choice:checked')).map(x=>x.value),pod_attributes:Array.from(document.querySelectorAll('.pod-dynamic-auth-choice:checked')).map(x=>x.value)};}
 
     async function loadData() {
       const res = await apiFetch('/api/nas');
@@ -64,7 +71,7 @@
 
     window.openModal = function(id = null) {
       document.getElementById('nasModal').classList.remove('hidden');
-      document.getElementById('nasForm').reset();
+      document.getElementById('nasForm').reset(); document.getElementById('dynamicAuthAdvanced').open=false; renderDynamicAuthChoices();
 
       if(id) {
         const n = nasList.find(x => x.id === id);
@@ -73,7 +80,7 @@
         document.getElementById('nIp').value = n.nasname;
         document.getElementById('nShort').value = n.shortname;
         document.getElementById('nSec').value = n.secret;
-        document.getElementById('nDesc').value = n.description;
+        document.getElementById('nDesc').value = n.description; try { const saved=JSON.parse(n.dynamic_auth_attributes || 'null'); renderDynamicAuthChoices(Array.isArray(saved)?{coa_attributes:saved,pod_attributes:saved.filter(x=>x!=='Profile-Reply-Attributes')}:saved); } catch { renderDynamicAuthChoices(); }
       } else {
         document.getElementById('modalTitle').textContent = 'Add NAS Client';
         document.getElementById('nasId').value = '';
@@ -86,7 +93,6 @@
       if(!confirm('Delete this NAS Client?')) return;
       const res = await apiFetch(`/api/nas/${id}`, { method: 'DELETE' });
       if(res.ok) {
-          alert('Deleted successfully. Note: Radius server must be restarted from the Settings page to take effect.');
           loadData();
       }
     }
@@ -98,7 +104,7 @@
           nasname: document.getElementById('nIp').value,
           shortname: document.getElementById('nShort').value,
           secret: document.getElementById('nSec').value,
-          description: document.getElementById('nDesc').value
+          description: document.getElementById('nDesc').value, dynamic_auth_attributes: selectedDynamicAuthAttributes()
       };
 
       const method = id ? 'PUT' : 'POST';
@@ -107,13 +113,12 @@
       const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
       if(res.ok) {
           closeModal();
-          alert('Saved successfully. Note: Radius server must be restarted from the Settings page to take effect.');
           loadData();
       } else {
           const err = await res.json(); alert('Error: ' + err.error);
       }
     };
 
-    loadData();
+    loadCustomDynamicAuthAttributes().then(loadData);
   </script>
 </body></html>

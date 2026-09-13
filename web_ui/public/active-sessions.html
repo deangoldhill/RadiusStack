@@ -144,14 +144,14 @@
                         <th onclick="sortTable('duration')" class="cursor-pointer hover:bg-gray-100 p-3">Duration</th>
                         <th onclick="sortTable('acctinputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Upload</th>
                         <th onclick="sortTable('acctoutputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Download</th>
-                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th>
+                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th><th class="p-3 text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="sessBody">
-                    <tr><td colspan="10" class="p-8 text-center text-gray-400 text-sm">Loading sessions…</td></tr>
+                    <tr><td colspan="11" class="p-8 text-center text-gray-400 text-sm">Loading sessions…</td></tr>
                 </tbody>
             </table>
-        </div>
+        </div><div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm"><span id="pageSummary" class="text-gray-500"></span><div class="flex items-center gap-2"><label>Rows <select id="pageSize" onchange="changePageSize()" class="border rounded p-1"><option>25</option><option>50</option><option>100</option></select></label><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div></div>
     </main>
 
     <!-- Details Modal -->
@@ -235,7 +235,7 @@
 
         var allSessions = [];
         var autoRefresh = true;
-        var refreshTimer = null;
+        var refreshTimer = null; var currentPage=1, totalPages=1, totalRecords=0;
 
         function fmtGB(b) { return ((b || 0) / 1073741824).toFixed(3) + ' GB'; }
         function fmtHrs(s) { return ((s || 0) / 3600).toFixed(2) + ' hrs'; }
@@ -251,10 +251,10 @@
 
             ['fUser', 'fCalling', 'fFramed'].forEach(function(id) {
                 var el = document.getElementById(id);
-                if (el) el.addEventListener('input', renderTable);
+                if (el) el.addEventListener('input', function(){ currentPage=1; loadSessions(); });
             });
             var nasEl = document.getElementById('fNas');
-            if (nasEl) nasEl.addEventListener('change', renderTable);
+            if (nasEl) nasEl.addEventListener('change', function(){ currentPage=1; loadSessions(); });
 
             loadSessions();
         }
@@ -262,11 +262,13 @@
         function clearFilters() {
             ['fUser', 'fCalling', 'fFramed'].forEach(function (id) { document.getElementById(id).value = ''; });
             document.getElementById('fNas').value = '';
-            renderTable();
+            currentPage=1; loadSessions();
         }
 
-        
-        
+        function changePage(delta){ var n=currentPage+delta; if(n>=1&&n<=totalPages){currentPage=n;loadSessions();} }
+        function changePageSize(){currentPage=1;loadSessions();}
+        function updatePagination(){var size=Number(document.getElementById('pageSize').value),start=totalRecords?(currentPage-1)*size+1:0;document.getElementById('pageSummary').textContent='Showing '+start+'-'+Math.min(currentPage*size,totalRecords)+' of '+totalRecords;document.getElementById('prevPage').disabled=currentPage<=1;document.getElementById('nextPage').disabled=currentPage>=totalPages;}
+
         let currentModalSessionId = null;
 
         async function clearModalSession() {
@@ -809,13 +811,23 @@
             var icon = document.getElementById('refreshIcon');
             icon.classList.add('spinning');
             try {
-                var res = await apiFetch((showingStale ? '/api/sessions/stale' : '/api/sessions/active?limit=1000'));
-                if (!res.ok) { icon.classList.remove('spinning'); return; }
-                allSessions = await res.json();
-                renderTable();
+                var q=new URLSearchParams({page:currentPage,page_size:document.getElementById('pageSize').value});[['username','fUser'],['nasip','fNas'],['callingstationid','fCalling'],['framedip','fFramed']].forEach(function(x){var v=document.getElementById(x[1]).value;if(v)q.set(x[0],v);}); var res = await apiFetch(showingStale ? '/api/sessions/stale' : '/api/sessions/active?'+q); if (!res.ok) { icon.classList.remove('spinning'); return; } var payload=await res.json(); if(showingStale){allSessions=payload;totalRecords=payload.length;totalPages=1;}else{allSessions=payload.items;totalRecords=payload.total;totalPages=payload.totalPages;} updatePagination(); renderTable();
             } catch (e) { console.error(e); }
             icon.classList.remove('spinning');
             scheduleRefresh();
+        }
+
+        async function sendDynamicAuth(sessionId, kind) {
+            const label = kind === 'coa' ? 'Reauthorize this session with its current profile, VLAN, and supported reply attributes?' : 'Disconnect this session from the NAS?';
+            if (!confirm(label)) return;
+            try {
+                const res = await apiFetch('/api/sessions/' + encodeURIComponent(sessionId) + '/dynamic-auth', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind })
+                });
+                if (res.ok) { await loadSessions(); return; }
+                const payload = await res.json().catch(() => ({}));
+                alert(payload.error || 'The NAS did not accept the dynamic authorization request.');
+            } catch (err) { console.error(err); alert('Dynamic authorization request failed.'); }
         }
 
         function renderTable() {
@@ -826,7 +838,7 @@
             var f = document.getElementById('fFramed').value.toLowerCase();
 
             var filtered = allSessions;
-            if (u || n || c || f) {
+            if (showingStale && (u || n || c || f)) {
                 filtered = allSessions.filter(function (s) {
                     var matchU = !u || (s.username && String(s.username).toLowerCase().includes(u));
                     var matchN = !n || (s.nasipaddress === n);
@@ -840,7 +852,7 @@
             if (countEl) countEl.textContent = filtered.length;
 
             if (!filtered.length) {
-                tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
                 return;
             }
 
@@ -858,6 +870,7 @@
                     '<td class="p-3 text-xs text-right font-mono text-green-600">' + fmtGB(s.acctinputoctets) + '</td>' +
                     '<td class="p-3 text-xs text-right font-mono text-blue-600">' + fmtGB(s.acctoutputoctets) + '</td>' +
                     '<td class="p-3 text-xs text-right font-mono font-bold text-gray-700">' + fmtGB((Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0)) + '</td>' +
+                    '<td class="p-3 text-center whitespace-nowrap" onclick="event.stopPropagation()"><button type="button" class="mr-1 px-2 py-1 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50" title="Reauthorize this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'coa\')">CoA</button><button type="button" class="px-2 py-1 text-xs rounded border border-red-300 text-red-700 hover:bg-red-50" title="Disconnect this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'pod\')">PoD</button></td>' +
                     '</tr>';
             }).join('');
         }

@@ -1,8 +1,8 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
 // --- DATABASE BACKUP & RESTORE ---
-app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, async (req, res) => {
     const type = req.query.type || 'full';
     const include_accounting = req.query.acct === 'true' || type === 'full';
     const include_authlogs = req.query.auth === 'true' || type === 'full';
@@ -69,6 +69,21 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), async (r
     }
 });
 
+// Normalize JSON values before mysql2 binds them. Backups parsed from JSON contain permissions as native objects.
+function normalizeAdminRows(rows) {
+    return (rows || []).map(row => {
+        const permissions = row.permissions;
+        let normalized;
+        if (permissions === null || permissions === undefined || permissions === '') normalized = '{}';
+        else if (typeof permissions === 'string') {
+            try { normalized = JSON.stringify(JSON.parse(permissions)); }
+            catch { throw new Error(`Invalid admins.permissions value for ${row.username || 'unknown admin'}`); }
+        } else if (typeof permissions === 'object') normalized = JSON.stringify(permissions);
+        else throw new Error(`Invalid admins.permissions value for ${row.username || 'unknown admin'}`);
+        return { ...row, permissions: normalized };
+    });
+}
+
 // Helper: insert rows in chunks to avoid max_allowed_packet issues
 async function chunkInsert(pool, table, rows, chunkSize = 100) {
     if (!rows || rows.length === 0) return { inserted: 0 };
@@ -88,7 +103,7 @@ async function chunkInsert(pool, table, rows, chunkSize = 100) {
 }
 
 // FIX: Use multer memoryStorage to accept uploaded JSON file; parse from buffer
-app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), async (req, res) => {
+app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), async (req, res) => {
     const conn = await pool.getConnection();
     const results = {};
     const errors = [];
@@ -249,9 +264,10 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), multer
 
         // --- Admins (overwrite existing rows so full restore restores admin passwords/keys) ---
         if (data.admins?.length) {
+            const admins = normalizeAdminRows(data.admins);
             await conn.query('DELETE FROM admins');
-            await chunkInsert(conn, 'admins', data.admins);
-            results.admins = data.admins.length;
+            await chunkInsert(conn, 'admins', admins);
+            results.admins = admins.length;
         }
 
         await conn.commit();

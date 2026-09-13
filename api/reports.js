@@ -1,12 +1,12 @@
+const { scope } = require('../tenant');
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { scope } = require('../tenant');
-    const { buildDynamicAuthorizationRequest, sendDynamicAuthorization } = require('../dynamic_auth');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
 // --- REPORTS ---
 
 
 // --- STALE SESSIONS ---
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    const scoped = scope(req.tenantScope);
     const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes')");
     let clearEnabled = false;
     let thresholdDays = 3;
@@ -17,7 +17,6 @@ app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (re
         if (s.setting_key === 'stale_session_interim_threshold_minutes') interimThresholdMinutes = parseInt(s.setting_value, 10) || 180;
     });
 
-    const scoped = scope(req.tenantScope, 'tenant_id');
     const query = `
         SELECT
             radacctid,
@@ -63,73 +62,39 @@ app.post('/api/sessions/clear', requireApiAuth('reports', 'read-write'), async (
 
     // Clear by updating acctstoptime to current time
     const placeholders = sessionIds.map(() => '?').join(',');
-    const scoped = scope(req.tenantScope, 'tenant_id');
-    await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})${scoped.sql}`, [...sessionIds, ...scoped.params]);
-    await auditLog(req.admin.username, req.origin, `Cleared ${sessionIds.length} stale sessions`, 'success', '', req.ip, req.tenantScope);
+    const scoped = scope(req.tenantScope);
+    const [result] = await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})${scoped.sql}`, [...sessionIds, ...scoped.params]);
+    await auditLog(req.admin.username, req.origin, `Cleared ${result.affectedRows} stale sessions`, 'success', '', req.ip, req.tenantScope);
     res.json({ success: true });
 });
 app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username, nasip, callingstationid, framedip } = req.query; const paginated=req.query.page !== undefined;
     const page=Math.max(1,parseInt(req.query.page,10)||1); const pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;
-    const scoped = scope(req.tenantScope, 'a.tenant_id');
-    const conditions=['a.acctstoptime IS NULL' + scoped.sql], params=[...scoped.params];
+    const scoped=scope(req.tenantScope,'a.tenant_id'); const conditions=['a.acctstoptime IS NULL'+scoped.sql], params=[...scoped.params];
     if(username){conditions.push('(a.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');} if(nasip){conditions.push('a.nasipaddress = ?');params.push(nasip);} if(callingstationid){conditions.push('a.callingstationid LIKE ?');params.push('%'+callingstationid+'%');} if(framedip){conditions.push('a.framedipaddress LIKE ?');params.push('%'+framedip+'%');}
-    const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username WHERE '+conditions.join(' AND ');
+    const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id WHERE '+conditions.join(' AND ');
     if(!paginated){const limit=Math.min(parseInt(req.query.limit,10)||200,1000);const [rows]=await pool.query('SELECT a.*,COALESCE(m.mac_id,a.username) AS username'+from+' ORDER BY a.acctstarttime DESC LIMIT ?',[...params,limit]);return res.json(rows);}
     const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query('SELECT a.*,COALESCE(m.mac_id,a.username) AS username'+from+' ORDER BY a.acctstarttime DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
 });
 
-app.post('/api/sessions/:sessionId/dynamic-auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
-    const sessionId = Number(req.params.sessionId);
-    const kind = req.body && req.body.kind;
-    if (!Number.isSafeInteger(sessionId) || sessionId < 1 || !['coa', 'pod'].includes(kind)) return res.status(400).json({ error: 'Invalid dynamic authorization request' });
-    const dynamicScope = scope(req.tenantScope, 'a.tenant_id');
-    try {
-        const [sessions] = await pool.query(`SELECT a.radacctid,a.username,a.acctsessionid,a.nasipaddress,a.nasidentifier,a.callingstationid,a.framedipaddress,a.tenant_id,n.secret,n.dynamic_auth_attributes FROM radacct a INNER JOIN nas n ON n.nasname=a.nasipaddress AND n.tenant_id <=> a.tenant_id WHERE a.radacctid=? AND a.acctstoptime IS NULL${dynamicScope.sql}`, [sessionId, ...dynamicScope.params]);
-        const session = sessions[0];
-        if (!session) return res.status(404).json({ error: 'Active session not found in the selected tenant' });
-        let replyAttributes = [];
-        if (kind === 'coa') {
-            const [profiles] = await pool.query('SELECT groupname FROM radusergroup WHERE username=? AND tenant_id <=> ? ORDER BY priority ASC LIMIT 1', [session.username, session.tenant_id]);
-            if (!profiles[0]) return res.status(409).json({ error: 'The active session has no current profile to reauthorize' });
-            const [rows] = await pool.query('SELECT attribute,value FROM radgroupreply WHERE groupname=? AND tenant_id <=> ? ORDER BY id ASC', [profiles[0].groupname, session.tenant_id]);
-            replyAttributes = rows;
-        }
-        let config; try { config=JSON.parse(session.dynamic_auth_attributes || 'null') || {}; } catch { return res.status(500).json({error:'Invalid NAS dynamic authorization configuration'}); }
-        const packetAttributes = kind === 'coa' ? config.coa_attributes : config.pod_attributes;
-        const request = buildDynamicAuthorizationRequest({ kind, session, replyAttributes, packetAttributes });
-        const result = await sendDynamicAuthorization({ request, secret: session.secret, host: session.nasipaddress });
-        const action = kind === 'coa' ? 'CoA profile reauthorization' : 'PoD session disconnect';
-        const details = `session=${session.radacctid}; attributes=${kind === 'coa' ? replyAttributes.map(row => row.attribute).join(',') : 'none'}`;
-        await auditLog(req.admin.username, req.origin, action, result.acknowledged ? 'success' : 'failed', details, req.ip, req.tenantScope);
-        if (!result.acknowledged) return res.status(409).json({ error: 'NAS rejected the dynamic authorization request' });
-        res.json({ success: true, action: kind, response: kind === 'coa' ? 'CoA-ACK' : 'Disconnect-ACK' });
-    } catch (err) {
-        console.error('[dynamic authorization]', err.message);
-        await auditLog(req.admin.username, req.origin, kind === 'coa' ? 'CoA profile reauthorization' : 'PoD session disconnect', 'failed', `session=${sessionId}; ${err.message}`, req.ip, req.tenantScope);
-        res.status(502).json({ error: 'Dynamic authorization request failed' });
-    }
-});
-
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
- const {username,nasip,callingstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=scope(req.tenantScope,'p.tenant_id');let where='';const params=[...scoped.params];
- const c=[scoped.sql.slice(5)].filter(Boolean);if(username){c.push('(p.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');}if(nasip){c.push('p.nasipaddress=?');params.push(nasip);}if(callingstationid){c.push('p.callingstationid LIKE ?');params.push('%'+callingstationid+'%');}if(date_from){c.push('p.authdate>=?');params.push(new Date(date_from).toISOString().slice(0,19).replace('T',' '));}if(date_to){c.push('p.authdate<=?');params.push(new Date(date_to).toISOString().slice(0,19).replace('T',' '));}if(reply){c.push('p.reply=?');params.push(reply);}if(c.length)where=' WHERE '+c.join(' AND ');
- const from=' FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id LEFT JOIN tenants t ON t.id=p.tenant_id'+where,select="SELECT p.*,COALESCE(m.mac_id,p.username) AS username,COALESCE(t.name, 'Global') AS tenant_name";if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),10000);const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ?',[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
+ const {username,nasip,callingstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=scope(req.tenantScope,'p.tenant_id');let where=' WHERE 1=1'+scoped.sql;const params=[...scoped.params];
+ if(username){where+=' AND (p.username LIKE ? OR m.mac_id LIKE ?)';params.push('%'+username+'%','%'+username+'%');}if(nasip){where+=' AND p.nasipaddress=?';params.push(nasip);}if(callingstationid){where+=' AND p.callingstationid LIKE ?';params.push('%'+callingstationid+'%');}if(date_from){where+=' AND p.authdate>=?';params.push(new Date(date_from).toISOString().slice(0,19).replace('T',' '));}if(date_to){where+=' AND p.authdate<=?';params.push(new Date(date_to).toISOString().slice(0,19).replace('T',' '));}if(reply){where+=' AND p.reply=?';params.push(reply);}
+ const from=' FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id'+where,select='SELECT p.*,COALESCE(m.mac_id,p.username) AS username';if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),10000);const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ?',[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
 });
 
 app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
     try {
         const { username, nasip, callingstationid, date_from, date_to, reply } = req.query;
-        const scoped = scope(req.tenantScope, 'p.tenant_id');
-        let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username' + (req.tenantScope.enabled ? ' AND m.tenant_id = ?' : '');
-        const conditions = req.tenantScope.enabled ? [scoped.sql.slice(5)] : []; const params = [...(req.tenantScope.enabled ? [req.tenantScope.tenantId] : []), ...scoped.params];
+        let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username';
+        const scoped = scope(req.tenantScope, 'p.tenant_id'); const conditions = ['1=1' + scoped.sql], params = [...scoped.params];
         if (username) { conditions.push('(p.username LIKE ? OR m.mac_id LIKE ?)'); params.push('%' + username + '%', '%' + username + '%'); }
         if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
         if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
         if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
         if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
         if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
-        if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+        query += ' WHERE ' + conditions.join(' AND ');
         const [result] = await pool.query(query, params);
         await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip, req.tenantScope);
         res.json({ deleted: result.affectedRows });
@@ -143,12 +108,10 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
 // LIVE STATS DASHBOARD
 app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        const aScope = scope(req.tenantScope, 'a.tenant_id');
-        const pScope = scope(req.tenantScope, 'p.tenant_id');
-        const [[{ active_sessions }]] = await pool.query(`SELECT COUNT(*) AS active_sessions FROM radacct a WHERE a.acctstoptime IS NULL${aScope.sql}`, aScope.params);
-        const [[{ avg_session_min }]] = await pool.query(`SELECT ROUND(AVG(a.acctsessiontime)/60,1) AS avg_session_min FROM radacct a WHERE a.acctstoptime IS NOT NULL AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${aScope.sql}`, aScope.params);
-        const [nas_breakdown] = await pool.query(`SELECT a.nasipaddress, COUNT(*) AS session_count FROM radacct a WHERE a.acctstoptime IS NULL${aScope.sql} GROUP BY a.nasipaddress ORDER BY session_count DESC LIMIT 8`, aScope.params);
-        const [[{ unique_users_24h }]] = await pool.query(`SELECT COUNT(DISTINCT p.username) AS unique_users_24h FROM radpostauth p WHERE p.authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${pScope.sql}`, pScope.params);
+        const [[{ active_sessions }]] = await pool.query("SELECT COUNT(*) AS active_sessions FROM radacct WHERE acctstoptime IS NULL");
+        const [[{ avg_session_min }]] = await pool.query("SELECT ROUND(AVG(acctsessiontime)/60,1) AS avg_session_min FROM radacct WHERE acctstoptime IS NOT NULL AND acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+        const [nas_breakdown] = await pool.query("SELECT nasipaddress, COUNT(*) AS session_count FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY session_count DESC LIMIT 8");
+        const [[{ unique_users_24h }]] = await pool.query("SELECT COUNT(DISTINCT username) AS unique_users_24h FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
 
         let accepts_1h = 0;
         let rejects_1h = 0;
@@ -156,9 +119,7 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
         let rejects_24h = 0;
         let hourly_trend = [];
 
-        // FreeRADIUS counters are server-global; report tenant activity directly
-        // from tenant-stamped authentication rows in every context.
-        try { throw new Error('Use tenant-scoped post-auth totals');
+        try {
             const tzOffset = new Date().getTimezoneOffset() * 60000;
             const nowMsLocal = Date.now() - tzOffset;
             const nowStr = new Date(nowMsLocal).toISOString().slice(0, 19).replace('T', ' ');
@@ -178,11 +139,11 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
         } catch (e) {
             console.error('[live-stats radius_stats fallback]', e);
 
-            const [[a1h]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radpostauth p WHERE p.reply = 'Access-Accept' AND p.authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)${pScope.sql}`, pScope.params);
-            const [[r1h]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radpostauth p WHERE p.reply = 'Access-Reject' AND p.authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)${pScope.sql}`, pScope.params);
-            const [[a24h]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radpostauth p WHERE p.reply = 'Access-Accept' AND p.authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${pScope.sql}`, pScope.params);
-            const [[r24h]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radpostauth p WHERE p.reply = 'Access-Reject' AND p.authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${pScope.sql}`, pScope.params);
-            const [fallbackTrend] = await pool.query(`SELECT DATE_FORMAT(p.authdate,'%H:00') AS hour_label, SUM(p.reply='Access-Accept') AS accepts, SUM(p.reply='Access-Reject') AS rejects FROM radpostauth p WHERE p.authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${pScope.sql} GROUP BY DATE_FORMAT(p.authdate,'%Y-%m-%d %H:00:00') ORDER BY MIN(p.authdate)`, pScope.params);
+            const [[a1h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+            const [[r1h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 1 HOUR)");
+            const [[a24h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Accept' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            const [[r24h]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply = 'Access-Reject' AND authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            const [fallbackTrend] = await pool.query("SELECT DATE_FORMAT(authdate,'%H:00') AS hour_label, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY DATE_FORMAT(authdate,'%Y-%m-%d %H:00:00') ORDER BY MIN(authdate)");
 
             accepts_1h = Number(a1h.cnt);
             rejects_1h = Number(r1h.cnt);
@@ -319,12 +280,8 @@ app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), a
     const { username } = req.params;
     const { start_date, end_date } = req.query;
 
-    const cScope = scope(req.tenantScope, 'c.tenant_id');
-    const macScope = scope(req.tenantScope, 'm.tenant_id');
-    const [macMapping] = await pool.query(`SELECT m.mac_address FROM mac_auth_devices m WHERE (m.mac_id = ? OR m.mac_address = ?)${macScope.sql} LIMIT 1`, [username, username, ...macScope.params]);
+    const [macMapping] = await pool.query('SELECT mac_address FROM mac_auth_devices WHERE mac_id = ? OR mac_address = ? LIMIT 1', [username, username]);
     const realUsername = macMapping.length > 0 ? macMapping[0].mac_address : username;
-    const [[ownedUser]] = await pool.query(`SELECT 1 FROM radcheck c WHERE c.username = ?${cScope.sql} LIMIT 1`, [realUsername, ...cScope.params]);
-    if (!ownedUser) return res.status(404).json({ error: 'User not found in selected tenant' });
 
     const dateCondition = (start_date ? ' AND a.acctstarttime >= ?' : '') + (end_date ? ' AND a.acctstarttime <= ?' : '');
     const dateParams = [...(start_date ? [start_date] : []), ...(end_date ? [end_date] : [])];
@@ -363,10 +320,8 @@ app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), a
 
 // FAILED AUTH REPORT
 app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const pScope = scope(req.tenantScope, 'p.tenant_id');
-    const from = ` FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id WHERE p.reply='Access-Reject'${pScope.sql}`;
-    const [details] = await pool.query(`SELECT p.*, COALESCE(m.mac_id,p.username) AS username${from} ORDER BY p.authdate DESC LIMIT 500`, pScope.params);
-    const [summary] = await pool.query(`SELECT COALESCE(m.mac_id,p.username) AS username, COUNT(*) AS fail_count${from} GROUP BY COALESCE(m.mac_id,p.username) ORDER BY fail_count DESC`, pScope.params);
+    const [details] = await pool.query("SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' ORDER BY p.authdate DESC LIMIT 500");
+    const [summary] = await pool.query("SELECT COALESCE(m.mac_id, p.username) AS username, COUNT(*) as fail_count FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' GROUP BY COALESCE(m.mac_id, p.username) ORDER BY fail_count DESC");
     res.json({ details, summary });
 });
 
@@ -374,7 +329,7 @@ app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), asyn
 app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const reportRes = await fetch(`http://localhost:3000/api/reports/user/${username}`, {
-        headers: { 'X-API-Key': req.admin.api_key }
+        headers: { 'X-API-Key': req.admin.api_key, 'X-Tenant-ID': req.header('X-Tenant-ID') }
     });
     const data = await reportRes.json();
 
@@ -413,7 +368,7 @@ app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only
 
 app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const reportRes = await fetch(`http://localhost:3000/api/reports/failed-auth`, {
-        headers: { 'X-API-Key': req.admin.api_key }
+        headers: { 'X-API-Key': req.admin.api_key, 'X-Tenant-ID': req.header('X-Tenant-ID') }
     });
     const data = await reportRes.json();
 
@@ -447,47 +402,96 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
 
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        const aScope = scope(req.tenantScope, 'a.tenant_id');
-        const from = ` FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)${aScope.sql}`;
-        const [topSessions] = await pool.query(`SELECT COALESCE(m.mac_id,a.username) AS username, COUNT(*) AS session_count, SUM(a.acctinputoctets+a.acctoutputoctets)/1.073741824e+09 AS data_gb${from} GROUP BY COALESCE(m.mac_id,a.username) ORDER BY session_count DESC LIMIT 20`, aScope.params);
-        const [topData] = await pool.query(`SELECT COALESCE(m.mac_id,a.username) AS username, SUM(a.acctinputoctets+a.acctoutputoctets)/1048576 AS data_mb${from} GROUP BY COALESCE(m.mac_id,a.username) ORDER BY data_mb DESC LIMIT 20`, aScope.params);
+        const [topSessions] = await pool.query(`
+    SELECT COALESCE(m.mac_id, a.username) AS username,
+        COUNT(*) AS session_count,
+        SUM(a.acctinputoctets + a.acctoutputoctets) / 1.073741824e+09 AS data_gb
+    FROM radacct a
+    LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
+    WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    GROUP BY COALESCE(m.mac_id, a.username)
+    ORDER BY session_count DESC
+    LIMIT 20
+`);
+        const [topData] = await pool.query(`
+            SELECT COALESCE(m.mac_id, a.username) AS username,
+                SUM(a.acctinputoctets + a.acctoutputoctets) / 1048576 as data_mb
+            FROM radacct a
+            LEFT JOIN mac_auth_devices m ON m.mac_address = a.username
+            WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY COALESCE(m.mac_id, a.username) ORDER BY data_mb DESC LIMIT 20
+        `);
         res.json({ topSessions, topData });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // === DASHBOARD OVERVIEW ===
 app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        // Dashboard data always follows the selected tenant. An unscoped Global
-        // context deliberately sees all rows, while a tenant cannot aggregate
-        // another tenant's credentials, activity, or historical usage.
-        const c = scope(req.tenantScope, 'c.tenant_id');
-        const m = scope(req.tenantScope, 'm.tenant_id');
-        const n = scope(req.tenantScope, 'n.tenant_id');
-        const plan = scope(req.tenantScope, 'p.tenant_id');
-        const a = scope(req.tenantScope, 'a.tenant_id');
-        const post = scope(req.tenantScope, 'p.tenant_id');
-        const g = scope(req.tenantScope, 'g.tenant_id');
+        const [[users]] = await pool.query("SELECT COUNT(*) AS cnt FROM radcheck WHERE username NOT IN (SELECT mac_address FROM mac_auth_devices)");
+        const [[macs]] = await pool.query("SELECT COUNT(*) AS cnt FROM mac_auth_devices");
+        const [[nas]] = await pool.query("SELECT COUNT(*) AS cnt FROM nas");
+        const [[plans]] = await pool.query("SELECT COUNT(*) AS cnt FROM plans");
+        const [[activeSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct WHERE acctstoptime IS NULL");
+        const [[totalSess]] = await pool.query("SELECT COUNT(*) AS cnt FROM radacct");
+        const [[dataToday]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE DATE(acctstarttime)=CURDATE()");
+        const [[dataWeek]] = await pool.query("SELECT COALESCE(SUM(acctinputoctets+acctoutputoctets),0) AS bytes FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(),INTERVAL 7 DAY)");
+        const [recentAuths] = await pool.query("SELECT p.reply, COALESCE(m.mac_id,p.username) AS username, p.nasipaddress, p.authdate FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username ORDER BY p.authdate DESC LIMIT 8");
+        const [nasLoad] = await pool.query("SELECT nasipaddress, COUNT(*) AS active FROM radacct WHERE acctstoptime IS NULL GROUP BY nasipaddress ORDER BY active DESC LIMIT 6");
+        const [profileDist] = await pool.query("SELECT groupname, COUNT(*) AS cnt FROM radusergroup GROUP BY groupname ORDER BY cnt DESC LIMIT 8");
+        const [planDist] = await pool.query("SELECT p.name, COUNT(up.plan_id) AS cnt FROM plans p LEFT JOIN user_plans up ON up.plan_id=p.id GROUP BY p.id ORDER BY cnt DESC LIMIT 8");
 
-        const [[users]] = await pool.query(`SELECT COUNT(DISTINCT c.username) AS cnt FROM radcheck c WHERE 1=1${c.sql} AND NOT EXISTS (SELECT 1 FROM mac_auth_devices m WHERE m.mac_address=c.username AND m.tenant_id <=> c.tenant_id)`, c.params);
-        const [[macs]] = await pool.query(`SELECT COUNT(*) AS cnt FROM mac_auth_devices m WHERE 1=1${m.sql}`, m.params);
-        const [[nas]] = await pool.query(`SELECT COUNT(*) AS cnt FROM nas n WHERE 1=1${n.sql}`, n.params);
-        const [[plans]] = await pool.query(`SELECT COUNT(*) AS cnt FROM plans p WHERE 1=1${plan.sql}`, plan.params);
-        const [[activeSess]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radacct a WHERE a.acctstoptime IS NULL${a.sql}`, a.params);
-        const [[totalSess]] = await pool.query(`SELECT COUNT(*) AS cnt FROM radacct a WHERE 1=1${a.sql}`, a.params);
-        const [[dataToday]] = await pool.query(`SELECT COALESCE(SUM(a.acctinputoctets+a.acctoutputoctets),0) AS bytes FROM radacct a WHERE DATE(a.acctstarttime)=CURDATE()${a.sql}`, a.params);
-        const [[dataWeek]] = await pool.query(`SELECT COALESCE(SUM(a.acctinputoctets+a.acctoutputoctets),0) AS bytes FROM radacct a WHERE a.acctstarttime >= DATE_SUB(NOW(),INTERVAL 7 DAY)${a.sql}`, a.params);
-        const [recentAuths] = await pool.query(`SELECT p.reply, COALESCE(m.mac_id,p.username) AS username, p.nasipaddress, p.authdate FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id WHERE 1=1${post.sql} ORDER BY p.authdate DESC LIMIT 8`, post.params);
-        const [nasLoad] = await pool.query(`SELECT a.nasipaddress, COUNT(*) AS active FROM radacct a WHERE a.acctstoptime IS NULL${a.sql} GROUP BY a.nasipaddress ORDER BY active DESC LIMIT 6`, a.params);
-        const [profileDist] = await pool.query(`SELECT g.groupname, COUNT(*) AS cnt FROM radusergroup g WHERE 1=1${g.sql} GROUP BY g.groupname ORDER BY cnt DESC LIMIT 8`, g.params);
-        const [planDist] = await pool.query(`SELECT p.name, COUNT(up.plan_id) AS cnt FROM plans p LEFT JOIN user_plans up ON up.plan_id=p.id AND up.tenant_id <=> p.tenant_id WHERE 1=1${plan.sql} GROUP BY p.id, p.name ORDER BY cnt DESC LIMIT 8`, plan.params);
-        const [[authToday]] = await pool.query(`SELECT COUNT(*) AS cnt, COALESCE(SUM(p.reply='Access-Reject'),0) AS rejects FROM radpostauth p WHERE p.authdate >= CURDATE()${post.sql}`, post.params);
-        const [authTrend7d] = await pool.query(`SELECT DATE(p.authdate) AS day, SUM(p.reply='Access-Accept') AS accepts, SUM(p.reply='Access-Reject') AS rejects FROM radpostauth p WHERE p.authdate >= DATE_SUB(NOW(),INTERVAL 7 DAY)${post.sql} GROUP BY DATE(p.authdate) ORDER BY day ASC`, post.params);
+        let authTodayCnt = 0;
+        let rejectTodayCnt = 0;
+        let authTrend7d = [];
+
+        try {
+            const tzOffset = new Date().getTimezoneOffset() * 60000;
+            const nowMsLocal = Date.now() - tzOffset;
+            const nowStr = new Date(nowMsLocal).toISOString().slice(0, 19).replace('T', ' ');
+            const startOfTodayStr = new Date(nowMsLocal).toISOString().split('T')[0] + ' 00:00:00';
+
+            const todayStats = await calculateRadiusStats(pool, 'auth', startOfTodayStr, nowStr);
+            authTodayCnt = todayStats
+                ? Number(todayStats.total_accepts || 0) + Number(todayStats.total_rejects || 0)
+                : 0;
+            rejectTodayCnt = todayStats ? Number(todayStats.total_rejects || 0) : 0;
+
+            authTrend7d = await calculateTrendDaily(pool, 'auth', 7);
+        } catch (e) {
+            console.error('[dashboard-overview radius_stats fallback]', e);
+
+            const [[authToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE authdate >= CURDATE()");
+            const [[rejectToday]] = await pool.query("SELECT COUNT(*) AS cnt FROM radpostauth WHERE reply='Access-Reject' AND authdate >= CURDATE()");
+            const [fallbackTrend] = await pool.query("SELECT DATE(authdate) AS day, SUM(reply='Access-Accept') AS accepts, SUM(reply='Access-Reject') AS rejects FROM radpostauth WHERE authdate >= DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY DATE(authdate) ORDER BY day ASC");
+
+            authTodayCnt = Number(authToday.cnt);
+            rejectTodayCnt = Number(rejectToday.cnt);
+            authTrend7d = fallbackTrend;
+        }
 
         res.json({
-            counts: { users:Number(users.cnt), macs:Number(macs.cnt), nas:Number(nas.cnt), plans:Number(plans.cnt), activeSessions:Number(activeSess.cnt), totalSessions:Number(totalSess.cnt), authToday:Number(authToday.cnt), rejectToday:Number(authToday.rejects) },
-            data: { today:Number(dataToday.bytes), week:Number(dataWeek.bytes) },
-            recentAuths, authTrend7d, nasLoad, profileDist, planDist
+            counts: {
+                users: Number(users.cnt),
+                macs: Number(macs.cnt),
+                nas: Number(nas.cnt),
+                plans: Number(plans.cnt),
+                activeSessions: Number(activeSess.cnt),
+                totalSessions: Number(totalSess.cnt),
+                authToday: authTodayCnt,
+                rejectToday: rejectTodayCnt
+            },
+            data: {
+                today: Number(dataToday.bytes),
+                week: Number(dataWeek.bytes)
+            },
+            recentAuths,
+            authTrend7d,
+            nasLoad,
+            profileDist,
+            planDist
         });
     } catch (err) {
         console.error('[/api/reports/dashboard-overview]', err);
@@ -500,9 +504,9 @@ app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'
 // === ACCOUNTING HISTORY API ===
 app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, res) => {
  const {username,nasip,start_date,end_date,sort='acctstarttime',order='desc'}=req.query;const paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1);const pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;
- const allowed=['acctstarttime','acctstoptime','username','nasipaddress','acctsessiontime','acctinputoctets','acctoutputoctets','total_data'];const field=allowed.includes(sort)?sort:'acctstarttime',direction=String(order).toLowerCase()==='asc'?'ASC':'DESC';const tenant=scope(req.tenantScope,'a.tenant_id');let where=' WHERE 1=1'+tenant.sql;const params=[...tenant.params];
+ const allowed=['acctstarttime','acctstoptime','username','nasipaddress','acctsessiontime','acctinputoctets','acctoutputoctets','total_data'];const field=allowed.includes(sort)?sort:'acctstarttime',direction=String(order).toLowerCase()==='asc'?'ASC':'DESC';const scoped=scope(req.tenantScope,'a.tenant_id');let where=' WHERE 1=1'+scoped.sql;const params=[...scoped.params];
  if(username){where+=' AND (a.username LIKE ? OR m.mac_id LIKE ?)';params.push('%'+username+'%','%'+username+'%');}if(nasip){where+=' AND a.nasipaddress=?';params.push(nasip);}if(start_date){where+=' AND a.acctstarttime>=?';params.push(start_date);}if(end_date){where+=' AND a.acctstarttime<=?';params.push(end_date+' 23:59:59');}
- const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id LEFT JOIN tenants t ON t.id=a.tenant_id'+where;const select="SELECT a.*,(a.acctinputoctets+a.acctoutputoctets) AS total_data,COALESCE(m.mac_id,a.username) AS username,COALESCE(t.name, 'Global') AS tenant_name";
+ const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id'+where;const select='SELECT a.*,(a.acctinputoctets+a.acctoutputoctets) AS total_data,COALESCE(m.mac_id,a.username) AS username';
  try {if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||300,1),1000);const [rows]=await pool.query(select+from+` ORDER BY ${field} ${direction} LIMIT ?`,[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+` ORDER BY ${field} ${direction} LIMIT ? OFFSET ?`,[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});}catch(err){console.error(err);res.status(500).json({error:'Failed to fetch accounting data'});}
 });
 
@@ -513,9 +517,9 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
         return res.status(400).json({ error: 'At least one filter is required for safety' });
     }
 
-    const tenant = scope(req.tenantScope, 'tenant_id');
-    let query = 'DELETE FROM radacct WHERE 1=1' + tenant.sql;
-    const params = [...tenant.params];
+    const scoped = scope(req.tenantScope);
+    let query = 'DELETE FROM radacct WHERE 1=1' + scoped.sql;
+    const params = [...scoped.params];
 
     if (username) { query += ' AND (username LIKE ? OR username IN (SELECT mac_address FROM mac_auth_devices WHERE mac_id LIKE ?))'; params.push('%' + username + '%', '%' + username + '%'); }
     if (nasip) { query += ' AND nasipaddress = ?'; params.push(nasip); }
@@ -525,7 +529,7 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
     try {
         const [result] = await pool.query(query, params);
         await auditLog(req.admin.username, req.origin, 'Deleted accounting records', 'success',
-            `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip);
+            `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip, req.tenantScope);
         res.json({ success: true, deleted: result.affectedRows });
     } catch (err) {
         console.error(err);

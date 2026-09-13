@@ -1,17 +1,18 @@
+# syntax=docker/dockerfile:1.4
 FROM freeradius/freeradius-server:3.2.3-alpine
 
-RUN apk add --no-cache openssl mariadb-client mariadb-connector-c tzdata
+RUN apk add --no-cache openssl mariadb-client mariadb-connector-c tzdata jq
 
 RUN ln -s /opt/etc/raddb/mods-available/sql /opt/etc/raddb/mods-enabled/sql
 
 # Completely overwrite the SQL module file to prevent any ghost variables or TLS requirements
-RUN cat << 'EOF' > /opt/etc/raddb/mods-available/sql
+RUN <<'EOF' cat > /opt/etc/raddb/mods-available/sql
 sql {
     driver = "rlm_sql_mysql"
     dialect = "mysql"
     server = "mariadb"
     port = 3306
-    login = "radius"
+    login = "$ENV{DB_USER}"
     password = "$ENV{DB_PASSWORD}"
     radius_db = "radius"
     read_clients = yes
@@ -32,13 +33,14 @@ sql {
     usergroup_table = "radusergroup"
     client_table = "nas"
 
-    group_membership_query = "SELECT groupname FROM radusergroup WHERE username = '%{SQL-User-Name}' ORDER BY priority"
-
     $INCLUDE ${modconfdir}/${.:name}/main/${dialect}/queries.conf
 }
 EOF
 
-# Patch the MySQL queries to include extra post-auth logging
+# FreeRADIUS 3.2-supported extension point: replace the MySQL queries.conf file.
+# This is deliberately query-only; no custom uninvoked policy is added.
+COPY queries.conf /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
+
 RUN sed -i 's/(username, pass, reply, authdate ${..class.column_name})/(username, pass, reply, authdate ${..class.column_name}, nasipaddress, callingstationid, replymessage)/' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf && \
     sed -i 's/${..class.reply_xlat})"/${..class.reply_xlat}, '"'"'%{NAS-IP-Address}'"'"', '"'"'%{Calling-Station-Id}'"'"', '"'"'%{reply:Reply-Message}'"'"')"/g' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
 
@@ -71,7 +73,7 @@ RUN awk '/post-auth \{/ && !done { \
     mv /tmp/inner-tunnel.tmp /opt/etc/raddb/sites-available/inner-tunnel
 
 RUN mkdir -p /opt/etc/raddb/policy.d
-RUN cat << 'EOF' > /opt/etc/raddb/policy.d/check_plan_limits
+RUN <<'EOF' cat > /opt/etc/raddb/policy.d/check_plan_limits
 plan_cycle_baseline {
     update request {
         &Tmp-String-0 := "%{sql: INSERT INTO user_plan_usage (username, cycle_started_at, base_input_octets, base_output_octets, base_session_seconds) SELECT up.username, NOW(), COALESCE(SUM(a.acctinputoctets), 0), COALESCE(SUM(a.acctoutputoctets), 0), COALESCE(SUM(a.acctsessiontime), 0) FROM user_plans up LEFT JOIN radacct a ON a.username = up.username LEFT JOIN user_plan_usage pu ON pu.username = up.username WHERE up.username = '%{User-Name}' AND pu.username IS NULL GROUP BY up.username}"
@@ -95,7 +97,7 @@ check_plan_limits {
 }
 EOF
 
-RUN cat << 'EOF' > /opt/etc/raddb/policy.d/strict_nas
+RUN <<'EOF' cat > /opt/etc/raddb/policy.d/strict_nas
 strict_nas_check {
     update request {
         &Tmp-String-1 := "%{sql: SELECT groupname FROM radusergroup WHERE username = '%{User-Name}' LIMIT 1}"
@@ -118,7 +120,7 @@ RUN awk '/post-auth \{/ && !done { print; print "\tcheck_plan_limits\n\tstrict_n
 # --- TOTP POLICY INSTALLATION ---
 RUN [ -e /opt/etc/raddb/mods-enabled/totp ] || ln -s /opt/etc/raddb/mods-available/totp /opt/etc/raddb/mods-enabled/totp
 
-RUN cat << 'EOF' > /opt/etc/raddb/policy.d/totp_sql
+RUN <<'EOF' cat > /opt/etc/raddb/policy.d/totp_sql
 totp_sql_authorize {
     if (&control:TOTP-Secret) {
         if (!&User-Password) {
@@ -171,6 +173,12 @@ RUN awk '\
 RUN ln -sf /opt/etc/raddb/sites-available/status /opt/etc/raddb/sites-enabled/status
 RUN sed -i 's/ipaddr = 127\.0\.0\.1/ipaddr = 0.0.0.0/g' /opt/etc/raddb/sites-available/status || true
 RUN sed -i '/client admin {/,/}/c\client docker_internal {\n\tipaddr = 172.16.0.0/12 \n\tsecret = RADIUS_STATUS_SECRET_GENERIC\n}' /opt/etc/raddb/sites-available/status
+
+
+# Controlled VSA dictionary: static catalogue definitions plus a generated include.
+COPY dictionary.radiusstack-vsa /opt/etc/raddb/dictionary.radiusstack-vsa
+COPY generate-vsa-dictionary.sh /usr/local/sbin/generate-vsa-dictionary
+RUN chmod 0755 /usr/local/sbin/generate-vsa-dictionary && printf '\n$INCLUDE dictionary.radiusstack-vsa\n' >> /opt/etc/raddb/dictionary
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

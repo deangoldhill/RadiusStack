@@ -10,6 +10,8 @@ const multer = require('multer');
 const fs = require('fs').promises;
 const puppeteer = require('puppeteer');
 const crypto = require('crypto');
+const { loadTenantScope } = require('./tenant');
+const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
 require('./workers/radiusStatsWorker');
 
 const app = express();
@@ -509,14 +511,15 @@ app.post('/api/sync/execute', async (req, res) => {
 
 
 // Audit Logger
-async function auditLog(admin_username, origin, action, result, details = '', ip = '') {
+async function auditLog(admin_username, origin, action, result, details = '', ip = '', tenantScope = null) {
     try {
+        const tenantId = tenantScope?.enabled ? tenantScope.tenantId : null;
         await pool.query(
-            'INSERT INTO admin_audit_log (admin_username, origin, action, result, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-            [admin_username, origin, action, result, details, ip]
+            'INSERT INTO admin_audit_log (admin_username, origin, action, result, details, ip_address, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [admin_username, origin, action, result, details, ip, tenantId]
         );
         const syslog = require('./utils/syslog');
-        syslog.sendAuditLog({ admin_username, origin, action, result, details, ip_address: ip }).catch(e => console.error('[Syslog] auditLog error:', e.message));
+        syslog.sendAuditLog({ admin_username, origin, action, result, details, ip_address: ip, tenant_id: tenantId }).catch(e => console.error('[Syslog] auditLog error:', e.message));
     } catch (err) {
         console.error('Audit log failed:', err);
     }
@@ -573,7 +576,7 @@ async function initDb() {
         const hash = await bcrypt.hash('admin', 10);
         const perms = JSON.stringify({ nas: 'read-write', users: 'read-write', admins: 'read-write', reports: 'read-write', settings: 'read-write', plans: 'read-write' });
         const defaultApiKey = crypto.randomBytes(32).toString('hex');
-        await pool.query('INSERT INTO admins (username, password_hash, api_key, permissions) VALUES (?, ?, ?, ?)', ['admin', hash, defaultApiKey, perms]);
+        await pool.query('INSERT INTO admins (username, password_hash, api_key, permissions, is_super_admin) VALUES (?, ?, ?, ?, 1)', ['admin', hash, defaultApiKey, perms]);
         await auditLog('system', 'system', 'Created default admin account', 'success', 'Initial setup');
     }
 }
@@ -689,7 +692,9 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     }
 
     const admin = admins[0];
-    const perms = JSON.parse(admin.permissions || '{}');
+    const perms = typeof admin.permissions === 'string'
+        ? JSON.parse(admin.permissions || '{}')
+        : (admin.permissions || {});
 
     if (!perms[module]) {
         await auditLog(admin.username, origin, `Access to ${module}`, 'denied', 'No permission for module', ip);
@@ -702,8 +707,20 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     }
 
     req.admin = admin;
+    // Tenant-management/admin routes remain global; settings itself always resolves the selected scope.
+    if (req.path.startsWith('/api/tenants')) {
+        req.tenantScope = { enabled: false, tenantId: null, superAdmin: Number(admin.is_super_admin) === 1 };
+    } else {
+        try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); } catch (err) { return res.status(403).json({ error: err.message }); }
+    }
     req.origin = origin;
     req.ip = ip;
+    next();
+};
+const requireGlobalSuperAdmin = (req, res, next) => {
+    if (req.tenantScope.enabled || Number(req.admin.is_super_admin) !== 1) {
+        return res.status(403).json({ error: 'Global super-admin context required' });
+    }
     next();
 };
 
@@ -721,9 +738,10 @@ const routeDependencies = {
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
     signTotpEnrollmentToken, verifyTotpEnrollmentToken,
-    apiDebugLog, setApiDebugMode
+    apiDebugLog, setApiDebugMode, requireGlobalSuperAdmin
 };
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
+require('./routes/tenants')(app, pool, requireApiAuth, auditLog, routeDependencies);
 
 // ─── CALCULATE INCREMENTAL RADIUS STATS ───────────────────────────────────────
 async function calculateRadiusStats(pool, statType, startDate, endDate) {
@@ -882,7 +900,7 @@ async function calculateTrendHourly(pool, statType, hours) {
 }
 
 // ─── RADIUS SERVER STATS ──────────────────────────────────────────────────────
-app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
+app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), requireGlobalSuperAdmin, async (req, res) => {
     try {
         const { start_date, end_date } = req.query;
 
@@ -910,73 +928,9 @@ app.listen(3000, '0.0.0.0', () => {
 });
 
 
-// --- MAC AUTH AUTO-CREATE WORKER ---
-    apiDebugLog('MAC Auth Auto-Create worker initialized');
-async function processAutoCreateMacs() {
-    try {
-        const [settingsRows] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval')");
-        const config = settingsRows.reduce((acc, row) => ({ ...acc, [row.setting_key]: row.setting_value }), {});
-
-        if (config.mac_auth_autocreate !== 'true') return;
-
-        const intervalSeconds = parseInt(config.mac_auth_autocreate_interval) || 5;
-        const now = Date.now();
-        if (now - lastAutoCreateMacRun < intervalSeconds * 1000) return;
-        lastAutoCreateMacRun = now;
-
-
-        const plan_id = config.mac_auth_autocreate_plan || '';
-        const profile = config.mac_auth_autocreate_profile || '';
-
-        // Find MACs rejected in the last 60 seconds
-        const [rejectedRows] = await pool.query(`
-            SELECT DISTINCT p.username 
-            FROM radpostauth p
-            LEFT JOIN radcheck r ON r.username = p.username
-            WHERE p.reply = 'Access-Reject' 
-              AND p.username REGEXP '^([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})$'
-              AND r.username IS NULL
-              AND p.authdate > DATE_SUB(NOW(), INTERVAL 1 MINUTE)
-        `);
-
-        for (let row of rejectedRows) {
-            let mac_address = row.username.trim().toLowerCase().replace(/-/g, ':');
-            let mac_id = mac_address;
-
-            // Double check existence
-            const [existing] = await pool.query('SELECT username FROM radcheck WHERE username = ?', [mac_address]);
-            if (existing.length > 0) continue;
-
-            const conn = await pool.getConnection();
-            try {
-                await conn.beginTransaction();
-                await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id) VALUES (?, ?)', [mac_address, mac_id]);
-                await conn.query(`DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password'`, [mac_address]);
-                await conn.query(`INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)`, [mac_address, mac_address]);
-                await conn.query('DELETE FROM radusergroup WHERE username = ?', [mac_address]);
-                if (profile) {
-                    await conn.query('INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)', [mac_address, profile]);
-                }
-                await conn.query('DELETE FROM user_plans WHERE username = ?', [mac_address]);
-                if (plan_id) {
-                    await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE plan_id = VALUES(plan_id)', [mac_address, plan_id]);
-                }
-                await conn.commit();
-                console.log(`[MAC Auto-Create Worker] Registered new MAC: ${mac_address} (Plan: ${plan_id || 'None'}, Profile: ${profile || 'None'})`);
-            } catch (err) {
-                await conn.rollback();
-                console.error(`[MAC Auto-Create Worker] Error registering MAC ${mac_address}:`, err);
-            } finally {
-                conn.release();
-            }
-        }
-    } catch (err) {
-        console.error('[MAC Auto-Create Worker] Error:', err);
-    }
-}
-setInterval(processAutoCreateMacs, 1000);
-
-
+// --- TENANT-SCOPED MAINTENANCE WORKERS ---
+const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog });
+setInterval(() => maintenanceWorkers.processAutoCreateMacs(), 1000);
 
 // --- STALE SESSIONS AUTO-CLEAR WORKER ---
     apiDebugLog('Stale session worker initialized');

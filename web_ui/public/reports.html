@@ -253,7 +253,8 @@
         <hr class="my-8">
 
         
-        <!-- ── RADIUS Server Stats with Date Range ────────────────────────── -->
+        <!-- ── RADIUS Server Stats with Date Range (Global only) ───────────── -->
+        <section id="globalRadiusStats" hidden>
         <div class="mb-8">
             <div class="flex justify-between items-center mb-4 border-b pb-2">
                 <h2 class="text-xl font-bold text-blue-600">RADIUS Server Statistics</h2>
@@ -289,6 +290,7 @@
                 </div>
             </div>
         </div>
+        </section>
 
 
         <!-- ═══ USER REPORT ═══ -->
@@ -722,8 +724,11 @@
             } catch (e) {}
         }
 
-            document.addEventListener('DOMContentLoaded', () => {
-            loadRadiusStats();
+            document.addEventListener('radiusstack:tenant-context-ready', () => {
+            const globalRadiusStats = document.getElementById('globalRadiusStats');
+            const isGlobalReportContext = () => !window.multiTenantEnabled || localStorage.getItem('activeTenantId') === 'global';
+            globalRadiusStats.hidden = !isGlobalReportContext();
+            if (!globalRadiusStats.hidden) loadRadiusStats();
         });
     </script>
 </body>

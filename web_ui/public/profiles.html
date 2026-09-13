@@ -13,20 +13,37 @@
             <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">+ Create Profile</button>
         </div>
 
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 mb-4">
+            <label for="profileSearch" class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Search profiles</label>
+            <input id="profileSearch" type="search" oninput="setProfileSearch(this.value)" placeholder="Name, VLAN, NAS address, or reply attribute..." class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none text-sm">
+        </div>
+
         <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap" id="profilesTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600">
-                        <th onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Profile Name</th>
-                        <th onclick="sortTable('vlan')" class="cursor-pointer hover:bg-gray-100 p-3">VLAN ID</th>
-                        <th onclick="sortTable('nas')" class="cursor-pointer hover:bg-gray-100 p-3">NAS Restriction</th>
-                        <th onclick="sortTable('replies')" class="cursor-pointer hover:bg-gray-100 p-3">Reply Attributes</th>
-                        <th onclick="sortTable('users')" class="cursor-pointer hover:bg-gray-100 p-3">Users</th>
+                        <th data-sort-field="profileName" onclick="sortTable('profileName')" class="cursor-pointer hover:bg-gray-100 p-3 rounded-tl-lg">Profile Name</th>
+                        <th data-sort-field="vlan" onclick="sortTable('vlan')" class="cursor-pointer hover:bg-gray-100 p-3">VLAN ID</th>
+                        <th data-sort-field="nas" onclick="sortTable('nas')" class="cursor-pointer hover:bg-gray-100 p-3">NAS Restriction</th>
+                        <th data-sort-field="replies" onclick="sortTable('replies')" class="cursor-pointer hover:bg-gray-100 p-3">Reply Attributes</th>
+                        <th data-sort-field="users" onclick="sortTable('users')" class="cursor-pointer hover:bg-gray-100 p-3">Users</th>
                         <th class="p-3 text-right rounded-tr-lg">Actions</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
             </table>
+            <div class="flex flex-col gap-3 pt-4 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between" id="profilePagination">
+                <div id="profilePaginationSummary" aria-live="polite"></div>
+                <div class="flex items-center gap-2">
+                    <label for="profilePageSize" class="text-xs font-bold uppercase tracking-wider text-gray-500">Rows</label>
+                    <select id="profilePageSize" onchange="setProfilePageSize(this.value)" class="border rounded-lg p-2 bg-gray-50">
+                        <option value="25">25</option><option value="50">50</option><option value="100">100</option>
+                    </select>
+                    <button id="profilePreviousPage" onclick="previousProfilesPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+                    <span id="profilePageIndicator" class="min-w-20 text-center"></span>
+                    <button id="profileNextPage" onclick="nextProfilesPage()" class="border rounded-lg px-3 py-2 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -131,30 +148,47 @@
     </div>
 
     <script src="/js/layout.js"></script>
+    <script src="/js/profile-table.js"></script>
     <script>
 
-        let currentSort = null;
+        let currentSort = 'profileName';
         let currentOrder = 'asc';
+        let profileSearch = '';
+        let profilePage = 1;
+        let profilePageSize = 25;
 
         function sortTable(field) {
             if (currentSort === field) currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
             else { currentSort = field; currentOrder = 'asc'; }
+            profilePage = 1;
             renderTable();
         }
 
-        function getSortValue(pName, field) {
-            const checks = allProfileData.checks.filter(c => c.groupname === pName);
-            const replies = allProfileData.replies.filter(r => r.groupname === pName);
-            const vlanAttr = replies.find(r => r.attribute === 'Tunnel-Private-Group-Id');
-            const nasAttr = checks.find(c => c.attribute === 'NAS-IP-Address');
-            const userCount = allUsers.filter(u => u.groupname === pName).length;
+        function setProfileSearch(value) {
+            profileSearch = value;
+            profilePage = 1;
+            renderTable();
+        }
 
-            switch(field) { case 'profileName': return pName || ''; case 'vlan': return vlanAttr ? vlanAttr.value : ''; case 'nas': return nasAttr ? nasAttr.value : ''; case 'replies': return replies.length; case 'users': return userCount; default: return ''; }
+        function setProfilePageSize(value) {
+            profilePageSize = Number(value);
+            profilePage = 1;
+            renderTable();
+        }
+
+        function previousProfilesPage() {
+            profilePage -= 1;
+            renderTable();
+        }
+
+        function nextProfilesPage() {
+            profilePage += 1;
+            renderTable();
         }
 
         let customAttributes = [];
         const baseAttributes = ["Acct-Interim-Interval", "Session-Timeout", "Idle-Timeout", "Reply-Message", "Mikrotik-Rate-Limit", "Filter-Id"];
-        let allProfileData = { checks: [], replies: [] };
+        let allProfileData = { checks: [], replies: [], userCounts: [] };
         let allUsers = [];
         let currentDetailProfile = null;
         let currentDetailData = null;
@@ -190,78 +224,82 @@
 
         // ─── INIT ─────────────────────────────────────────────────────────────────
 
+        function normalizeCustomReplyAttributes(value) {
+            if (!value) return [];
+            if (Array.isArray(value)) return value;
+            try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) return parsed; } catch (_) {}
+            return String(value).split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, value_type: 'string' }));
+        }
+        function attributeLabel(attribute) { return attribute.vendor_label ? `${attribute.vendor_label}: ${attribute.name}` : attribute.name; }
+        function replyAttributeOptions(attributes) { return attributes.map(attribute => ({ name: attribute.name, label: attributeLabel(attribute) })); }
         async function init() {
             const setRes = await apiFetch('/api/settings');
             if (setRes.ok) {
                 const data = await setRes.json();
-                if (data.custom_reply_attributes)
-                    customAttributes = data.custom_reply_attributes.split(',').map(a => a.trim()).filter(Boolean);
+                customAttributes = normalizeCustomReplyAttributes(data.custom_reply_attributes);
             }
-            const allAttrs = [...baseAttributes, ...customAttributes];
-            document.getElementById('newAttrKey').innerHTML = allAttrs.map(a => `<option value="${a}">${a}</option>`).join('');
+            const allAttrs = [...baseAttributes.map(name => ({ name, label: name })), ...replyAttributeOptions(customAttributes)];
+            document.getElementById('newAttrKey').innerHTML = allAttrs.map(attribute => `<option value="${escapeHtml(attribute.name)}">${escapeHtml(attribute.label)}</option>`).join('');
 
-            const [profileRes, userRes] = await Promise.all([
-                apiFetch('/api/profiles/data'),
-                apiFetch('/api/users')
-            ]);
+            const profileRes = await apiFetch('/api/profiles/data');
             if (profileRes.ok) allProfileData = await profileRes.json();
-            if (userRes.ok) allUsers = await userRes.json();
             renderTable();
         }
 
         async function loadProfiles() {
-            const [profileRes, userRes] = await Promise.all([
-                apiFetch('/api/profiles/data'),
-                apiFetch('/api/users')
-            ]);
+            const profileRes = await apiFetch('/api/profiles/data');
             if (profileRes.ok) allProfileData = await profileRes.json();
-            if (userRes.ok) allUsers = await userRes.json();
             renderTable();
         }
 
         function renderTable() {
-            const { checks, replies } = allProfileData;
-            const profileSet = new Set();
-            [...checks, ...replies].forEach(item => { if (item.groupname) profileSet.add(item.groupname); });
-            const profiles = Array.from(profileSet).sort();
-
-            
-            if (currentSort) { profiles.sort((a,b) => { let vA = getSortValue(a, currentSort); let vB = getSortValue(b, currentSort); let c = (typeof vA==='number' && typeof vB==='number') ? vA-vB : String(vA).localeCompare(String(vB),undefined,{numeric:true}); return currentOrder==='asc'?c:-c; }); }
-            document.querySelector('#profilesTable tbody').innerHTML = profiles.map(p => {
-                const vlanReply = replies.find(r => r.groupname === p && r.attribute === 'Tunnel-Private-Group-ID');
-                const vlanBadge = vlanReply
-                    ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded border border-blue-200">VLAN ${vlanReply.value}</span>`
-                    : `<span class="text-gray-400 text-xs">—</span>`;
-
-                const nasChecks = checks.filter(c => c.groupname === p && c.attribute === 'NAS-IP-Address');
-                const nasBadge = nasChecks.length > 0
-                    ? `<span class="px-2 py-1 bg-orange-50 text-orange-700 text-xs font-bold rounded border border-orange-200">${nasChecks.length} IP${nasChecks.length > 1 ? 's' : ''}</span>`
-                    : `<span class="px-2 py-1 bg-green-50 text-green-700 text-xs font-bold rounded border border-green-200">Any</span>`;
-
-                const skipAttrs = new Set(['Tunnel-Type', 'Tunnel-Medium-Type', 'Tunnel-Private-Group-ID']);
-                const replyCount = replies.filter(r => r.groupname === p && !skipAttrs.has(r.attribute)).length;
-                const replyBadge = replyCount > 0
-                    ? `<span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded border">${replyCount} attr${replyCount > 1 ? 's' : ''}</span>`
-                    : `<span class="text-gray-400 text-xs">—</span>`;
-
-                const userCount = allUsers.filter(u => u.profile === p).length;
-                const userBadge = userCount > 0
-                    ? `<span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded border border-indigo-200">${userCount} user${userCount !== 1 ? 's' : ''}</span>`
-                    : `<span class="text-gray-400 text-xs">0 users</span>`;
-
-                return `
-              <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeHtml(p)}')">
-                <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${escapeHtml(p)}</td>
-                <td class="p-3">${vlanBadge}</td>
-                <td class="p-3">${nasBadge}</td>
-                <td class="p-3">${replyBadge}</td>
-                <td class="p-3">${userBadge}</td>
-                <td class="p-3 text-right space-x-2" onclick="event.stopPropagation()">
-                  <button onclick="openModal('${escapeHtml(p)}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-                  <button onclick="deleteProfile('${escapeHtml(p)}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
-                </td>
-              </tr>`;
-            }).join('');
+            const { checks = [], replies = [], userCounts = [] } = allProfileData;
+            const rows = ProfileTableCore.buildProfileRows({ checks, replies, users: allUsers, userCounts });
+            const pageState = ProfileTableCore.applyProfileTableState(rows, {
+                search: profileSearch, sort: currentSort, order: currentOrder, page: profilePage, pageSize: profilePageSize
+            });
+            profilePage = pageState.page;
+            const tbody = document.querySelector('#profilesTable tbody');
+            if (pageState.totalRows === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-sm text-gray-400">No profiles match this search.</td></tr>';
+            } else {
+                tbody.innerHTML = pageState.rows.map(row => {
+                    const p = row.profileName;
+                    const vlanBadge = row.vlan
+                        ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded border border-blue-200">VLAN ${escapeHtml(row.vlan)}</span>`
+                        : `<span class="text-gray-400 text-xs">—</span>`;
+                    const nasBadge = row.nas.length > 0
+                        ? `<span class="px-2 py-1 bg-orange-50 text-orange-700 text-xs font-bold rounded border border-orange-200">${row.nas.length} IP${row.nas.length > 1 ? 's' : ''}</span>`
+                        : `<span class="px-2 py-1 bg-green-50 text-green-700 text-xs font-bold rounded border border-green-200">Any</span>`;
+                    const replyBadge = row.replies > 0
+                        ? `<span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded border">${row.replies} attr${row.replies > 1 ? 's' : ''}</span>`
+                        : `<span class="text-gray-400 text-xs">—</span>`;
+                    const userBadge = row.users > 0
+                        ? `<span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded border border-indigo-200">${row.users} user${row.users !== 1 ? 's' : ''}</span>`
+                        : `<span class="text-gray-400 text-xs">0 users</span>`;
+                    return `
+                      <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeHtml(p)}')">
+                        <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${escapeHtml(p)}</td>
+                        <td class="p-3">${vlanBadge}</td><td class="p-3">${nasBadge}</td><td class="p-3">${replyBadge}</td><td class="p-3">${userBadge}</td>
+                        <td class="p-3 text-right space-x-2" onclick="event.stopPropagation()">
+                          <button onclick="openModal('${escapeHtml(p)}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                          <button onclick="deleteProfile('${escapeHtml(p)}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+                        </td>
+                      </tr>`;
+                }).join('');
+            }
+            const startRow = pageState.totalRows ? (pageState.page - 1) * pageState.pageSize + 1 : 0;
+            const endRow = Math.min(pageState.page * pageState.pageSize, pageState.totalRows);
+            document.getElementById('profilePaginationSummary').textContent = pageState.totalRows
+                ? `Showing ${startRow}–${endRow} of ${pageState.totalRows} profiles` : '0 profiles';
+            document.getElementById('profilePageIndicator').textContent = `Page ${pageState.page} of ${pageState.totalPages}`;
+            document.getElementById('profilePreviousPage').disabled = pageState.page <= 1;
+            document.getElementById('profileNextPage').disabled = pageState.page >= pageState.totalPages;
+            document.querySelectorAll('[data-sort-field]').forEach(header => {
+                const active = header.dataset.sortField === currentSort;
+                header.setAttribute('aria-sort', active ? (currentOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+                header.textContent = header.textContent.replace(/ [▲▼]$/, '') + (active ? (currentOrder === 'asc' ? ' ▲' : ' ▼') : '');
+            });
         }
 
         // ─── DETAIL PANEL ─────────────────────────────────────────────────────────

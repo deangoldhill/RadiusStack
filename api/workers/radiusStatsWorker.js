@@ -28,40 +28,31 @@ const db = mysql.createPool({
   database: process.env.DB_NAME || 'radius',
 });
 
-// Runtime config — reloaded from the settings table on every poll cycle
-let POLL_MS              = 60000;   // fallback default
-let PURGE_DAYS           = 7;
-let PURGE_INTERVAL_MS    = 60 * 60 * 1000;  // 60 minutes
-let lastPurgeRun         = 0;
-let pollTimer            = null;
+// Runtime config — reloaded from isolated tenant settings on every poll cycle.
+let POLL_MS = 60000;
+let tenantConfigs = [{ tenantId: null, pollMs: 60000, purgeDays: 7, purgeIntervalMs: 3600000, lastPoll: 0, lastPurge: 0 }];
+let pollTimer = null;
 
 async function loadConfig() {
   try {
-    const [rows] = await db.query(
-      `SELECT setting_key, setting_value FROM settings
-       WHERE setting_key IN (
-         'radius_stats_poll_interval',
-         'radius_stats_retention_days',
-         'radius_stats_purge_interval'
-       )`
-    );
+    const [[multi]] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'multi_tenant_enabled'");
+    const multiTenant = ['true', '1'].includes(String(multi?.setting_value || '').toLowerCase());
+    const [rows] = await db.query(multiTenant
+      ? `SELECT tenant_id, setting_key, setting_value FROM tenant_settings WHERE setting_key IN ('radius_stats_poll_interval','radius_stats_retention_days','radius_stats_purge_interval')`
+      : `SELECT NULL AS tenant_id, setting_key, setting_value FROM settings WHERE setting_key IN ('radius_stats_poll_interval','radius_stats_retention_days','radius_stats_purge_interval')`);
+    const configs = new Map();
     rows.forEach(r => {
-      if (r.setting_key === 'radius_stats_poll_interval') {
-        const ms = parseInt(r.setting_value, 10);
-        if (ms >= 5000) POLL_MS = ms;
-      }
-      if (r.setting_key === 'radius_stats_retention_days') {
-        const d = parseInt(r.setting_value, 10);
-        if (d >= 1) PURGE_DAYS = d;
-      }
-      if (r.setting_key === 'radius_stats_purge_interval') {
-        const m = parseInt(r.setting_value, 10);
-        if (m >= 1) PURGE_INTERVAL_MS = m * 60 * 1000;
-      }
+      const id = r.tenant_id === null ? null : Number(r.tenant_id);
+      if (!configs.has(id)) configs.set(id, { tenantId: id, pollMs: 60000, purgeDays: 7, purgeIntervalMs: 3600000, lastPoll: 0, lastPurge: 0 });
+      const cfg = configs.get(id); const value = parseInt(r.setting_value, 10);
+      if (r.setting_key === 'radius_stats_poll_interval' && value >= 5000) cfg.pollMs = value;
+      if (r.setting_key === 'radius_stats_retention_days' && value >= 1) cfg.purgeDays = value;
+      if (r.setting_key === 'radius_stats_purge_interval' && value >= 1) cfg.purgeIntervalMs = value * 60000;
     });
-  } catch (e) {
-    // Settings table may not exist on first boot — use defaults
-  }
+    tenantConfigs = [...configs.values()];
+    if (!tenantConfigs.length && !multiTenant) tenantConfigs = [{ tenantId: null, pollMs: 60000, purgeDays: 7, purgeIntervalMs: 3600000, lastPoll: 0, lastPurge: 0 }];
+    POLL_MS = Math.max(5000, Math.min(...tenantConfigs.map(c => c.pollMs)));
+  } catch (e) { /* schema may not exist on first boot: preserve safe defaults */ }
 }
 
 function buildPacket(secret, statTypeInt) {
@@ -144,42 +135,32 @@ async function poll() {
     }
   }
 
-  for (const [statType, row] of Object.entries(rows)) {
-    try {
-      await db.query(
-        `INSERT INTO radius_stats
-           (stat_type, total_requests, total_accepts, total_rejects, total_challenges,
-            total_responses, dup_requests, malformed_requests, invalid_requests,
-            dropped_requests, unknown_types, server_start_time, server_hup_time, raw_vsas)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [statType, row.total_requests, row.total_accepts, row.total_rejects,
-         row.total_challenges, row.total_responses, row.dup_requests,
-         row.malformed_requests, row.invalid_requests, row.dropped_requests,
-         row.unknown_types, row.server_start_time, row.server_hup_time, row.raw_vsas]
-      );
-    } catch (e) {
-      console.error(`[RadiusStats] DB write failed: ${e.message}`);
-    }
-  }
-
-  // Purge expired rows only at the configured interval — not every poll
   const now = Date.now();
-  if (now - lastPurgeRun >= PURGE_INTERVAL_MS) {
-    lastPurgeRun = now;
-    try {
-      const [result] = await db.query(
-        'DELETE FROM radius_stats WHERE collected_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-        [PURGE_DAYS]
-      );
-      if (result.affectedRows > 0) {
-        console.log(`[RadiusStats] Purged ${result.affectedRows} rows older than ${PURGE_DAYS} days.`);
-      }
-    } catch (e) {
-      console.error(`[RadiusStats] Purge failed: ${e.message}`);
+  for (const cfg of tenantConfigs) {
+    if (now - cfg.lastPoll < cfg.pollMs) continue;
+    cfg.lastPoll = now;
+    for (const [statType, row] of Object.entries(rows)) {
+      try {
+        await db.query(
+          `INSERT INTO radius_stats (tenant_id, stat_type, total_requests, total_accepts, total_rejects, total_challenges,
+             total_responses, dup_requests, malformed_requests, invalid_requests, dropped_requests, unknown_types,
+             server_start_time, server_hup_time, raw_vsas) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [cfg.tenantId, statType, row.total_requests, row.total_accepts, row.total_rejects, row.total_challenges,
+           row.total_responses, row.dup_requests, row.malformed_requests, row.invalid_requests, row.dropped_requests,
+           row.unknown_types, row.server_start_time, row.server_hup_time, row.raw_vsas]
+        );
+      } catch (e) { console.error(`[RadiusStats] DB write failed: ${e.message}`); }
+    }
+    if (now - cfg.lastPurge >= cfg.purgeIntervalMs) {
+      cfg.lastPurge = now;
+      try {
+        const [result] = await db.query('DELETE FROM radius_stats WHERE tenant_id <=> ? AND collected_at < DATE_SUB(NOW(), INTERVAL ? DAY)', [cfg.tenantId, cfg.purgeDays]);
+        if (result.affectedRows > 0) console.log(`[RadiusStats] Purged ${result.affectedRows} tenant ${cfg.tenantId ?? 'global'} rows.`);
+      } catch (e) { console.error(`[RadiusStats] Purge failed: ${e.message}`); }
     }
   }
 
-  // Schedule next poll using the (possibly updated) POLL_MS value
+  // Schedule next poll using the shortest tenant interval.
   pollTimer = setTimeout(poll, POLL_MS);
 }
 

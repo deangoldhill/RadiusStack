@@ -65,11 +65,19 @@
                 <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modNas" checked class="form-checkbox text-blue-600 rounded"><span>NAS Clients</span></label>
                 <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modPlans" checked class="form-checkbox text-blue-600 rounded"><span>Billing Plans</span></label>
                 <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modSettings" class="form-checkbox text-blue-600 rounded"><span>Settings</span></label>                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modReports" checked class="form-checkbox text-blue-600 rounded"><span>Reports</span></label>
-                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modAdmins" class="form-checkbox text-blue-600 rounded"><span>Administrators</span></label>
+                <label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="modAdmins" class="form-checkbox text-blue-600 rounded"><span>Administrators</span></label><label class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="superAdmin" class="form-checkbox text-indigo-600 rounded"><span>Platform super administrator</span></label>
             </div>
         </div>
 
         
+        <div id="tenantMembershipGroup" class="border-t pt-4 hidden">
+            <div class="flex items-start justify-between gap-4 mb-2">
+              <div><label class="block text-sm font-bold text-gray-700">Tenant memberships</label><p class="text-xs text-gray-500">Select every tenant this administrator can access.</p></div>
+              <span class="text-xs font-semibold text-indigo-700 bg-indigo-50 px-2 py-1 rounded">Non-super admins only</span>
+            </div>
+            <div id="tenantMemberships" class="max-h-36 overflow-y-auto grid grid-cols-2 gap-2 rounded-lg border bg-gray-50 p-3"></div>
+        </div>
+
         <div id="2faGroup" class="flex items-center space-x-2 mt-4 hidden">
             <input type="checkbox" id="enable2FA" class="form-checkbox text-blue-600 rounded">
             <label class="text-sm font-bold text-gray-700">Require 2FA Setup on First Login</label>
@@ -86,13 +94,30 @@
   <script src="/js/layout.js"></script>
   <script>
     let adminsList = [];
+    let availableTenants = [];
+    let canManageTenantMemberships = false;
+
+    function escapeHtml(value) { return String(value || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+    async function renderTenantMemberships(selectedIds = [], isSuperAdmin = false) {
+      const group = document.getElementById('tenantMembershipGroup');
+      const list = document.getElementById('tenantMemberships');
+      if (!canManageTenantMemberships) { group.classList.add('hidden'); list.innerHTML = ''; return; }
+      group.classList.remove('hidden');
+      if (!availableTenants.length) {
+        list.innerHTML = '<p class="col-span-2 text-sm text-gray-500">No tenants exist yet. Create a tenant first.</p>';
+        return;
+      }
+      const selected = new Set((selectedIds || []).map(Number));
+      list.innerHTML = availableTenants.map(t => `<label class="flex items-center gap-2 text-sm ${isSuperAdmin ? 'opacity-50' : 'cursor-pointer'}"><input type="checkbox" class="tenant-membership form-checkbox text-indigo-600 rounded" value="${Number(t.id)}" ${selected.has(Number(t.id)) ? 'checked' : ''} ${isSuperAdmin ? 'disabled' : ''}><span><span class="font-mono text-xs text-gray-500">#${Number(t.id)}</span> ${escapeHtml(t.name)}</span></label>`).join('');
+    }
 
     async function loadAdmins() {
       const res = await apiFetch('/api/admins');
       if (res.ok) {
         adminsList = await res.json();
         document.querySelector('#adminsTable tbody').innerHTML = adminsList.map(a => {
-            const isSuper = a.username === 'admin';
+            const isSuper = Number(a.is_super_admin) === 1;
             let roleBadge = '<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded">Custom</span>';
 
             let perms = {};
@@ -119,7 +144,7 @@
       }
     }
 
-    window.openModal = function(id = null) {
+    window.openModal = async function(id = null) {
         document.getElementById('adminModal').classList.remove('hidden');
         document.getElementById('adminForm').reset();
 
@@ -148,9 +173,12 @@
             document.getElementById('modSettings').checked = !!perms.settings;
                         document.getElementById('modReports').checked = !!perms.reports;
             document.getElementById('modAdmins').checked = !!perms.admins;
+            document.getElementById('superAdmin').checked = Number(a.is_super_admin) === 1;
+            await renderTenantMemberships(a.tenant_ids, Number(a.is_super_admin) === 1);
+            document.getElementById('superAdmin').onchange = () => renderTenantMemberships(a.tenant_ids, document.getElementById('superAdmin').checked);
 
             // If superadmin, force permissions and disable editing them
-            const isSuper = a.username === 'admin';
+            const isSuper = Number(a.is_super_admin) === 1;
             document.querySelectorAll('input[type="checkbox"]:not(#enable2FA), input[type="radio"]').forEach(el => el.disabled = isSuper);
             document.getElementById('2faGroup').classList.add('hidden');
         } else {
@@ -165,6 +193,8 @@
             document.getElementById('2faGroup').classList.remove('hidden');
             document.getElementById('enable2FA').checked = enforce2FA;
             document.getElementById('enable2FA').disabled = enforce2FA;
+            await renderTenantMemberships([], false);
+            document.getElementById('superAdmin').onchange = () => renderTenantMemberships([], document.getElementById('superAdmin').checked);
         }
 
     }
@@ -225,11 +255,14 @@
         if(document.getElementById('modSettings').checked) perms.settings = level;
                 if(document.getElementById('modReports').checked) perms.reports = level;
         if(document.getElementById('modAdmins').checked) perms.admins = level;
+        const is_super_admin = document.getElementById('superAdmin').checked;
 
         const payload = {
             username: document.getElementById('aUser').value,
             permissions: perms,
-            enable_2fa: document.getElementById('enable2FA').checked
+            enable_2fa: document.getElementById('enable2FA').checked,
+            is_super_admin,
+            tenant_ids: canManageTenantMemberships ? [...document.querySelectorAll('.tenant-membership:checked')].map(input => Number(input.value)) : []
         };
         const pass = document.getElementById('aPass').value;
         if(pass) payload.password = pass;
@@ -250,10 +283,18 @@
     let enforce2FA = false;
     async function init() {
       try {
-         const res = await apiFetch('/api/settings');
-         if(res.ok) {
-            const data = await res.json();
+         const [settingsResponse, meResponse] = await Promise.all([apiFetch('/api/settings'), apiFetch('/api/auth/me')]);
+         if(settingsResponse.ok) {
+            const data = await settingsResponse.json();
             enforce2FA = data.enforce_2fa === 'true';
+         }
+         if (meResponse.ok) {
+            const me = await meResponse.json();
+            canManageTenantMemberships = Number(me.is_super_admin) === 1;
+         }
+         if (canManageTenantMemberships) {
+            const tenantsResponse = await apiFetch('/api/tenants');
+            if (tenantsResponse.ok) availableTenants = await tenantsResponse.json();
          }
       } catch(e){}
       loadAdmins();

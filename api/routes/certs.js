@@ -1,9 +1,9 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
 // --- CERTS ---
 
-app.get('/api/certs/download/:type', requireApiAuth('settings', 'read-only'), async (req, res) => {
+app.get('/api/certs/download/:type', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, async (req, res) => {
     try {
         const type = req.params.type;
         let filePath = '';
@@ -37,7 +37,7 @@ app.get('/api/certs/download/:type', requireApiAuth('settings', 'read-only'), as
     }
 });
 
-app.post('/api/certs/generate', requireApiAuth('settings', 'read-write'), (req, res) => {
+app.post('/api/certs/generate', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, (req, res) => {
     const { c = 'US', st = 'State', l = 'City', o = 'Radius', cn = 'RadiusServer' } = req.body;
     const subjCA = `/C=${c}/ST=${st}/L=${l}/O=${o}CA/CN=${cn}CA`;
     const subjServer = `/C=${c}/ST=${st}/L=${l}/O=${o}/CN=${cn}`;
@@ -60,7 +60,7 @@ app.post('/api/certs/generate', requireApiAuth('settings', 'read-write'), (req, 
     });
 });
 
-app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), upload.fields([{ name: 'cert' }, { name: 'key' }]), async (req, res) => {
+app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, upload.fields([{ name: 'cert' }, { name: 'key' }]), async (req, res) => {
     try {
         const certPath = req.files['cert'][0].path;
         const keyPath = req.files['key'][0].path;

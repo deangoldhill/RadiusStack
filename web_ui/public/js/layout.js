@@ -7,7 +7,8 @@ function logout() { localStorage.removeItem('apiKey'); window.location.href = 'l
 
 const apiFetch = async (url, options = {}) => {
   const key = getApiKey();
-  const headers = { 'X-API-Key': key, 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const tenantId = localStorage.getItem('activeTenantId');
+  const headers = { 'X-API-Key': key, 'Content-Type': 'application/json', ...(tenantId ? { 'X-Tenant-ID': tenantId } : {}), ...(options.headers || {}) };
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401) { logout(); }
   return res;
@@ -80,21 +81,32 @@ document.addEventListener("DOMContentLoaded", async () => {
   let perms = {};
 
   try {
-    const [settingsRes, meRes] = await Promise.all([
-      apiFetch('/api/settings'),
-      apiFetch('/api/auth/me'),
-    ]);
-    if (settingsRes && settingsRes.ok) {
+    const [meRes, contextRes] = await Promise.all([apiFetch('/api/auth/me'), apiFetch('/api/auth/context')]);
+    if (!meRes.ok || !contextRes.ok) throw new Error('Unable to load administrator context');
+    const [me, context] = await Promise.all([meRes.json(), contextRes.json()]);
+    try { perms = typeof me.permissions === 'string' ? JSON.parse(me.permissions) : (me.permissions || {}); }
+    catch(e) { perms = {}; }
+    window.radiusstackContext = context;
+    window.currentAdmin = me.username || '';
+    window.currentAdminSuper = Number(me.is_super_admin) === 1;
+    window.multiTenantEnabled = context.multiTenantEnabled === true;
+    window.availableTenants = Array.isArray(context.tenants) ? context.tenants : [];
+
+    if (window.multiTenantEnabled && window.availableTenants.length) {
+      const selected = localStorage.getItem('activeTenantId');
+      const validTenant = window.availableTenants.some(t => String(t.id) === selected);
+      const nextTenant = validTenant ? selected : (window.currentAdminSuper ? 'global' : String(window.availableTenants[0].id));
+      localStorage.setItem('activeTenantId', nextTenant);
+    } else {
+      localStorage.removeItem('activeTenantId');
+    }
+
+    const settingsRes = await apiFetch('/api/settings');
+    if (settingsRes.ok) {
       const d = await settingsRes.json();
       if (d.ui_theme) themeColor = d.ui_theme;
     }
-    if (meRes && meRes.ok) {
-      const me = await meRes.json();
-      try { perms = typeof me.permissions === 'string' ? JSON.parse(me.permissions) : (me.permissions || {}); }
-      catch(e) { perms = {}; }
-      window.currentAdmin = me.username || '';
-    }
-  } catch(e) { console.warn('RadiusStack layout: permission fetch failed', e); }
+  } catch(e) { console.warn('RadiusStack layout: permission/context fetch failed', e); }
 
   const colors = {
     blue:   { bg: 'bg-blue-600',   text: 'text-blue-400',   shadow: 'shadow-blue-500/40' },
@@ -135,6 +147,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           ${window.currentAdmin ? `<p class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;">${window.currentAdmin}</p>` : ''}
         </div>
       </div>
+      <div id="tenantSwitcherWrap" class="mb-5" hidden><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Active tenant</label><select id="tenantSwitcher" class="w-full rounded-lg bg-gray-800 border border-gray-700 p-2 text-sm text-white"></select></div>
       <nav class="flex-1 space-y-2 font-medium overflow-y-auto pr-2 custom-scrollbar" id="sideNav">
         <a href="index.html"      class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4CA;</span> Dashboard</a>
         <a href="active-sessions.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F7E2;</span> Active Sessions</a>
@@ -149,6 +162,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         <a href="audit.html"      class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4DD;</span> Audit Log</a>
         <a href="admins.html"     class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x2699;&#xFE0F;</span> Administrators</a>
         <a href="api-docs.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4DA;</span> API Docs</a>
+        <a id="tenantManagementNav" href="tenant-management.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">🏢</span> Tenants</a>
         <a href="settings.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F527;</span> Settings</a>
       </nav>
       <div class="mt-auto pt-6 border-t border-gray-800 space-y-3">
@@ -163,6 +177,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   `);
 
   document.body.className = "flex bg-gray-100 font-sans h-screen text-gray-800 antialiased";
+
+  if (!window.currentAdminSuper) document.getElementById('tenantManagementNav')?.remove();
+  if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${t.id}">${t.name}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{localStorage.setItem('activeTenantId',select.value);window.location.reload()}; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
 
   // Hide nav items the admin has no permission for
   document.querySelectorAll('.nav-link').forEach(link => {

@@ -28,6 +28,10 @@ until mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -e "S
     sleep 2
 done
 
+# No raw dictionary text enters this container: derive a bounded include from saved
+# structured VSA fields after DB availability and before FreeRADIUS parses config.
+/usr/local/sbin/generate-vsa-dictionary
+
 DEBUG_MODE=$(mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -N -B \
     -e "SELECT setting_value FROM settings WHERE setting_key='radius_debug';" 2>/dev/null)
 

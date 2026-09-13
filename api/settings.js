@@ -39,8 +39,9 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
       const entries = Object.entries(req.body || {}).filter(([, value]) => value !== undefined);
       if (entries.some(([key]) => key === 'multi_tenant_enabled') && Number(req.admin.is_super_admin) === 1) req.tenantScope = { enabled: false, globalContext: true, superAdmin: true };
       const customEntry = entries.find(([key]) => key === 'custom_reply_attributes');
+      let regenerateVsaDictionary = false;
       if (customEntry) {
-        try { customEntry[1] = JSON.stringify(normalizeCustomReplyAttributes(customEntry[1])); }
+        try { customEntry[1] = JSON.stringify(normalizeCustomReplyAttributes(customEntry[1])); regenerateVsaDictionary = true; }
         catch (err) { return res.status(400).json({ error: err.message }); }
       }
       const allowed = req.tenantScope.enabled ? TENANT_SETTING_KEYS : GLOBAL_SETTING_KEYS;
@@ -65,6 +66,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         }
         syslog.invalidateCache();
       }
+      if (regenerateVsaDictionary) exec('docker restart radius_server');
       const scopeLabel = req.tenantScope.enabled ? `tenant ${req.tenantScope.tenantId}` : 'global platform';
       await auditLog(req.admin.username, req.origin, `Updated ${scopeLabel} settings`, 'success', '', req.ip, req.tenantScope);
       return res.json({ success: true });

@@ -73,18 +73,7 @@
                         <option value="Access-Reject">Reject</option>
                     </select>
                 </div>
-                <div>
-                    <label class="block text-sm font-bold mb-1">Max Records</label>
-                    <select id="limitFilter" class="border p-2 rounded w-full">
-                        <option value="100" selected>100</option>
-                        <option value="250">250</option>
-                        <option value="500">500</option>
-                        <option value="1000">1,000</option>
-                        <option value="2500">2,500</option>
-                        <option value="5000">5,000</option>
-                        <option value="10000">10,000</option>
-                    </select>
-                </div>
+                <div><label class="block text-sm font-bold mb-1">Rows per page</label><select id="pageSize" onchange="changePageSize()" class="border p-2 rounded w-full"><option>25</option><option>50</option><option>100</option></select></div>
 
                 <div class="flex items-end gap-2">
                     <button onclick="loadLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">Apply</button>
@@ -103,6 +92,7 @@
             <table class="w-full text-left text-sm" id="logsTable">
                 <thead>
                     <tr class="bg-gray-100">
+                        <th class="p-2">Tenant</th>
                         <th class="p-2">Username</th>
                         <th class="p-2">Reply</th>
                         <th class="p-2">NAS IP</th>
@@ -113,7 +103,7 @@
                 </thead>
                 <tbody></tbody>
             </table>
-        </div>
+        </div><div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm"><span id="pageSummary" class="text-gray-500"></span><div class="flex gap-2"><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div></div>
     </main>
     <script src="/js/layout.js"></script>
     <script>
@@ -169,13 +159,13 @@
             }
         }
 
+        let currentPage=1,totalPages=1,totalRecords=0;
         async function loadLogs() {
             const username = document.getElementById('usernameFilter').value.trim();
             const nasip = document.getElementById('nasipFilter').value.trim();
             const callingstation = document.getElementById('callingStationFilter').value.trim();
             const dateFrom = document.getElementById('dateFrom').value;
             const dateTo = document.getElementById('dateTo').value;
-            const limit = document.getElementById('limitFilter').value;
             const reply = document.getElementById('replyFilter').value;
 
             const params = new URLSearchParams();
@@ -185,16 +175,15 @@
             if (dateFrom) params.set('date_from', dateFrom);
             if (dateTo) params.set('date_to', dateTo);
             if (reply) params.set('reply', reply);
-            params.set('limit', limit);
+            params.set('page', currentPage); params.set('page_size', document.getElementById('pageSize').value);
 
             const url = '/api/logs/auth' + (params.toString() ? '?' + params.toString() : '');
             const res = await apiFetch(url);
 
             if (res.ok) {
-                const data = await res.json();
-                document.getElementById('resultCount').textContent = data.length === 0 ? '' : `Showing ${data.length.toLocaleString()} record${data.length !== 1 ? 's' : ''}`;
+                const payload = await res.json(); const data=payload.items; totalPages=payload.totalPages; totalRecords=payload.total; const size=Number(document.getElementById('pageSize').value),start=totalRecords?(currentPage-1)*size+1:0; document.getElementById('resultCount').textContent=totalRecords?`Showing ${start.toLocaleString()}-${Math.min(currentPage*size,totalRecords).toLocaleString()} of ${totalRecords.toLocaleString()} records`:''; document.getElementById('pageSummary').textContent=`Page ${currentPage} of ${totalPages}`;document.getElementById('prevPage').disabled=currentPage<=1;document.getElementById('nextPage').disabled=currentPage>=totalPages;
                 document.querySelector('#logsTable tbody').innerHTML = data.length === 0
-                    ? '<tr><td colspan="6" class="p-4 text-center text-gray-400">No results found</td></tr>'
+                    ? '<tr><td colspan="7" class="p-4 text-center text-gray-400">No results found</td></tr>'
                     : data.map(l => {
                         const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
                         const username = escHtml(l.username);
@@ -204,7 +193,9 @@
                         const authdate = escHtml(l.authdate);
                         const authdateLocal = toDatetimeLocal(l.authdate);
 
+                        const tenant = escHtml(l.tenant_name || 'Global');
                         return `<tr class="hover:bg-gray-50 transition-colors">
+                    <td class="p-2 border-b text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${tenant}</span></td>
                     <td class="p-2 border-b font-bold">
                       <span class="filterable" title="Filter by this username" onclick="setFilter('usernameFilter', '${username}')">${username}</span>
                     </td>
@@ -233,9 +224,10 @@
             document.getElementById('dateFrom').value = '';
             document.getElementById('dateTo').value = '';
             document.getElementById('replyFilter').value = '';
-            document.getElementById('limitFilter').value = '100';
             loadLogs();
         }
+
+        function changePage(delta){const p=currentPage+delta;if(p>=1&&p<=totalPages){currentPage=p;loadLogs();}} function changePageSize(){currentPage=1;loadLogs();}
 
         // Pre-fill from URL query params
         const urlParams = new URLSearchParams(window.location.search);

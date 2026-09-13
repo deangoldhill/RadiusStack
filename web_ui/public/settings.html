@@ -15,6 +15,7 @@
     <button onclick="saveSettings()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-5 py-2 rounded-lg font-bold shadow-sm">Save Configuration</button>
   </div>
 
+
   <div class="space-y-6">
 
     <!-- ── Row 1: General + TOTP ── -->
@@ -29,6 +30,10 @@
           <h2 class="text-base font-bold text-gray-800">General Configuration</h2>
         </div>
         <div class="p-6 space-y-5">
+          <div id="multiTenantControl" data-settings-scope="global" hidden class="border border-indigo-200 bg-indigo-50 rounded-xl p-4">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 class="font-bold text-indigo-950">Multi-tenant mode</h3><p class="text-sm text-indigo-800">Isolate tenant data. A selected tenant is required for every request.</p></div><label class="flex items-center gap-2 font-semibold"><input id="multiTenantEnabled" type="checkbox" class="h-5 w-5"> Enable multi-tenancy</label></div>
+            <a href="tenant-management.html" class="inline-block mt-3 text-sm font-bold text-indigo-700 underline">Open Tenant Management</a>
+          </div>
 
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">UI Theme Color</label>
@@ -41,14 +46,6 @@
             </select>
           </div>
 
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5">Custom Profile Attributes
-              <span class="ml-1 text-gray-400 cursor-help font-normal" title="These will appear in the dropdown when creating profiles">&#9432;</span>
-            </label>
-            <input type="text" id="customAttrs" placeholder="e.g. Filter-Id, WISPr-Bandwidth-Max-Up"
-              class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none">
-            <p class="text-xs text-gray-400 mt-1">Comma-separated list of extra RADIUS attributes</p>
-          </div>
 
           <div class="space-y-3 pt-1">
             <label class="flex items-start gap-3 cursor-pointer group">
@@ -69,7 +66,7 @@
               </div>
             </label>
 
-            <label class="flex items-start gap-3 cursor-pointer group">
+            <label data-settings-scope="global" hidden class="flex items-start gap-3 cursor-pointer group">
               <input type="checkbox" id="radiusDebug" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-red-500 focus:ring-red-400">
               <div>
                 <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Enable FreeRADIUS Debug Mode</span>
@@ -77,7 +74,7 @@
               </div>
                         </label>
 
-            <label class="flex items-start gap-3 cursor-pointer group">
+            <label data-settings-scope="global" hidden class="flex items-start gap-3 cursor-pointer group">
               <input type="checkbox" id="apiDebug" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400">
               <div>
                 <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Enable API Server Debug Mode</span>
@@ -111,9 +108,75 @@
 
     </div>
 
-    
-      <!-- MAC Auth Autocreate Configuration -->
-      <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
+    <div id="settingsTenantToolsRow" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <section id="replyAttributeCatalogueCard" data-settings-scope="both" class="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden">
+      <div class="px-6 py-4 border-b border-blue-100 flex items-center justify-between gap-3"><h2 class="text-base font-bold text-slate-800">Reply Attribute Catalogue</h2><span class="text-[11px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Non-VLAN</span></div>
+      <div class="p-6 space-y-3"><div><input id="attributeCatalogueSearch" type="search" oninput="renderAttributeCatalogue()" placeholder="Search standard or vendor attributes" class="w-full border border-blue-200 p-2.5 rounded-lg text-sm bg-white shadow-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"><p class="text-xs text-slate-500 mt-1.5">VLAN is controlled only by the Profile VLAN control. Add a standard or vendor reply attribute for profiles and NAS selection.</p></div><div id="attributeCatalogueResults" class="max-h-56 overflow-y-auto text-sm space-y-2 pr-1"></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 border-t pt-3"><input id="manualVsaVendorLabel" placeholder="Vendor label (optional)" class="border p-2 rounded-lg text-sm"><input id="manualVsaVendorCode" type="number" min="1" max="4294967295" placeholder="Vendor code" class="border p-2 rounded-lg text-sm"><input id="manualVsaAttributeNumber" type="number" min="1" max="255" placeholder="Vendor attribute number" class="border p-2 rounded-lg text-sm"><input id="manualVsaName" placeholder="Attribute name" class="border p-2 rounded-lg text-sm"><select id="manualVsaValueType" class="border p-2 rounded-lg text-sm"><option value="string">string</option><option value="integer">integer</option><option value="ipv4">ipv4</option><option value="octets">octets</option></select><button type="button" onclick="addManualVsa()" class="bg-gradient-to-r from-slate-700 to-slate-900 hover:from-slate-800 hover:to-slate-950 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow transition-all focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Add custom VSA</button></div><div id="savedReplyAttributes" class="text-sm space-y-1"></div></div>
+    </section>
+
+      <!-- Syslog / SIEM Forwarding -->
+    <div id="siemForwardingCard" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+          <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0120 9.414V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <h2 class="text-base font-bold text-gray-800">Syslog / SIEM Forwarding</h2>
+      </div>
+      <div class="p-6 space-y-5">
+        <label class="flex items-start gap-3 cursor-pointer group">
+          <input type="checkbox" id="syslogEnabled" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" onchange="document.getElementById('syslogFields').classList.toggle('opacity-40', !this.checked); document.getElementById('syslogFields').classList.toggle('pointer-events-none', !this.checked);">
+          <div>
+            <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Enable Syslog Forwarding</span>
+            <p class="text-xs text-gray-400 mt-0.5">Send audit and/or auth log events to an external syslog server (RFC 5424)</p>
+          </div>
+        </label>
+        <div id="syslogFields" class="space-y-4 opacity-40 pointer-events-none transition-opacity">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Syslog Server Host / IP</label>
+              <input type="text" id="syslogHost" placeholder="192.168.1.50" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1">Port</label>
+              <input type="number" id="syslogPort" value="514" min="1" max="65535" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Transport Protocol</label>
+            <select id="syslogProtocol" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
+              <option value="udp">UDP (RFC 5424 standard)</option>
+              <option value="tcp">TCP (reliable delivery)</option>
+            </select>
+          </div>
+          <div class="space-y-3 pt-1">
+            <label class="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox" id="syslogSendAudit" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+              <div>
+                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Audit Logs</span>
+                <p class="text-xs text-gray-400 mt-0.5">Admin actions, configuration changes</p>
+              </div>
+            </label>
+            <label class="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox" id="syslogSendAuthlogs" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+              <div>
+                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Auth Logs</span>
+                <p class="text-xs text-gray-400 mt-0.5">RADIUS Accept / Reject events</p>
+              </div>
+            </label>
+          </div>
+          <div class="pt-1 flex items-center gap-3">
+            <button type="button" onclick="testSyslog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">Send Test Message</button>
+            <span id="syslogTestResult" class="text-sm font-semibold"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+<!-- MAC Auth Autocreate Configuration -->
+      <div id="macAuthAutocreateCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
             <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"/></svg>
@@ -151,9 +214,10 @@
           </div>
         </div>
       </div>
+    </div>
 
       <!-- Session Management Settings -->
-      <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
+      <div data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
         <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center gap-3">
           <div class="p-2 bg-yellow-100 rounded-lg text-yellow-600">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -283,68 +347,8 @@
       </div>
 
 
-<!-- Syslog / SIEM Forwarding -->
-    <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-          <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0120 9.414V19a2 2 0 01-2 2z"/>
-          </svg>
-        </div>
-        <h2 class="text-base font-bold text-gray-800">Syslog / SIEM Forwarding</h2>
-      </div>
-      <div class="p-6 space-y-5">
-        <label class="flex items-start gap-3 cursor-pointer group">
-          <input type="checkbox" id="syslogEnabled" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" onchange="document.getElementById('syslogFields').classList.toggle('opacity-40', !this.checked); document.getElementById('syslogFields').classList.toggle('pointer-events-none', !this.checked);">
-          <div>
-            <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Enable Syslog Forwarding</span>
-            <p class="text-xs text-gray-400 mt-0.5">Send audit and/or auth log events to an external syslog server (RFC 5424)</p>
-          </div>
-        </label>
-        <div id="syslogFields" class="space-y-4 opacity-40 pointer-events-none transition-opacity">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="md:col-span-2">
-              <label class="block text-sm font-semibold text-gray-700 mb-1">Syslog Server Host / IP</label>
-              <input type="text" id="syslogHost" placeholder="192.168.1.50" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
-            </div>
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">Port</label>
-              <input type="number" id="syslogPort" value="514" min="1" max="65535" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
-            </div>
-          </div>
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-1">Transport Protocol</label>
-            <select id="syslogProtocol" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-200 outline-none">
-              <option value="udp">UDP (RFC 5424 standard)</option>
-              <option value="tcp">TCP (reliable delivery)</option>
-            </select>
-          </div>
-          <div class="space-y-3 pt-1">
-            <label class="flex items-start gap-3 cursor-pointer group">
-              <input type="checkbox" id="syslogSendAudit" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-              <div>
-                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Audit Logs</span>
-                <p class="text-xs text-gray-400 mt-0.5">Admin actions, configuration changes</p>
-              </div>
-            </label>
-            <label class="flex items-start gap-3 cursor-pointer group">
-              <input type="checkbox" id="syslogSendAuthlogs" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-              <div>
-                <span class="text-sm font-semibold text-gray-700 group-hover:text-gray-900">Forward Auth Logs</span>
-                <p class="text-xs text-gray-400 mt-0.5">RADIUS Accept / Reject events</p>
-              </div>
-            </label>
-          </div>
-          <div class="pt-1 flex items-center gap-3">
-            <button type="button" onclick="testSyslog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">Send Test Message</button>
-            <span id="syslogTestResult" class="text-sm font-semibold"></span>
-          </div>
-        </div>
-      </div>
-    </div>
-
 <!-- ── Row 2: Backup & Restore ── -->
-    <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+    <div id="globalBackupRestore" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>
@@ -418,7 +422,7 @@
     </div>
 
     <!-- ── Row 3: Certificates ── -->
-    <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+    <div id="globalCertificateManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-yellow-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
@@ -489,7 +493,7 @@
     </div>
 
     <!-- ── Row 4: System Health ── -->
-    <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+    <div id="globalContainerManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -517,7 +521,7 @@
   </div>
 
         <!-- HA Settings Panel -->
-        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+        <div id="globalHaSettings" data-settings-scope="global" hidden class="bg-white p-6 rounded-lg shadow-md mb-6">
             <h2 class="text-lg font-semibold mb-4 text-gray-800">High Availability Status</h2>
             <div id="haStatusContainer" class="text-sm">
                 <p class="text-gray-600" id="haLoadingText">Loading HA Status...</p>
@@ -537,6 +541,7 @@
                     try {
                         const res = await apiFetch('/api/ha/status');
                         const data = await res.json();
+
                         const container = document.getElementById('haStatusContainer');
                         const promoteBtn = document.getElementById('btnPromote');
                         const demoteBtn = document.getElementById('btnDemote');
@@ -685,6 +690,37 @@
   }
 
   // ─── SETTINGS ────────────────────────────────────────────────────────────
+  let catalogueAttributes = [], savedCustomAttributes = [];
+  function normalizeCustomReplyAttributes(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) return parsed; } catch (_) {}
+    return String(value).split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, source: 'legacy', value_type: 'string' }));
+  }
+  function escapeAttributeText(value) { const el = document.createElement('span'); el.textContent = value; return el.innerHTML; }
+  function attributeKey(a) { return `${a.vendor_code || 0}:${a.vendor_attribute_number || 0}:${a.name}`; }
+  function renderSavedReplyAttributes() { const target=document.getElementById('savedReplyAttributes'); if (!target) return; target.innerHTML=savedCustomAttributes.length ? savedCustomAttributes.map((a,i)=>`<div class="flex justify-between gap-2 bg-blue-50 px-2 py-1 rounded"><span>${escapeAttributeText(a.vendor_label ? `${a.vendor_label}: ${a.name}` : a.name)} <small class="text-gray-500">(${escapeAttributeText(a.value_type || 'string')})</small></span><button type="button" onclick="removeSavedReplyAttribute(${i})" class="text-red-600">Remove</button></div>`).join('') : '<p class="text-xs text-gray-400">No saved attributes yet.</p>'; }
+  function removeSavedReplyAttribute(index) { savedCustomAttributes.splice(index, 1); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
+  function renderAttributeCatalogue() { const target=document.getElementById('attributeCatalogueResults'); if (!target) return; const query=(document.getElementById('attributeCatalogueSearch')?.value || '').toLowerCase(); const matches=catalogueAttributes.filter(a => `${a.name} ${a.vendor || ''}`.toLowerCase().includes(query)).slice(0, 80); target.innerHTML=matches.map((a,i)=>{ const saved=savedCustomAttributes.some(x=>attributeKey(x)===attributeKey(a)); return `<div class="catalogue-result-card group flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md"><div class="min-w-0"><div class="font-semibold text-slate-800 truncate">${escapeAttributeText(a.name)}</div><small class="text-slate-500">${escapeAttributeText(a.vendor || 'Standard')} <span class="text-slate-300 px-1">·</span> ${escapeAttributeText(a.value_type)}</small></div><button type="button" ${saved?'disabled':''} onclick="saveCatalogueAttribute(${i})" aria-label="Add attribute ${escapeAttributeText(a.name)}" class="catalogue-add-button shrink-0 inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-blue-700 hover:shadow focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none">${saved?'Saved':'Add attribute'}</button></div>`; }).join('') || '<p class="text-xs text-slate-500 text-center py-4">No matching catalogue attributes.</p>'; window.catalogueMatches=matches; }
+  function saveCatalogueAttribute(index) { const a=window.catalogueMatches[index]; if (!a || savedCustomAttributes.some(x=>attributeKey(x)===attributeKey(a))) return; savedCustomAttributes.push({ name:a.name, value_type:a.value_type, vendor_label:a.vendor, vendor_code:a.vendor_code, vendor_attribute_number:a.vendor_attribute_number, source:'catalogue' }); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
+  function addManualVsa() { const vendor_code=Number(document.getElementById('manualVsaVendorCode').value), vendor_attribute_number=Number(document.getElementById('manualVsaAttributeNumber').value), name=document.getElementById('manualVsaName').value.trim(); if (!Number.isInteger(vendor_code)||vendor_code<1||vendor_code>4294967295||!Number.isInteger(vendor_attribute_number)||vendor_attribute_number<1||vendor_attribute_number>255||!name) return alert('Vendor code, vendor attribute number, and attribute name are required.'); savedCustomAttributes.push({vendor_label:document.getElementById('manualVsaVendorLabel').value.trim() || undefined,vendor_code,vendor_attribute_number,name,value_type:document.getElementById('manualVsaValueType').value,source:'custom'}); ['manualVsaVendorLabel','manualVsaVendorCode','manualVsaAttributeNumber','manualVsaName'].forEach(id=>document.getElementById(id).value=''); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
+  async function loadReplyAttributeCatalogue() { const res=await apiFetch('/api/settings/reply-attribute-catalogue'); if(res.ok) { const data=await res.json(); catalogueAttributes=data.attributes || []; renderAttributeCatalogue(); } }
+  const TENANT_SETTING_FIELDS = ['custom_reply_attributes','enforce_2fa','mask_user_passwords','mac_auth_autocreate','mac_auth_autocreate_plan','mac_auth_autocreate_profile','mac_auth_autocreate_interval','clear_stale_sessions','stale_session_threshold','stale_session_interim_threshold_minutes','stale_session_interval','radius_stats_retention_days','radius_stats_purge_interval','radius_stats_poll_interval'];
+  const GLOBAL_SETTING_FIELDS = ['multi_tenant_enabled','radius_debug','api_debug','custom_reply_attributes','ui_theme','totp_enrollment_hours','authlogs_purge_enabled','authlogs_purge_days','authlogs_purge_interval','syslog_enabled','syslog_host','syslog_port','syslog_protocol','syslog_send_audit','syslog_send_authlogs'];
+  const fieldsForScope = () => localStorage.getItem('activeTenantId') === 'global' || !window.multiTenantEnabled ? GLOBAL_SETTING_FIELDS : TENANT_SETTING_FIELDS;
+  function resolveSettingsContext() { const context=window.radiusstackContext; if(!context) throw new Error('Unable to load tenant context'); window.multiTenantEnabled=context.multiTenantEnabled===true; window.currentAdminSuper=context.is_super_admin===true; window.availableTenants=Array.isArray(context.tenants)?context.tenants:[]; const multiTenantToggle=document.getElementById('multiTenantEnabled'); if (multiTenantToggle) multiTenantToggle.checked = context.multiTenantEnabled === true; return context; }
+  function settingsScopeHeaders(){const id=localStorage.getItem('activeTenantId');return {'X-Tenant-ID':id&&id!=='global'?String(id):'global'};}
+  function applySettingsScope() {
+    const activeTenantId = localStorage.getItem('activeTenantId');
+    const tenantActive = window.multiTenantEnabled === true && activeTenantId !== 'global';
+    const globalSuperAdminActive = !tenantActive && window.currentAdminSuper === true;
+    document.querySelectorAll('[data-settings-scope]').forEach(el => { el.hidden = el.dataset.settingsScope !== 'both' && el.dataset.settingsScope !== (globalSuperAdminActive ? 'global' : 'tenant'); });
+    // Two tenant fields share the legacy General card; hide their labels independently.
+    ['enforce2FA', 'maskUserPasswords'].forEach(id => document.getElementById(id)?.closest('label')?.toggleAttribute('hidden', !tenantActive));
+    if (tenantActive) { ['radiusDebug', 'apiDebug'].forEach(id => document.getElementById(id)?.closest('label')?.remove()); }
+
+    document.querySelector('h1').textContent = tenantActive ? 'Tenant Settings' : 'Platform Settings';
+  }
   
   async function loadProfilesDropdown() {
     const res = await apiFetch('/api/profiles');
@@ -715,19 +751,23 @@
   }
 
   async function loadSettings() {
-    const res = await apiFetch('/api/settings');
+
+    const res = await apiFetch('/api/settings', { headers: settingsScopeHeaders() });
     if (res.ok) {
       const data = await res.json();
       document.getElementById('enforce2FA').checked = data.enforce_2fa === 'true';
-      document.getElementById('radiusDebug').checked = data.radius_debug === 'true';
-      if (document.getElementById('apiDebug')) document.getElementById('apiDebug').checked = data.api_debug === 'true';
-      document.getElementById('customAttrs').value = data.custom_reply_attributes || '';
+      const radiusDebugToggle=document.getElementById('radiusDebug'); if (radiusDebugToggle) radiusDebugToggle.checked = data.radius_debug === 'true';
+      const apiDebugToggle=document.getElementById('apiDebug'); if (apiDebugToggle) apiDebugToggle.checked = data.api_debug === 'true';
+      savedCustomAttributes = normalizeCustomReplyAttributes(data.custom_reply_attributes);
+      renderSavedReplyAttributes();
+      await loadReplyAttributeCatalogue();
       document.getElementById('totpEnrollmentHours').value = data.totp_enrollment_hours || '24';
       document.getElementById('maskUserPasswords').checked = data.mask_user_passwords === 'true';
       if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
-
-      await loadProfilesDropdown();
-      await loadPlansDropdown();
+      if (fieldsForScope() === TENANT_SETTING_FIELDS) {
+        await loadProfilesDropdown();
+        await loadPlansDropdown();
+      }
       if (data.mac_auth_autocreate) document.getElementById('macAuthAutocreate').checked = data.mac_auth_autocreate === 'true';
       if (data.mac_auth_autocreate_plan) document.getElementById('macAuthAutocreatePlan').value = data.mac_auth_autocreate_plan;
       if (data.mac_auth_autocreate_profile) document.getElementById('macAuthAutocreateProfile').value = data.mac_auth_autocreate_profile;
@@ -764,9 +804,9 @@
   async function saveSettings() {
     const payload = {
       enforce_2fa: document.getElementById('enforce2FA').checked ? 'true' : 'false',
-      radius_debug: document.getElementById('radiusDebug').checked ? 'true' : 'false',
+      radius_debug: document.getElementById('radiusDebug')?.checked ? 'true' : 'false',
       api_debug: document.getElementById('apiDebug') ? (document.getElementById('apiDebug').checked ? 'true' : 'false') : 'false',
-      custom_reply_attributes: document.getElementById('customAttrs').value,
+      custom_reply_attributes: savedCustomAttributes,
       ui_theme: document.getElementById('uiTheme').value,
       totp_enrollment_hours: document.getElementById('totpEnrollmentHours').value || '24',
       mask_user_passwords: document.getElementById('maskUserPasswords').checked ? 'true' : 'false',
@@ -789,9 +829,11 @@
       syslog_port: document.getElementById('syslogPort') ? document.getElementById('syslogPort').value : '514',
       syslog_protocol: document.getElementById('syslogProtocol') ? document.getElementById('syslogProtocol').value : 'udp',
       syslog_send_audit: document.getElementById('syslogSendAudit') && document.getElementById('syslogSendAudit').checked ? 'true' : 'false',
-      syslog_send_authlogs: document.getElementById('syslogSendAuthlogs') && document.getElementById('syslogSendAuthlogs').checked ? 'true' : 'false'
+      syslog_send_authlogs: document.getElementById('syslogSendAuthlogs') && document.getElementById('syslogSendAuthlogs').checked ? 'true' : 'false',
+          ...(window.currentAdminSuper ? { multi_tenant_enabled: document.getElementById('multiTenantEnabled').checked ? 'true' : 'false' } : {})
     };
-    const res = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+    const scopedPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => fieldsForScope().includes(key)));
+    const res = await apiFetch('/api/settings', { method: 'POST', headers: settingsScopeHeaders(), body: JSON.stringify(scopedPayload) });
     if (res.ok) {
       alert('Settings saved. UI Theme will apply on next reload.');
       await loadSettings();
@@ -952,7 +994,10 @@
     setTimeout(() => resEl.textContent = '', 5000);
   }
   // ─── INIT ─────────────────────────────────────────────────────────────────
-  loadSettings();
+  let settingsBootstrapStarted = false;
+  async function bootstrapSettings() { if (settingsBootstrapStarted || !window.radiusstackContext) return; settingsBootstrapStarted = true; try { resolveSettingsContext(); applySettingsScope(); await loadSettings(); } catch (err) { settingsBootstrapStarted = false; alert('Unable to load settings context: ' + err.message); } }
+  document.addEventListener('radiusstack:tenant-context-ready', bootstrapSettings, { once: true });
+  window.addEventListener('load', bootstrapSettings, { once: true });
   loadHealth();
   loadCertDetails();
 
