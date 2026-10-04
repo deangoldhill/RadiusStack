@@ -1,10 +1,8 @@
 const { scope } = require('../tenant');
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
-// --- REPORTS ---
 
 
-// --- STALE SESSIONS ---
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const scoped = scope(req.tenantScope);
     const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes')");
@@ -60,7 +58,6 @@ app.post('/api/sessions/clear', requireApiAuth('reports', 'read-write'), async (
     const { sessionIds } = req.body;
     if (!sessionIds || !sessionIds.length) return res.status(400).json({ error: 'No sessions provided' });
 
-    // Clear by updating acctstoptime to current time
     const placeholders = sessionIds.map(() => '?').join(',');
     const scoped = scope(req.tenantScope);
     const [result] = await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})${scoped.sql}`, [...sessionIds, ...scoped.params]);
@@ -105,7 +102,6 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
 });
 
 
-// LIVE STATS DASHBOARD
 app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
         const [[{ active_sessions }]] = await pool.query("SELECT COUNT(*) AS active_sessions FROM radacct WHERE acctstoptime IS NULL");
@@ -171,7 +167,6 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
 
 
 
-// PER-USER QUICK STATS
 app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), async (req, res) => {
     const { username } = req.params;
 
@@ -275,7 +270,6 @@ app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), asyn
     }
 });
 
-// USER EXECUTIVE REPORT
 app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const { start_date, end_date } = req.query;
@@ -318,14 +312,12 @@ app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), a
     res.json({ username, accounting: acct, postauth: auth, stats: stats[0], nasStats, daily, hourly, authStats });
 });
 
-// FAILED AUTH REPORT
 app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const [details] = await pool.query("SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' ORDER BY p.authdate DESC LIMIT 500");
     const [summary] = await pool.query("SELECT COALESCE(m.mac_id, p.username) AS username, COUNT(*) as fail_count FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' GROUP BY COALESCE(m.mac_id, p.username) ORDER BY fail_count DESC");
     res.json({ details, summary });
 });
 
-// PDF GENERATION
 app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const reportRes = await fetch(`http://localhost:3000/api/reports/user/${username}`, {
@@ -427,7 +419,6 @@ app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), 
     }
 });
 
-// === DASHBOARD OVERVIEW ===
 app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
         const [[users]] = await pool.query("SELECT COUNT(*) AS cnt FROM radcheck WHERE username NOT IN (SELECT mac_address FROM mac_auth_devices)");
@@ -501,7 +492,6 @@ app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'
 
 
 
-// === ACCOUNTING HISTORY API ===
 app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, res) => {
  const {username,nasip,start_date,end_date,sort='acctstarttime',order='desc'}=req.query;const paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1);const pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;
  const allowed=['acctstarttime','acctstoptime','username','nasipaddress','acctsessiontime','acctinputoctets','acctoutputoctets','total_data'];const field=allowed.includes(sort)?sort:'acctstarttime',direction=String(order).toLowerCase()==='asc'?'ASC':'DESC';const scoped=scope(req.tenantScope,'a.tenant_id');let where=' WHERE 1=1'+scoped.sql;const params=[...scoped.params];

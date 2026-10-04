@@ -1,7 +1,6 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
-// --- CURRENT ADMIN (self) ---
 app.get('/api/auth/me', async (req, res) => {
     const apiKey = req.header('X-API-Key');
     if (!apiKey) return res.status(401).json({ error: 'API Key missing' });
@@ -13,9 +12,6 @@ app.get('/api/auth/me', async (req, res) => {
     res.json(admins[0]);
 });
 
-// Bootstrap context intentionally does not depend on X-Tenant-ID. It gives a
-// signed-in administrator only the tenant choices they are authorized to use,
-// allowing the browser to normalize stale localStorage before scoped requests.
 app.get('/api/auth/context', async (req, res) => {
     const apiKey = req.header('X-API-Key');
     if (!apiKey) return res.status(401).json({ error: 'API Key missing' });

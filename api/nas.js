@@ -2,7 +2,6 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { isSingleIPv4, scope } = require('../tenant');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
-// --- NAS ---
 app.get('/api/nas', requireApiAuth('nas', 'read-only'), async (req, res) => {
     const scoped = scope(req.tenantScope); const [rows] = await pool.query('SELECT * FROM nas WHERE 1=1'+scoped.sql, scoped.params);
     res.json(rows);

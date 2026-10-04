@@ -49,17 +49,21 @@ module.exports = function(app, pool, requireApiAuth, auditLog) {
     });
 
     app.post('/api/plans', requireApiAuth('plans', 'read-write'), async (req, res) => {
-        const { name, data_limit_mb, time_limit_seconds, reset_period } = req.body;
+        const { name, data_limit_mb, time_limit_seconds, reset_period, auto_pod_on_data_depleted, auto_pod_on_time_depleted } = req.body;
+        const autoData = auto_pod_on_data_depleted === true || auto_pod_on_data_depleted === 1 || auto_pod_on_data_depleted === '1';
+        const autoTime = auto_pod_on_time_depleted === true || auto_pod_on_time_depleted === 1 || auto_pod_on_time_depleted === '1';
         try {
-            await pool.query('INSERT INTO plans (name, data_limit_mb, time_limit_seconds, reset_period, tenant_id) VALUES (?, ?, ?, ?, ?)', [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never', selectedTenantId(req)]);
+            await pool.query('INSERT INTO plans (name, data_limit_mb, time_limit_seconds, reset_period, auto_pod_on_data_depleted, auto_pod_on_time_depleted, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)', [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never', autoData, autoTime, selectedTenantId(req)]);
             await auditLog(req.admin.username, req.origin, `Created plan: ${name}`, 'success', '', req.ip, req.tenantScope); res.json({ success: true });
         } catch (err) { res.status(500).json({ error: err.message }); }
     });
 
     app.put('/api/plans/:id', requireApiAuth('plans', 'read-write'), async (req, res) => {
-        const { id } = req.params; const { name, data_limit_mb, time_limit_seconds, reset_period } = req.body; const scoped = planScope(req);
+        const { id } = req.params; const { name, data_limit_mb, time_limit_seconds, reset_period, auto_pod_on_data_depleted, auto_pod_on_time_depleted } = req.body; const scoped = planScope(req);
+        const autoData = auto_pod_on_data_depleted === true || auto_pod_on_data_depleted === 1 || auto_pod_on_data_depleted === '1';
+        const autoTime = auto_pod_on_time_depleted === true || auto_pod_on_time_depleted === 1 || auto_pod_on_time_depleted === '1';
         try {
-            const [result] = await pool.query('UPDATE plans SET name=?, data_limit_mb=?, time_limit_seconds=?, reset_period=? WHERE id=?' + scoped.sql, [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never', id, ...scoped.params]);
+            const [result] = await pool.query('UPDATE plans SET name=?, data_limit_mb=?, time_limit_seconds=?, reset_period=?, auto_pod_on_data_depleted=?, auto_pod_on_time_depleted=? WHERE id=?' + scoped.sql, [name, data_limit_mb || 0, time_limit_seconds || 0, reset_period || 'never', autoData, autoTime, id, ...scoped.params]);
             if (!result.affectedRows) return planNotFound(res);
             await auditLog(req.admin.username, req.origin, `Updated plan ID: ${id}`, 'success', '', req.ip, req.tenantScope); res.json({ success: true });
         } catch (err) { res.status(500).json({ error: err.message }); }

@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.4
-FROM freeradius/freeradius-server:3.2.3-alpine
+FROM freeradius/freeradius-server:3.2.10-alpine
 
 RUN apk add --no-cache openssl mariadb-client mariadb-connector-c tzdata jq
+RUN printf "[client]\nskip-ssl = true\n[freeradius]\nskip-ssl = true\n" > /etc/my.cnf
 
 RUN ln -s /opt/etc/raddb/mods-available/sql /opt/etc/raddb/mods-enabled/sql
 
@@ -18,7 +19,6 @@ sql {
     read_clients = yes
     read_groups = yes
     read_profiles = yes
-
     # Default string attributes
     group_attribute = "SQL-Group"
 
@@ -172,13 +172,17 @@ RUN awk '\
 
 RUN ln -sf /opt/etc/raddb/sites-available/status /opt/etc/raddb/sites-enabled/status
 RUN sed -i 's/ipaddr = 127\.0\.0\.1/ipaddr = 0.0.0.0/g' /opt/etc/raddb/sites-available/status || true
-RUN sed -i '/client admin {/,/}/c\client docker_internal {\n\tipaddr = 172.16.0.0/12 \n\tsecret = RADIUS_STATUS_SECRET_GENERIC\n}' /opt/etc/raddb/sites-available/status
+RUN sed -i '/client admin {/,/}/c\client docker_internal {\n\tipaddr = 172.16.0.0/12 \n\tsecret = RADIUS_STATUS_SECRET_GENERIC\n}\nclient docker_internal_lan {\n\tipaddr = 192.168.0.0/16\n\tsecret = RADIUS_STATUS_SECRET_GENERIC\n}' /opt/etc/raddb/sites-available/status
 
 
 # Controlled VSA dictionary: static catalogue definitions plus a generated include.
 COPY dictionary.radiusstack-vsa /opt/etc/raddb/dictionary.radiusstack-vsa
 COPY generate-vsa-dictionary.sh /usr/local/sbin/generate-vsa-dictionary
 RUN chmod 0755 /usr/local/sbin/generate-vsa-dictionary && printf '\n$INCLUDE dictionary.radiusstack-vsa\n' >> /opt/etc/raddb/dictionary
+
+COPY generate-radsec-listener.sh /usr/local/sbin/generate-radsec-listener
+COPY radsec-verify-client.sh /usr/local/sbin/radsec-verify-client
+RUN chmod 0755 /usr/local/sbin/generate-radsec-listener /usr/local/sbin/radsec-verify-client
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

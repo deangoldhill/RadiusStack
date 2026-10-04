@@ -96,14 +96,8 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const scoped = profileScope(req);
         try {
             await conn.beginTransaction();
-            if (!await profileExists(conn, req, name) && tenant(req).enabled) {
-                const [global] = await conn.query(`SELECT 1 FROM (
-                    SELECT groupname FROM radgroupcheck WHERE groupname = ?
-                    UNION SELECT groupname FROM radgroupreply WHERE groupname = ?
-                    UNION SELECT groupname FROM radusergroup WHERE groupname = ?
-                ) profiles LIMIT 1`, [name, name, name]);
-                if (global.length) { await conn.rollback(); return profileNotFound(res); }
-            }
+            // Tenant and Global are separate ownership domains: equal names are valid.
+            // Delete/replace only the selected scope below; never inspect Global for a collision.
             await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
             await conn.query('DELETE FROM radgroupreply WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
             const tenantId = selectedTenantId(req);

@@ -1,7 +1,6 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
-// --- DATABASE BACKUP & RESTORE ---
 app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, async (req, res) => {
     const type = req.query.type || 'full';
     const include_accounting = req.query.acct === 'true' || type === 'full';
@@ -12,6 +11,10 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
         const safeQuery = async (q) => { try { const [r] = await pool.query(q); return r; } catch { return []; } };
 
         const admins = await safeQuery('SELECT * FROM admins');
+        const tenants = await safeQuery('SELECT * FROM tenants');
+        const admin_tenants = await safeQuery('SELECT * FROM admin_tenants');
+        const tenant_settings = await safeQuery('SELECT * FROM tenant_settings');
+        const user_totp = await safeQuery('SELECT * FROM user_totp');
         const nas = await safeQuery('SELECT * FROM nas');
         const plans = await safeQuery('SELECT * FROM plans');
         const radcheck = await safeQuery('SELECT * FROM radcheck');
@@ -29,9 +32,13 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
         const radcheck_mac = radcheck.filter(r => macSet.has(r.username.toLowerCase()));
 
         const backup = {
-            metadata: { type, timestamp: new Date().toISOString(), version: '1.1' },
+            metadata: { type, timestamp: new Date().toISOString(), version: '1.2' },
             data: {
                 admins,
+                tenants,
+                admin_tenants,
+                tenant_settings,
+                user_totp,
                 nas,
                 plans,
                 mac_auth_devices,
@@ -69,7 +76,6 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
     }
 });
 
-// Normalize JSON values before mysql2 binds them. Backups parsed from JSON contain permissions as native objects.
 function normalizeAdminRows(rows) {
     return (rows || []).map(row => {
         const permissions = row.permissions;
@@ -84,7 +90,6 @@ function normalizeAdminRows(rows) {
     });
 }
 
-// Helper: insert rows in chunks to avoid max_allowed_packet issues
 async function chunkInsert(pool, table, rows, chunkSize = 100) {
     if (!rows || rows.length === 0) return { inserted: 0 };
     let inserted = 0;
@@ -102,7 +107,6 @@ async function chunkInsert(pool, table, rows, chunkSize = 100) {
     return { inserted };
 }
 
-// FIX: Use multer memoryStorage to accept uploaded JSON file; parse from buffer
 app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), async (req, res) => {
     const conn = await pool.getConnection();
     const results = {};
@@ -121,25 +125,59 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
         const { metadata, data } = backup;
         if (!data) return res.status(400).json({ error: 'Backup file has no data section' });
 
-        const isV11 = metadata?.version === '1.1';
+        const isV11 = metadata?.version === '1.1' || metadata?.version === '1.2';
+
+        // Old archives contain tenant IDs on objects but not the tenant identities.
+        // Guessing their names or attaching them to a different tenant is unsafe.
+        const tenantScopedTables = ['nas', 'plans', 'mac_auth_devices', 'radcheck_users', 'radcheck_mac', 'radcheck', 'radreply', 'radgroupcheck', 'radgroupreply', 'radusergroup', 'user_plans', 'user_plan_usage', 'user_totp', 'radacct', 'radpostauth'];
+        const referencedIds = new Set(tenantScopedTables.flatMap(table =>
+            (data[table] || []).map(row => row.tenant_id).filter(id => id !== null && id !== undefined)
+        ));
+        for (const table of ['admin_tenants', 'tenant_settings']) {
+            for (const row of data[table] || []) referencedIds.add(row.tenant_id);
+        }
+        if (referencedIds.size && !Array.isArray(data.tenants)) {
+            return res.status(400).json({ error: 'This backup contains tenant-scoped objects but no tenants. Re-export from the source with backup format 1.2; tenant names cannot be recovered from IDs alone.' });
+        }
+        const backupTenants = data.tenants || [];
+        if (new Set(backupTenants.map(t => t.id)).size !== backupTenants.length ||
+            new Set(backupTenants.map(t => t.name)).size !== backupTenants.length ||
+            backupTenants.some(t => !Number.isInteger(t.id) || t.id < 1 || !t.name)) {
+            return res.status(400).json({ error: 'Backup contains invalid or duplicate tenants' });
+        }
+        const archivedIds = new Set(backupTenants.map(t => t.id));
+        if ([...referencedIds].some(id => !archivedIds.has(id))) {
+            return res.status(400).json({ error: 'Backup references tenant IDs not present in its tenants section' });
+        }
 
         await conn.beginTransaction();
 
-        // --- NAS ---
+        const [currentTenants] = await conn.query('SELECT id, name FROM tenants FOR UPDATE');
+        for (const tenant of backupTenants) {
+            const byId = currentTenants.find(t => t.id === tenant.id);
+            const byName = currentTenants.find(t => t.name === tenant.name);
+            if ((byId && byId.name !== tenant.name) || (byName && byName.id !== tenant.id)) {
+                throw new Error(`Tenant identity conflict for ID ${tenant.id}; restore to an empty instance or reconcile IDs first`);
+            }
+            if (!byId) {
+                await conn.query('INSERT INTO tenants (id, name, description, created_at) VALUES (?, ?, ?, ?)',
+                    [tenant.id, tenant.name, tenant.description || '', tenant.created_at || new Date()]);
+            }
+        }
+        if (Array.isArray(data.tenants)) results.tenants = backupTenants.length;
+
         if (data.nas?.length) {
             await conn.query('DELETE FROM nas');
             await chunkInsert(conn, 'nas', data.nas);
             results.nas = data.nas.length;
         }
 
-        // --- Plans ---
         if (data.plans?.length) {
             await conn.query('DELETE FROM plans');
             await chunkInsert(conn, 'plans', data.plans);
             results.plans = data.plans.length;
         }
 
-        // --- MAC auth devices ---
         if (data.mac_auth_devices?.length) {
             await conn.query('DELETE FROM mac_auth_devices');
             await chunkInsert(conn, 'mac_auth_devices', data.mac_auth_devices);
@@ -183,14 +221,12 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             }
         }
 
-        // --- radreply ---
         if (data.radreply?.length) {
             await conn.query('DELETE FROM radreply');
             await chunkInsert(conn, 'radreply', data.radreply);
             results.radreply = data.radreply.length;
         }
 
-        // --- radgroupcheck / radgroupreply ---
         if (data.radgroupcheck?.length) {
             await conn.query('DELETE FROM radgroupcheck');
             await chunkInsert(conn, 'radgroupcheck', data.radgroupcheck);
@@ -202,14 +238,12 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             results.radgroupreply = data.radgroupreply.length;
         }
 
-        // --- radusergroup (assigned profiles) ---
         if (data.radusergroup?.length) {
             await conn.query('DELETE FROM radusergroup');
             await chunkInsert(conn, 'radusergroup', data.radusergroup);
             results.radusergroup = data.radusergroup.length;
         }
 
-        // --- Settings ---
         if (data.settings?.length) {
             for (const s of data.settings) {
                 await conn.query('INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?', [s.setting_key, s.setting_value, s.setting_value]);
@@ -217,7 +251,6 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             results.settings = data.settings.length;
         }
 
-        // --- Plan assignments + snapshots ---
         if (data.user_plans?.length) {
             await conn.query('DELETE FROM user_plans');
             await chunkInsert(conn, 'user_plans', data.user_plans);
@@ -230,7 +263,6 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             results.user_plan_usage = data.user_plan_usage.length;
         }
 
-        // --- Accounting (radacct) ---
         if (data.radacct?.length) {
             try {
                 await chunkInsert(conn, 'radacct', data.radacct, 50);
@@ -241,7 +273,6 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             }
         }
 
-        // --- Auth logs (radpostauth) ---
         if (data.radpostauth?.length) {
             try {
                 await chunkInsert(conn, 'radpostauth', data.radpostauth, 100);
@@ -252,7 +283,6 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             }
         }
 
-        // --- Admin audit log ---
         if (data.admin_audit_log?.length) {
             try {
                 await chunkInsert(conn, 'admin_audit_log', data.admin_audit_log, 100);
@@ -262,12 +292,27 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             }
         }
 
-        // --- Admins (overwrite existing rows so full restore restores admin passwords/keys) ---
         if (data.admins?.length) {
             const admins = normalizeAdminRows(data.admins);
             await conn.query('DELETE FROM admins');
             await chunkInsert(conn, 'admins', admins);
             results.admins = admins.length;
+        }
+
+        if (Array.isArray(data.admin_tenants)) {
+            await conn.query('DELETE FROM admin_tenants');
+            await chunkInsert(conn, 'admin_tenants', data.admin_tenants);
+            results.admin_tenants = data.admin_tenants.length;
+        }
+        if (Array.isArray(data.tenant_settings)) {
+            await conn.query('DELETE FROM tenant_settings');
+            await chunkInsert(conn, 'tenant_settings', data.tenant_settings);
+            results.tenant_settings = data.tenant_settings.length;
+        }
+        if (Array.isArray(data.user_totp)) {
+            await conn.query('DELETE FROM user_totp');
+            await chunkInsert(conn, 'user_totp', data.user_totp);
+            results.user_totp = data.user_totp.length;
         }
 
         await conn.commit();

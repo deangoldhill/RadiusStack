@@ -1,11 +1,13 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
+    // Global reporting is read-only observability across every tenant.
+    function reportScope(req, column = 'tenant_id') {
+        return req.tenantScope.enabled ? scope(req.tenantScope, column) : { sql: '', params: [] };
+    }
     const { buildDynamicAuthorizationRequest, sendDynamicAuthorization } = require('../dynamic_auth');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
-// --- REPORTS ---
 
 
-// --- STALE SESSIONS ---
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const [settings] = await pool.query("SELECT * FROM settings WHERE setting_key IN ('clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes')");
     let clearEnabled = false;
@@ -61,7 +63,6 @@ app.post('/api/sessions/clear', requireApiAuth('reports', 'read-write'), async (
     const { sessionIds } = req.body;
     if (!sessionIds || !sessionIds.length) return res.status(400).json({ error: 'No sessions provided' });
 
-    // Clear by updating acctstoptime to current time
     const placeholders = sessionIds.map(() => '?').join(',');
     const scoped = scope(req.tenantScope, 'tenant_id');
     await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})${scoped.sql}`, [...sessionIds, ...scoped.params]);
@@ -112,9 +113,9 @@ app.post('/api/sessions/:sessionId/dynamic-auth', requireApiAuth('reports', 'rea
 });
 
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
- const {username,nasip,callingstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=scope(req.tenantScope,'p.tenant_id');let where='';const params=[...scoped.params];
+ const {username,nasip,callingstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=reportScope(req,'p.tenant_id');let where='';const params=[...scoped.params];
  const c=[scoped.sql.slice(5)].filter(Boolean);if(username){c.push('(p.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');}if(nasip){c.push('p.nasipaddress=?');params.push(nasip);}if(callingstationid){c.push('p.callingstationid LIKE ?');params.push('%'+callingstationid+'%');}if(date_from){c.push('p.authdate>=?');params.push(new Date(date_from).toISOString().slice(0,19).replace('T',' '));}if(date_to){c.push('p.authdate<=?');params.push(new Date(date_to).toISOString().slice(0,19).replace('T',' '));}if(reply){c.push('p.reply=?');params.push(reply);}if(c.length)where=' WHERE '+c.join(' AND ');
- const from=' FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id LEFT JOIN tenants t ON t.id=p.tenant_id'+where,select="SELECT p.*,COALESCE(m.mac_id,p.username) AS username,COALESCE(t.name, 'Global') AS tenant_name";if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),10000);const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ?',[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
+ const from=' FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id LEFT JOIN tenants t ON t.id=p.tenant_id'+where,select="SELECT p.*,COALESCE(m.mac_id,p.username) AS username,COALESCE(t.name, 'Default') AS tenant_name";if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),10000);const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ?',[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
 });
 
 app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
@@ -140,11 +141,10 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
 });
 
 
-// LIVE STATS DASHBOARD
 app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        const aScope = scope(req.tenantScope, 'a.tenant_id');
-        const pScope = scope(req.tenantScope, 'p.tenant_id');
+        const aScope = reportScope(req, 'a.tenant_id');
+        const pScope = reportScope(req, 'p.tenant_id');
         const [[{ active_sessions }]] = await pool.query(`SELECT COUNT(*) AS active_sessions FROM radacct a WHERE a.acctstoptime IS NULL${aScope.sql}`, aScope.params);
         const [[{ avg_session_min }]] = await pool.query(`SELECT ROUND(AVG(a.acctsessiontime)/60,1) AS avg_session_min FROM radacct a WHERE a.acctstoptime IS NOT NULL AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR)${aScope.sql}`, aScope.params);
         const [nas_breakdown] = await pool.query(`SELECT a.nasipaddress, COUNT(*) AS session_count FROM radacct a WHERE a.acctstoptime IS NULL${aScope.sql} GROUP BY a.nasipaddress ORDER BY session_count DESC LIMIT 8`, aScope.params);
@@ -156,8 +156,6 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
         let rejects_24h = 0;
         let hourly_trend = [];
 
-        // FreeRADIUS counters are server-global; report tenant activity directly
-        // from tenant-stamped authentication rows in every context.
         try { throw new Error('Use tenant-scoped post-auth totals');
             const tzOffset = new Date().getTimezoneOffset() * 60000;
             const nowMsLocal = Date.now() - tzOffset;
@@ -210,7 +208,6 @@ app.get('/api/reports/live-stats', requireApiAuth('reports', 'read-only'), async
 
 
 
-// PER-USER QUICK STATS
 app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), async (req, res) => {
     const { username } = req.params;
 
@@ -314,7 +311,6 @@ app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), asyn
     }
 });
 
-// USER EXECUTIVE REPORT
 app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const { start_date, end_date } = req.query;
@@ -361,7 +357,6 @@ app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), a
     res.json({ username, accounting: acct, postauth: auth, stats: stats[0], nasStats, daily, hourly, authStats });
 });
 
-// FAILED AUTH REPORT
 app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const pScope = scope(req.tenantScope, 'p.tenant_id');
     const from = ` FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id WHERE p.reply='Access-Reject'${pScope.sql}`;
@@ -370,7 +365,6 @@ app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), asyn
     res.json({ details, summary });
 });
 
-// PDF GENERATION
 app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const reportRes = await fetch(`http://localhost:3000/api/reports/user/${username}`, {
@@ -447,7 +441,7 @@ app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'),
 
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        const aScope = scope(req.tenantScope, 'a.tenant_id');
+        const aScope = reportScope(req, 'a.tenant_id');
         const from = ` FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id WHERE a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 7 DAY)${aScope.sql}`;
         const [topSessions] = await pool.query(`SELECT COALESCE(m.mac_id,a.username) AS username, COUNT(*) AS session_count, SUM(a.acctinputoctets+a.acctoutputoctets)/1.073741824e+09 AS data_gb${from} GROUP BY COALESCE(m.mac_id,a.username) ORDER BY session_count DESC LIMIT 20`, aScope.params);
         const [topData] = await pool.query(`SELECT COALESCE(m.mac_id,a.username) AS username, SUM(a.acctinputoctets+a.acctoutputoctets)/1048576 AS data_mb${from} GROUP BY COALESCE(m.mac_id,a.username) ORDER BY data_mb DESC LIMIT 20`, aScope.params);
@@ -455,19 +449,15 @@ app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// === DASHBOARD OVERVIEW ===
 app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'), async (req, res) => {
     try {
-        // Dashboard data always follows the selected tenant. An unscoped Global
-        // context deliberately sees all rows, while a tenant cannot aggregate
-        // another tenant's credentials, activity, or historical usage.
-        const c = scope(req.tenantScope, 'c.tenant_id');
-        const m = scope(req.tenantScope, 'm.tenant_id');
-        const n = scope(req.tenantScope, 'n.tenant_id');
-        const plan = scope(req.tenantScope, 'p.tenant_id');
-        const a = scope(req.tenantScope, 'a.tenant_id');
-        const post = scope(req.tenantScope, 'p.tenant_id');
-        const g = scope(req.tenantScope, 'g.tenant_id');
+        const c = reportScope(req, 'c.tenant_id');
+        const m = reportScope(req, 'm.tenant_id');
+        const n = reportScope(req, 'n.tenant_id');
+        const plan = reportScope(req, 'p.tenant_id');
+        const a = reportScope(req, 'a.tenant_id');
+        const post = reportScope(req, 'p.tenant_id');
+        const g = reportScope(req, 'g.tenant_id');
 
         const [[users]] = await pool.query(`SELECT COUNT(DISTINCT c.username) AS cnt FROM radcheck c WHERE 1=1${c.sql} AND NOT EXISTS (SELECT 1 FROM mac_auth_devices m WHERE m.mac_address=c.username AND m.tenant_id <=> c.tenant_id)`, c.params);
         const [[macs]] = await pool.query(`SELECT COUNT(*) AS cnt FROM mac_auth_devices m WHERE 1=1${m.sql}`, m.params);
@@ -497,12 +487,11 @@ app.get('/api/reports/dashboard-overview', requireApiAuth('reports', 'read-only'
 
 
 
-// === ACCOUNTING HISTORY API ===
 app.get('/api/accounting', requireApiAuth('reports', 'read-only'), async (req, res) => {
  const {username,nasip,start_date,end_date,sort='acctstarttime',order='desc'}=req.query;const paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1);const pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;
- const allowed=['acctstarttime','acctstoptime','username','nasipaddress','acctsessiontime','acctinputoctets','acctoutputoctets','total_data'];const field=allowed.includes(sort)?sort:'acctstarttime',direction=String(order).toLowerCase()==='asc'?'ASC':'DESC';const tenant=scope(req.tenantScope,'a.tenant_id');let where=' WHERE 1=1'+tenant.sql;const params=[...tenant.params];
+ const allowed=['acctstarttime','acctstoptime','username','nasipaddress','acctsessiontime','acctinputoctets','acctoutputoctets','total_data'];const field=allowed.includes(sort)?sort:'acctstarttime',direction=String(order).toLowerCase()==='asc'?'ASC':'DESC';const tenant=reportScope(req,'a.tenant_id');let where=' WHERE 1=1'+tenant.sql;const params=[...tenant.params];
  if(username){where+=' AND (a.username LIKE ? OR m.mac_id LIKE ?)';params.push('%'+username+'%','%'+username+'%');}if(nasip){where+=' AND a.nasipaddress=?';params.push(nasip);}if(start_date){where+=' AND a.acctstarttime>=?';params.push(start_date);}if(end_date){where+=' AND a.acctstarttime<=?';params.push(end_date+' 23:59:59');}
- const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id LEFT JOIN tenants t ON t.id=a.tenant_id'+where;const select="SELECT a.*,(a.acctinputoctets+a.acctoutputoctets) AS total_data,COALESCE(m.mac_id,a.username) AS username,COALESCE(t.name, 'Global') AS tenant_name";
+ const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id LEFT JOIN tenants t ON t.id=a.tenant_id'+where;const select="SELECT a.*,(a.acctinputoctets+a.acctoutputoctets) AS total_data,COALESCE(m.mac_id,a.username) AS username,COALESCE(t.name, 'Default') AS tenant_name";
  try {if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||300,1),1000);const [rows]=await pool.query(select+from+` ORDER BY ${field} ${direction} LIMIT ?`,[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+` ORDER BY ${field} ${direction} LIMIT ? OFFSET ?`,[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});}catch(err){console.error(err);res.status(500).json({error:'Failed to fetch accounting data'});}
 });
 

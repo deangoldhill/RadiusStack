@@ -7,7 +7,7 @@ const STANDARD_REPLY_ATTRIBUTES = [
   ['Framed-IP-Netmask', 'ipv4'], ['Framed-Route', 'string'], ['Framed-Pool', 'string'],
   ['Framed-Protocol', 'integer'], ['Framed-Routing', 'integer'], ['Framed-MTU', 'integer'],
   ['Framed-Compression', 'integer'], ['Service-Type', 'integer'], ['Login-Service', 'integer'],
-  ['Callback-Id', 'string'], ['Port-Limit', 'integer'], ['Termination-Action', 'integer'],
+  ['Callback-Id', 'string'], ['Port-Limit', 'integer'], ['Termination-Action', 'integer'], ['class', 'string'],
   ['Cisco-AVPair', 'string', 'Cisco', 9, 1], ['Cisco-NAS-Port', 'integer', 'Cisco', 9, 2],
   ['Cisco-Idle-Limit', 'integer', 'Cisco', 9, 3], ['Cisco-Session-Timeout', 'integer', 'Cisco', 9, 4],
   ['Cisco-Account-Info', 'string', 'Cisco', 9, 250], ['Cisco-Command-Code', 'string', 'Cisco', 9, 252],
@@ -34,7 +34,7 @@ function positiveInteger(value, label, maximum) {
   if (!Number.isInteger(number) || number < 1 || number > maximum) throw new Error(`Invalid ${label}`);
   return number;
 }
-function isFreeRadiusAttributeName(value) { return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(value); }
+function isFreeRadiusAttributeName(value) { return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/.test(value); }
 function normalizeEntry(entry, source = 'custom') {
   if (typeof entry === 'string') return { name: text(entry, 'attribute name'), source: 'legacy', value_type: 'string' };
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid custom reply attribute');

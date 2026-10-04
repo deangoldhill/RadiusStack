@@ -12,6 +12,7 @@ const puppeteer = require('puppeteer');
 const crypto = require('crypto');
 const { loadTenantScope } = require('./tenant');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
+const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
 require('./workers/radiusStatsWorker');
 
 const app = express();
@@ -22,7 +23,6 @@ app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
 const upload = multer({ dest: '/tmp/' });
-// Read from environment — with sensible fallbacks for local development
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-container_config.env';
 const TOTP_ISSUER = process.env.TOTP_ISSUER || 'RadiusStack';
 
@@ -112,17 +112,14 @@ const pool = mysql.createPool({
     dateStrings: true
 });
 
-// --- API DEBUG LOGGING ---
 let apiDebugEnabled = false;
 
-// Initialize debug state
 pool.query("SELECT setting_value FROM settings WHERE setting_key = 'api_debug'").then(([rows]) => {
     if (rows.length && rows[0].setting_value === 'true') {
         apiDebugEnabled = true;
         console.log('[API DEBUG] API Debug logging is ENABLED from database.');
     }
 }).catch(err => {
-    // Ignore on first boot if table doesn't exist yet
 });
 
 function apiDebugLog(msg) {
@@ -138,9 +135,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- ADVANCED HA SYNC ENGINE ---
 
-// Generate a static 256-bit AES key by hashing the existing HA_API_TOKEN
 const HA_PSK = crypto.createHash('sha256').update(process.env.HA_API_TOKEN || 'default').digest();
 
 function encryptHaPayload(payload) {
@@ -170,7 +165,6 @@ setTimeout(() => {
     if (process.env.HA_ENABLED === 'true') {
         originalPoolQuery.call(pool, "ALTER TABLE ha_queue ADD COLUMN insert_id BIGINT DEFAULT NULL", [], { isSync: true }).catch(() => {});
         originalPoolQuery.call(pool, "ALTER TABLE ha_sync_state ADD COLUMN last_time VARCHAR(30) DEFAULT '1970-01-01 00:00:00.000000'", [], { isSync: true }).catch(() => {});
-        // Add microsecond tracking column to safely sync Interim-Updates without 1-second collisions
         originalPoolQuery.call(pool, "ALTER TABLE radacct ADD COLUMN ha_updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)", [], { isSync: true }).catch(() => {});
     }
 }, 5000);
@@ -378,7 +372,20 @@ if (process.env.HA_ENABLED === 'true') {
     setInterval(syncRadiusTables, 5000);
 }
 
-app.get('/api/ha/status', async (req, res) => {
+function requireHaAdmin(level) {
+    return async (req, res, next) => {
+        const key = req.header('X-API-Key');
+        if (!key) return res.status(401).json({ error: 'API Key missing' });
+        const [rows] = await pool.query('SELECT is_super_admin, permissions FROM admins WHERE api_key = ? LIMIT 1', [key]);
+        const admin = rows[0];
+        if (!admin || Number(admin.is_super_admin) !== 1) return res.status(403).json({ error: 'Global super-admin required' });
+        let permissions = {}; try { permissions = typeof admin.permissions === 'string' ? JSON.parse(admin.permissions || '{}') : (admin.permissions || {}); } catch (_) {}
+        if (!permissions.settings || (level === 'read-write' && permissions.settings !== 'read-write')) return res.status(403).json({ error: 'Settings permission required' });
+        next();
+    };
+}
+
+app.get('/api/ha/status', requireHaAdmin('read-only'), async (req, res) => {
     let queueLength = 0;
     try {
         const [q] = await originalPoolQuery.call(pool, "SELECT COUNT(*) as c FROM ha_queue", [], { isSync: true });
@@ -393,23 +400,29 @@ app.get('/api/ha/status', async (req, res) => {
     });
 });
 
-app.post('/api/ha/promote', (req, res) => {
+app.post('/api/ha/promote', requireHaAdmin('read-write'), (req, res) => {
     global.haRole = 'primary';
     res.json({ success: true, message: 'Promoted to primary. This node is now fully writable.' });
 });
 
-app.post('/api/ha/demote', (req, res) => {
+app.post('/api/ha/demote', requireHaAdmin('read-write'), (req, res) => {
     global.haRole = 'secondary';
     res.json({ success: true, message: 'Demoted to secondary. Node is now read-only.' });
 });
 
-app.post('/api/ha/sync-now', async (req, res) => {
+app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
     await processHaQueue();
     await syncRadiusTables();
     res.json({ success: true, message: 'Manual sync triggered' });
 });
 
-app.post('/api/ha/full-sync', async (req, res) => {
+
+const HA_CERT_ROOTS = ['/certs_radsec', '/certs_shared'];
+async function readHaCertificateBundle() { const files=[]; async function walk(root,dir=root){for(const entry of await fs.readdir(dir,{withFileTypes:true})){const full=`${dir}/${entry.name}`;if(entry.isDirectory())await walk(root,full);else if(entry.isFile()&&/\.(pem|key)$/.test(entry.name)){const data=await fs.readFile(full);if(data.length>1048576)throw new Error('Certificate artifact too large');files.push({path:full.slice(root.length+1),root,data:data.toString('base64')});}}} for(const root of HA_CERT_ROOTS)await walk(root);return {version:Date.now(),files}; }
+app.post('/api/ha/radsec-bundle', requireHaAdmin('read-write'), async (req,res)=>{if(global.haRole!=='primary'||process.env.HA_ENABLED!=='true'||!process.env.HA_PEER_IP)return res.status(409).json({error:'HA peer is not configured'});try{const bundle=await readHaCertificateBundle();const r=await fetch(`http://${process.env.HA_PEER_IP}:${process.env.API_PORT||3000}/api/sync/certificates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(encryptHaPayload({_ts:Date.now(),bundle}))});if(!r.ok)throw new Error('Secondary rejected certificate bundle');res.json({success:true,version:bundle.version,files:bundle.files.length});}catch(e){console.error('[HA Certificate Sync]',e.message);res.status(500).json({error:'Certificate sync failed'});}});
+app.post('/api/sync/certificates', async (req,res)=>{let payload;try{payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}if(global.haRole!=='secondary'||Date.now()-payload._ts>60000||!Array.isArray(payload.bundle?.files))return res.status(401).json({error:'Invalid certificate bundle'});try{for(const f of payload.bundle.files){if(!HA_CERT_ROOTS.includes(f.root)||!/^[A-Za-z0-9_./-]+\.(pem|key)$/.test(f.path))throw new Error('Invalid certificate path');const target=`${f.root}/${f.path}`,data=Buffer.from(f.data,'base64');if(data.length>1048576)throw new Error('Certificate artifact too large');await fs.mkdir(target.slice(0,target.lastIndexOf('/')),{recursive:true,mode:0o700});await fs.writeFile(`${target}.incoming`,data,{mode:f.path.endsWith('.key')?0o600:0o644});await fs.rename(`${target}.incoming`,target);}exec('docker restart radius_server');res.json({success:true,version:payload.bundle.version});}catch(e){console.error('[HA Certificate Install]',e.message);res.status(400).json({error:'Certificate install failed'});}});
+
+app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => {
     if (global.haRole !== 'primary') return res.status(403).json({ error: 'Full sync can only be triggered from the primary node.' });
 
     try {
@@ -446,7 +459,6 @@ app.post('/api/sync/execute', async (req, res) => {
         return res.status(401).json({ error: 'Decryption failed' });
     }
 
-    // Strict Replay Protection: Reject packets older than 60 seconds
     const age = Date.now() - (payload._ts || 0);
     if (age > 60000 || age < -5000) {
         console.warn('[HA Sync] Rejected expired or replayed payload');
@@ -507,10 +519,8 @@ app.post('/api/sync/execute', async (req, res) => {
         }
     }
 });
-// ------------------------------------------
 
 
-// Audit Logger
 async function auditLog(admin_username, origin, action, result, details = '', ip = '', tenantScope = null) {
     try {
         const tenantId = tenantScope?.enabled ? tenantScope.tenantId : null;
@@ -525,34 +535,26 @@ async function auditLog(admin_username, origin, action, result, details = '', ip
     }
 }
 
-async function snapshotUserPlanUsage(db, username) {
+async function snapshotUserPlanUsage(db, username, tenantId) {
     const executor = db && typeof db.query === 'function' ? db : pool;
-
+    const tenantWhere = tenantId === null || tenantId === undefined ? 'tenant_id IS NULL' : 'tenant_id = ?';
+    const tenantParams = tenantId === null || tenantId === undefined ? [username] : [username, tenantId];
     const [rows] = await executor.query(`
-    SELECT
-      COALESCE(SUM(acctinputoctets), 0) AS input_octets,
-      COALESCE(SUM(acctoutputoctets), 0) AS output_octets,
-      COALESCE(SUM(acctsessiontime), 0) AS session_seconds
-    FROM radacct
-    WHERE username = ?
-  `, [username]);
-
-    const totals = rows[0] || {
-        input_octets: 0,
-        output_octets: 0,
-        session_seconds: 0
-    };
-
+    SELECT COALESCE(SUM(acctinputoctets), 0) AS input_octets,
+           COALESCE(SUM(acctoutputoctets), 0) AS output_octets,
+           COALESCE(SUM(acctsessiontime), 0) AS session_seconds
+    FROM radacct WHERE username = ? AND ${tenantWhere}
+  `, tenantParams);
+    const totals = rows[0] || { input_octets: 0, output_octets: 0, session_seconds: 0 };
     await executor.query(`
     INSERT INTO user_plan_usage
-      (username, cycle_started_at, base_input_octets, base_output_octets, base_session_seconds)
-    VALUES (?, NOW(), ?, ?, ?)
+      (username, tenant_id, cycle_started_at, base_input_octets, base_output_octets, base_session_seconds)
+    VALUES (?, ?, NOW(), ?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      cycle_started_at = VALUES(cycle_started_at),
-      base_input_octets = VALUES(base_input_octets),
-      base_output_octets = VALUES(base_output_octets),
+      tenant_id = VALUES(tenant_id), cycle_started_at = VALUES(cycle_started_at),
+      base_input_octets = VALUES(base_input_octets), base_output_octets = VALUES(base_output_octets),
       base_session_seconds = VALUES(base_session_seconds)
-  `, [username, totals.input_octets, totals.output_octets, totals.session_seconds]);
+  `, [username, tenantId, totals.input_octets, totals.output_octets, totals.session_seconds]);
 }
 
 async function initDb() {
@@ -582,7 +584,6 @@ async function initDb() {
 }
 initDb();
 
-// --- Auth Routes with Audit ---
 app.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
@@ -674,7 +675,6 @@ app.post('/auth/change-pwd', async (req, res) => {
     }
 });
 
-// --- Middleware with Audit ---
 const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     const apiKey = req.header('X-API-Key');
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
@@ -707,11 +707,16 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     }
 
     req.admin = admin;
-    // Tenant-management/admin routes remain global; settings itself always resolves the selected scope.
     if (req.path.startsWith('/api/tenants')) {
         req.tenantScope = { enabled: false, tenantId: null, superAdmin: Number(admin.is_super_admin) === 1 };
     } else {
         try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); } catch (err) { return res.status(403).json({ error: err.message }); }
+        const platformControls = ['/api/admins', '/api/settings', '/api/radius/stats', '/api/auth/self', '/api/system', '/api/certs'];
+        const globalOperationalGetRoutes = new Set(['/api/reports/dashboard-overview', '/api/reports/live-stats', '/api/reports/dashboard-stats', '/api/reports/failed-auth', '/api/logs/auth', '/api/accounting', '/api/audit']);
+        const isOperationalPath = ['/api/reports', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions'].some(prefix => req.path.startsWith(prefix));
+        if (req.tenantScope.globalContext && ((!isOperationalPath && !platformControls.some(prefix => req.path.startsWith(prefix))) || (isOperationalPath && (req.method !== 'GET' || !globalOperationalGetRoutes.has(req.path))))) {
+            return res.status(403).json({ error: 'Global context is limited to platform controls; select a tenant for operational data' });
+        }
     }
     req.origin = origin;
     req.ip = ip;
@@ -730,9 +735,6 @@ function setApiDebugMode(enabled) {
     apiDebugLog('API Debug mode status changed via Settings');
 }
 
-// ==========================================
-// --- REGISTER MODULARIZED ROUTES ---
-// ==========================================
 const routeDependencies = {
     bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, puppeteer, multer,
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage,
@@ -742,8 +744,8 @@ const routeDependencies = {
 };
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
 require('./routes/tenants')(app, pool, requireApiAuth, auditLog, routeDependencies);
+require('./radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
 
-// ─── CALCULATE INCREMENTAL RADIUS STATS ───────────────────────────────────────
 async function calculateRadiusStats(pool, statType, startDate, endDate) {
     const params = [statType];
     let timeFilter = '';
@@ -899,7 +901,6 @@ async function calculateTrendHourly(pool, statType, hours) {
     return arr.map(({hour_label, accepts, rejects}) => ({hour_label, accepts, rejects}));
 }
 
-// ─── RADIUS SERVER STATS ──────────────────────────────────────────────────────
 app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), requireGlobalSuperAdmin, async (req, res) => {
     try {
         const { start_date, end_date } = req.query;
@@ -928,11 +929,13 @@ app.listen(3000, '0.0.0.0', () => {
 });
 
 
-// --- TENANT-SCOPED MAINTENANCE WORKERS ---
 const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog });
 setInterval(() => maintenanceWorkers.processAutoCreateMacs(), 1000);
 
-// --- STALE SESSIONS AUTO-CLEAR WORKER ---
+const planPodEnforcementWorker = createPlanPodEnforcementWorker({ pool });
+setInterval(() => planPodEnforcementWorker.process(), 30000);
+setTimeout(() => planPodEnforcementWorker.process(), 30000);
+
     apiDebugLog('Stale session worker initialized');
 let lastStaleSessionRun = 0;
 
@@ -983,7 +986,6 @@ async function processStaleSessions() {
 
         if (!clearEnabled) { apiDebugLog('Stale session worker skipped: Disabled in settings'); return; }
 
-        // Throttle by interval setting
         const now = Date.now();
         if (now - lastStaleSessionRun < intervalMinutes * 60 * 1000) { apiDebugLog('Stale session worker skipped: Throttled by interval'); return; }
         lastStaleSessionRun = now;
@@ -1009,7 +1011,6 @@ async function processStaleSessions() {
             const placeholders = sessionIds.map(() => '?').join(',');
             await pool.query(`UPDATE radacct SET acctstoptime = NOW() WHERE radacctid IN (${placeholders})`, sessionIds);
 
-            // Log as 'system' origin
             await auditLog('system', 'system', `Cleared ${sessionIds.length} stale sessions`, 'success', 'Background process auto-clear', '127.0.0.1');
             console.log(`[Background Task] Auto-cleared ${sessionIds.length} stale sessions.`);
         }

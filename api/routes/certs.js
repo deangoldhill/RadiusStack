@@ -1,7 +1,6 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
-// --- CERTS ---
 
 app.get('/api/certs/download/:type', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, async (req, res) => {
     try {
@@ -88,7 +87,6 @@ app.post('/api/certs/upload', requireApiAuth('settings', 'read-write'), requireG
     }
 });
 
-// === CERT DETAILS & DOWNLOAD ===
 app.get('/api/certs/details', requireApiAuth('settings', 'read-only'), (req, res) => {
     exec('openssl x509 -in /certs_shared/server.pem -text -noout', (error, stdout, stderr) => {
         if (error) {

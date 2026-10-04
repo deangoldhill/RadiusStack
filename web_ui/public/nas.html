@@ -8,7 +8,7 @@
 
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
       <table class="w-full text-left text-sm whitespace-nowrap" id="nasTable">
-        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">IP Address</th><th class="p-3">Shortname</th><th class="p-3">Secret</th><th class="p-3">Description</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">IP Address</th><th class="p-3">Shortname</th><th class="p-3">Tenant</th><th class="p-3">Secret</th><th class="p-3">Description</th><th class="p-3">TLS (RadSec)</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -32,7 +32,7 @@
         <div><label class="block text-sm font-bold text-gray-700">Description</label>
         <input type="text" id="nDesc" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring focus:ring-blue-200 outline-none"></div>
 
-        <details id="dynamicAuthAdvanced" class="border rounded-lg p-3 bg-gray-50"><summary class="cursor-pointer text-sm font-bold text-gray-700">Advanced: CoA / PoD packet attributes</summary><p class="text-xs text-gray-500 mt-2">Defaults preserve current behavior; profile reply attributes apply only to CoA.</p><p class="text-sm font-bold mt-2">CoA packet attributes</p><div id="coaDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div><p class="text-sm font-bold mt-3">PoD packet attributes</p><div id="podDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div></details>
+        <label class="flex gap-2 font-bold"><input id="nRadsec" type="checkbox" onchange="toggleRadsecPanel()"> TLS (RadSec)</label><section id="nasRadsecPanel" hidden class="border border-amber-300 bg-amber-50 rounded p-3 text-sm"><p>Generate one client certificate for this NAS. It is signed by the tenant CA configured in Settings.</p><fieldset class="mt-2"><legend class="font-bold">Credential format</legend><label class="mr-3"><input type="radio" name="radsecDelivery" value="p12" checked> Password-protected P12</label><label><input type="radio" name="radsecDelivery" value="pem"> Separate certificate and private key</label></fieldset><div class="flex flex-wrap gap-2 mt-3"><button type="button" onclick="downloadNasRadsec('server-trust-ca')" class="bg-white border border-amber-600 text-amber-900 px-3 py-2 rounded font-bold">Download RadSec server trust CA</button><button type="button" onclick="generateNasRadsecClient()" class="bg-amber-700 text-white px-3 py-2 rounded font-bold">Generate client certificate</button></div><div id="radsecDownloadActions" class="flex flex-wrap gap-2 mt-2" aria-live="polite"></div><p id="p12Password" class="font-mono mt-2"></p><p id="radsecPassphrase" class="font-mono mt-2" aria-live="polite"></p></section><details id="dynamicAuthAdvanced" class="border rounded-lg p-3 bg-gray-50"><summary class="cursor-pointer text-sm font-bold text-gray-700">Advanced: CoA / PoD packet attributes</summary><p class="text-xs text-gray-500 mt-2">Defaults preserve current behavior; profile reply attributes apply only to CoA.</p><p class="text-sm font-bold mt-2">CoA packet attributes</p><div id="coaDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div><p class="text-sm font-bold mt-3">PoD packet attributes</p><div id="podDynamicAuthChoices" class="grid grid-cols-1 gap-1 mt-1 text-sm"></div></details>
         <div class="flex justify-end space-x-3 pt-4 border-t">
           <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
           <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
@@ -41,6 +41,7 @@
     </div>
   </div>
 
+  <div id="cloneNasModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm"><div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full"><h2 class="text-xl font-bold mb-4 text-gray-800">Clone NAS Client</h2><p class="text-sm text-gray-600 mb-4">The new NAS will reuse the source configuration and RadSec credential set.</p><form id="cloneNasForm" class="space-y-4"><input type="hidden" id="cloneSourceNasId"><div><label class="block text-sm font-bold text-gray-700">IP Address</label><input id="cloneNasIp" required class="w-full border p-2 rounded-lg"></div><div><label class="block text-sm font-bold text-gray-700">Shortname</label><input id="cloneNasShort" required class="w-full border p-2 rounded-lg"></div><div class="flex justify-end gap-3 pt-3"><button type="button" onclick="closeCloneNas()" class="bg-gray-200 px-4 py-2 rounded-lg font-bold">Cancel</button><button class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold">Clone NAS</button></div></form></div></div>
   <script src="/js/layout.js"></script>
   <script>
     let nasList = [];
@@ -58,18 +59,18 @@
         document.querySelector('#nasTable tbody').innerHTML = nasList.map(n => `
         <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
           <td class="p-3 font-bold text-gray-800">${n.nasname}</td>
-          <td class="p-3 text-gray-600">${n.shortname}</td>
+          <td class="p-3 text-gray-600">${n.shortname}</td><td class="p-3 text-gray-600">${n.tenant_name||'Global'}</td>
           <td class="p-3 font-mono text-gray-500 text-xs">${n.secret}</td>
-          <td class="p-3 text-gray-500 text-xs">${n.description || ''}</td>
+          <td class="p-3 text-gray-500 text-xs">${n.description || ''}</td><td class="p-3">${n.radsec_enabled ? '<span class="text-green-700 font-bold">TLS (RadSec)</span>' : '—'}</td>
           <td class="p-3 text-right space-x-2">
-            <button onclick="openModal(${n.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+            <button onclick="cloneNas(${n.id})" class="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold">Clone</button><button onclick="openModal(${n.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
             <button onclick="deleteNas(${n.id})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
           </td>
         </tr>`).join('');
       }
     }
 
-    window.openModal = function(id = null) {
+window.openModal = function(id = null) {
       document.getElementById('nasModal').classList.remove('hidden');
       document.getElementById('nasForm').reset(); document.getElementById('dynamicAuthAdvanced').open=false; renderDynamicAuthChoices();
 
@@ -80,14 +81,16 @@
         document.getElementById('nIp').value = n.nasname;
         document.getElementById('nShort').value = n.shortname;
         document.getElementById('nSec').value = n.secret;
-        document.getElementById('nDesc').value = n.description; try { const saved=JSON.parse(n.dynamic_auth_attributes || 'null'); renderDynamicAuthChoices(Array.isArray(saved)?{coa_attributes:saved,pod_attributes:saved.filter(x=>x!=='Profile-Reply-Attributes')}:saved); } catch { renderDynamicAuthChoices(); }
+        document.getElementById('nDesc').value = n.description; document.getElementById('nRadsec').checked=!!n.radsec_enabled; toggleRadsecPanel(); loadNasRadsecPassphrase(id); try { const saved=JSON.parse(n.dynamic_auth_attributes || 'null'); renderDynamicAuthChoices(Array.isArray(saved)?{coa_attributes:saved,pod_attributes:saved.filter(x=>x!=='Profile-Reply-Attributes')}:saved); } catch { renderDynamicAuthChoices(); }
       } else {
         document.getElementById('modalTitle').textContent = 'Add NAS Client';
-        document.getElementById('nasId').value = '';
+        document.getElementById('nasId').value = ''; document.getElementById('nRadsec').checked=false; toggleRadsecPanel();
       }
     }
 
     window.closeModal = function() { document.getElementById('nasModal').classList.add('hidden'); }
+
+    window.cloneNas = function(id){document.getElementById('cloneNasForm').reset();document.getElementById('cloneSourceNasId').value=id;document.getElementById('cloneNasModal').classList.remove('hidden');}; window.closeCloneNas=()=>document.getElementById('cloneNasModal').classList.add('hidden'); document.getElementById('cloneNasForm').onsubmit=async e=>{e.preventDefault();const r=await apiFetch(`/api/nas/${document.getElementById('cloneSourceNasId').value}/clone`,{method:'POST',body:JSON.stringify({nasname:document.getElementById('cloneNasIp').value,shortname:document.getElementById('cloneNasShort').value})});if(!r.ok)return alert((await r.json()).error||'Clone failed');closeCloneNas();loadData();};
 
     window.deleteNas = async function(id) {
       if(!confirm('Delete this NAS Client?')) return;
@@ -104,7 +107,7 @@
           nasname: document.getElementById('nIp').value,
           shortname: document.getElementById('nShort').value,
           secret: document.getElementById('nSec').value,
-          description: document.getElementById('nDesc').value, dynamic_auth_attributes: selectedDynamicAuthAttributes()
+          description: document.getElementById('nDesc').value, radsec_enabled: document.getElementById('nRadsec').checked, dynamic_auth_attributes: selectedDynamicAuthAttributes()
       };
 
       const method = id ? 'PUT' : 'POST';
@@ -119,6 +122,11 @@
       }
     };
 
+    function toggleRadsecPanel(){document.getElementById('nasRadsecPanel').hidden=!document.getElementById('nRadsec').checked;}
+    async function downloadNasRadsec(kind){const r=await apiFetch('/api/tenant-radsec/download/'+kind);if(!r.ok)return alert('Certificate unavailable');const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=kind==='server-trust-ca'?'radiusstack-radsec-server-trust-ca.pem':'tenant-radsec-ca.pem';a.click();}
+    async function loadNasRadsecPassphrase(id){const target=document.getElementById('radsecPassphrase');target.textContent='';const response=await apiFetch(`/api/nas/${id}/radsec/passphrase`);if(!response.ok){target.textContent='Passphrase unavailable. Regenerate the RadSec certificate.';return;}const result=await response.json();target.textContent=result.status==='available'?`Certificate passphrase: ${result.passphrase}`:'Passphrase unavailable. Regenerate the RadSec certificate.';}
+    async function generateNasRadsecClient(){const id=document.getElementById("nasId").value;if(!id)return alert("Save this NAS before generating its certificate.");const format=document.querySelector("input[name=radsecDelivery]:checked").value;const r=await apiFetch(`/api/nas/${id}/radsec/client`,{method:"POST",body:JSON.stringify({format})});const x=await r.json();if(!r.ok)return alert(x.error||"Certificate generation failed");document.getElementById("radsecPassphrase").textContent="Certificate passphrase is available whenever this NAS is opened.";document.getElementById("p12Password").textContent=(format==="pem"?"Private-key password (shown once): ":"P12 password (shown once): ")+x.password;const actions=document.getElementById("radsecDownloadActions");actions.innerHTML="";for(const item of x.downloads){const b=document.createElement("button");b.type="button";b.className="bg-blue-700 text-white px-3 py-2 rounded font-bold";b.textContent=item.name.endsWith(".p12")?"Download P12":item.name.includes("private-key")?"Download private key":"Download certificate";b.onclick=async()=>{b.disabled=true;const d=await apiFetch(`/api/nas/${id}/radsec/download/${item.token}`);if(!d.ok){b.disabled=false;return alert("Download token failed or expired");}const a=document.createElement("a");a.href=URL.createObjectURL(await d.blob());a.download=item.name;a.click();URL.revokeObjectURL(a.href);b.remove();};actions.appendChild(b);}}
     loadCustomDynamicAuthAttributes().then(loadData);
   </script>
+  <script src="/js/field-help.js"></script>
 </body></html>

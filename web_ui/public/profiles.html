@@ -47,11 +47,11 @@
         </div>
     </main>
 
-    <!-- ===================== PROFILE DETAIL PANEL ===================== -->
+    
     <div id="profileDetailOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40 backdrop-blur-sm" onclick="closeDetailPanel()"></div>
     <div id="profileDetailPanel" class="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col overflow-hidden">
 
-        <!-- Panel Header -->
+        
         <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-lg" id="pdAvatar">P</div>
@@ -72,7 +72,7 @@
             </div>
         </div>
 
-        <!-- Panel Tabs -->
+        
         <div class="flex border-b border-gray-100 bg-white flex-shrink-0 px-6">
             <button onclick="switchTab('overview')" id="tab-overview" class="pd-tab active px-4 py-3 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 -mb-px">Overview</button>
             <button onclick="switchTab('users')" id="tab-users" class="pd-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Users</button>
@@ -80,19 +80,19 @@
             <button onclick="switchTab('config')" id="tab-config" class="pd-tab px-4 py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 border-b-2 border-transparent -mb-px">Configuration</button>
         </div>
 
-        <!-- Panel Body -->
+        
         <div class="flex-1 overflow-y-auto p-6" id="pdBody">
             <div class="flex items-center justify-center h-32 text-gray-400 text-sm">Loading profile data...</div>
         </div>
 
-        <!-- Panel Footer -->
+        
         <div class="flex items-center gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50 flex-shrink-0">
             <button id="pdEditBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors">Edit Profile</button>
             <button id="pdDeleteBtn" class="ml-auto bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded-lg text-sm font-bold transition-colors">Delete Profile</button>
         </div>
     </div>
 
-    <!-- ===================== CREATE / EDIT MODAL ===================== -->
+    
     <div id="profileModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
@@ -450,7 +450,7 @@
             const vlan = pReplies.find(r => r.attribute === 'Tunnel-Private-Group-ID');
 
             return `
-            <!-- KPI Cards -->
+            
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 mb-6">
               <div class="stat-card">
                 <div class="label">Assigned Objects</div>
@@ -484,7 +484,7 @@
               </div>
             </div>
 
-            <!-- Accept Rate Bar -->
+            
             <div class="mb-6">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Authentication Success Rate (Sampled)</h3>
               <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
@@ -502,7 +502,7 @@
               </div>
             </div>
 
-            <!-- Profile Config Summary -->
+            
             <div class="mb-5">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Profile Configuration</h3>
               <div class="grid grid-cols-2 gap-3">
@@ -521,7 +521,7 @@
               </div>
             </div>
 
-            <!-- Top Users by Data -->
+            
             ${profileUsers.length > 0 ? `
             <div>
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Top Objects by Data (30 days)</h3>
@@ -633,7 +633,7 @@
 
             return `
             <div class="space-y-5">
-              <!-- VLAN -->
+              
               <div>
                 <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">VLAN Assignment</h3>
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
@@ -646,7 +646,7 @@
                 </div>
               </div>
 
-              <!-- NAS Check Attributes -->
+              
               <div>
                 <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">NAS-IP-Address Checks (${nasIps.length})</h3>
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
@@ -656,7 +656,7 @@
                 </div>
               </div>
 
-              <!-- Reply Attributes -->
+              
               <div>
                 <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Reply Attributes (${customReplies.length})</h3>
                 <div class="bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
@@ -673,7 +673,7 @@
                 </div>
               </div>
 
-              <!-- Other Check Attributes -->
+              
               ${allCheckAttrs.length > 0 ? `
               <div>
                 <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Other Check Attributes (${allCheckAttrs.length})</h3>
@@ -764,7 +764,7 @@
             div.className = 'flex gap-2 items-center attr-row';
             div.innerHTML = `
             <input type="text" readonly value="${escapeHtml(k)}" class="attr-k flex-1 border p-2 rounded-lg bg-gray-100 text-sm text-gray-600">
-            <input type="text" readonly value="${escapeHtml(v)}" class="attr-v flex-1 border p-2 rounded-lg bg-gray-100 text-sm text-gray-600">
+            <input type="text" value="${escapeHtml(v)}" class="attr-v flex-1 border p-2 rounded-lg bg-white text-sm">
             <button type="button" onclick="this.parentElement.remove()" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold">Remove</button>`;
             document.getElementById('replyAttrs').appendChild(div);
         }
@@ -857,5 +857,7 @@
             }
         }
     </style>
+
+  <script src="/js/field-help.js"></script>
 </body>
 </html>

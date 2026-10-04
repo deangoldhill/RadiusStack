@@ -2,11 +2,12 @@ const TENANT_SETTING_KEYS = new Set([
   'enforce_2fa', 'mask_user_passwords',
   'mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval',
   'clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes', 'stale_session_interval',
-  'radius_stats_retention_days', 'radius_stats_purge_interval', 'radius_stats_poll_interval', 'custom_reply_attributes'
+  'custom_reply_attributes', 'radsec_enabled'
 ]);
 const GLOBAL_SETTING_KEYS = new Set([
   'multi_tenant_enabled', 'radius_debug', 'api_debug', 'ui_theme', 'totp_enrollment_hours',
   'authlogs_purge_enabled', 'authlogs_purge_days', 'authlogs_purge_interval',
+  'radius_stats_retention_days', 'radius_stats_purge_interval', 'radius_stats_poll_interval',
   'syslog_enabled', 'syslog_host', 'syslog_port', 'syslog_protocol', 'syslog_send_audit', 'syslog_send_authlogs'
 ]);
 
@@ -17,6 +18,7 @@ const { STANDARD_REPLY_ATTRIBUTES, normalizeCustomReplyAttributes } = require('.
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
   const syslog = require('../utils/syslog');
   const { exec, setApiDebugMode } = dependencies;
+  require('../radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
 
   app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, res) => {
     try {
@@ -53,9 +55,10 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         for (const [key, value] of entries) {
           await pool.query(
             'INSERT INTO tenant_settings (tenant_id, setting_key, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
-            [req.tenantScope.tenantId, key, String(value)]
+            [req.tenantScope.tenantId, key, key === 'radsec_enabled' ? (truthy(value) ? 'true' : 'false') : String(value)]
           );
         }
+        if (entries.some(([key]) => key === 'radsec_enabled')) exec('docker restart radius_server');
       } else {
         for (const [key, rawValue] of entries) {
           const value = key === 'multi_tenant_enabled' ? (truthy(rawValue) ? 'true' : 'false') : String(rawValue);

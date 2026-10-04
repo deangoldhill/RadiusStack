@@ -4,13 +4,15 @@ function getApiKey() {
   return key;
 }
 function logout() { localStorage.removeItem('apiKey'); window.location.href = 'login.html'; }
+function shouldClearApiKey(url, status) { return status === 401 && String(url).split('?')[0] === '/api/auth/me'; }
 
 const apiFetch = async (url, options = {}) => {
+  const { withoutTenantContext = false, ...fetchOptions } = options;
   const key = getApiKey();
   const tenantId = localStorage.getItem('activeTenantId');
-  const headers = { 'X-API-Key': key, 'Content-Type': 'application/json', ...(tenantId ? { 'X-Tenant-ID': tenantId } : {}), ...(options.headers || {}) };
-  const res = await fetch(url, { ...options, headers });
-  if (res.status === 401) { logout(); }
+  const headers = { 'X-API-Key': key, 'Content-Type': 'application/json', ...(!withoutTenantContext && tenantId ? { 'X-Tenant-ID': tenantId } : {}), ...(fetchOptions.headers || {}) };
+  const res = await fetch(url, { ...fetchOptions, headers });
+  if (shouldClearApiKey(url, res.status)) { logout(); }
   return res;
 };
 
@@ -45,6 +47,8 @@ document.head.insertAdjacentHTML('beforeend', `<style>
   }
   #accessDeniedBanner .banner-box button:hover { background: #4b5563; }
 </style>`);
+
+const GLOBAL_CONTEXT_BLOCKED_PAGES = new Set(['users.html', 'profiles.html', 'plans.html', 'mac-auth.html']);
 
 const PAGE_PERMISSIONS = {
   'index.html': null, 'users.html': 'users', 'mac-auth.html': 'users',
@@ -81,7 +85,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let perms = {};
 
   try {
-    const [meRes, contextRes] = await Promise.all([apiFetch('/api/auth/me'), apiFetch('/api/auth/context')]);
+    const [meRes, contextRes] = await Promise.all([apiFetch('/api/auth/me'), apiFetch('/api/auth/context', { withoutTenantContext: true })]);
     if (!meRes.ok || !contextRes.ok) throw new Error('Unable to load administrator context');
     const [me, context] = await Promise.all([meRes.json(), contextRes.json()]);
     try { perms = typeof me.permissions === 'string' ? JSON.parse(me.permissions) : (me.permissions || {}); }
@@ -147,6 +151,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           ${window.currentAdmin ? `<p class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;">${window.currentAdmin}</p>` : ''}
         </div>
       </div>
+      <a href="documentation.html" target="_blank" rel="noopener" class="mb-4 flex items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm font-bold text-blue-200 transition hover:bg-blue-500/20 hover:text-white"><svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-1.7 1.4-1.7 2-1.7 3.2"></path><path d="M12 17h.01"></path></svg> Documentation</a>
       <div id="tenantSwitcherWrap" class="mb-5" hidden><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Active tenant</label><select id="tenantSwitcher" class="w-full rounded-lg bg-gray-800 border border-gray-700 p-2 text-sm text-white"></select></div>
       <nav class="flex-1 space-y-2 font-medium overflow-y-auto pr-2 custom-scrollbar" id="sideNav">
         <a href="index.html"      class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4CA;</span> Dashboard</a>
@@ -181,18 +186,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (!window.currentAdminSuper) document.getElementById('tenantManagementNav')?.remove();
   if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${t.id}">${t.name}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{localStorage.setItem('activeTenantId',select.value);window.location.reload()}; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
 
-  // Hide nav items the admin has no permission for
+  if (window.multiTenantEnabled && window.currentAdminSuper && localStorage.getItem('activeTenantId') === 'global') { GLOBAL_CONTEXT_BLOCKED_PAGES.forEach(href => document.querySelector(`.nav-link[href="${href}"]`)?.classList.add('nav-hidden')); }
   document.querySelectorAll('.nav-link').forEach(link => {
     const mod = NAV_MODULES[link.getAttribute('href')];
     if (mod && !hasPermission(perms, mod)) link.classList.add('nav-hidden');
   });
 
-  // Block direct URL access to forbidden pages
   const currentPage = window.location.pathname.split('/').pop() || 'index.html';
   const pageModule = PAGE_PERMISSIONS[currentPage];
-  if (pageModule && !hasPermission(perms, pageModule)) showAccessDenied();
+  const inGlobalContext = window.multiTenantEnabled && window.currentAdminSuper && localStorage.getItem('activeTenantId') === 'global';
+  if (inGlobalContext && GLOBAL_CONTEXT_BLOCKED_PAGES.has(currentPage)) {
+    showAccessDenied();
+  } else if (pageModule && !hasPermission(perms, pageModule)) {
+    showAccessDenied();
+  }
 
-  // Highlight active nav link
   document.querySelectorAll('.nav-link').forEach(link => {
     if (link.getAttribute('href') === currentPage) {
       link.classList.remove('text-gray-400', 'hover:bg-gray-800', 'hover:text-white');
@@ -204,7 +212,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (main) main.className = "flex-1 p-8 overflow-y-auto";
 
     window.appTheme = theme;
-  // Inject Profile Password Modal
   document.body.insertAdjacentHTML('beforeend', `
     <div id="adminPasswordModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
       <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">

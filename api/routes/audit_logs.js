@@ -2,7 +2,6 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
-// --- AUDIT LOG API ---
 app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) => {
     const { search, result, start_date, end_date } = req.query;
     const paginated = req.query.page !== undefined;

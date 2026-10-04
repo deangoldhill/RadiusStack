@@ -9,7 +9,7 @@
 <body>
 <main>
 
-  <!-- Page Header -->
+  
   <div class="flex justify-between items-center mb-6">
     <h1 class="text-3xl font-bold text-gray-800">System Settings</h1>
     <button onclick="saveSettings()" class="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-5 py-2 rounded-lg font-bold shadow-sm">Save Configuration</button>
@@ -18,10 +18,10 @@
 
   <div class="space-y-6">
 
-    <!-- ── Row 1: General + TOTP ── -->
+    
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-      <!-- General Configuration -->
+      
       <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -86,7 +86,7 @@
         </div>
       </div>
 
-      <!-- TOTP Settings -->
+      
       <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center">
@@ -114,7 +114,7 @@
       <div class="p-6 space-y-3"><div><input id="attributeCatalogueSearch" type="search" oninput="renderAttributeCatalogue()" placeholder="Search standard or vendor attributes" class="w-full border border-blue-200 p-2.5 rounded-lg text-sm bg-white shadow-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"><p class="text-xs text-slate-500 mt-1.5">VLAN is controlled only by the Profile VLAN control. Add a standard or vendor reply attribute for profiles and NAS selection.</p></div><div id="attributeCatalogueResults" class="max-h-56 overflow-y-auto text-sm space-y-2 pr-1"></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 border-t pt-3"><input id="manualVsaVendorLabel" placeholder="Vendor label (optional)" class="border p-2 rounded-lg text-sm"><input id="manualVsaVendorCode" type="number" min="1" max="4294967295" placeholder="Vendor code" class="border p-2 rounded-lg text-sm"><input id="manualVsaAttributeNumber" type="number" min="1" max="255" placeholder="Vendor attribute number" class="border p-2 rounded-lg text-sm"><input id="manualVsaName" placeholder="Attribute name" class="border p-2 rounded-lg text-sm"><select id="manualVsaValueType" class="border p-2 rounded-lg text-sm"><option value="string">string</option><option value="integer">integer</option><option value="ipv4">ipv4</option><option value="octets">octets</option></select><button type="button" onclick="addManualVsa()" class="bg-gradient-to-r from-slate-700 to-slate-900 hover:from-slate-800 hover:to-slate-950 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow transition-all focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Add custom VSA</button></div><div id="savedReplyAttributes" class="text-sm space-y-1"></div></div>
     </section>
 
-      <!-- Syslog / SIEM Forwarding -->
+      
     <div id="siemForwardingCard" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
@@ -175,7 +175,7 @@
     </div>
 
 
-<!-- MAC Auth Autocreate Configuration -->
+
       <div id="macAuthAutocreateCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -216,7 +216,7 @@
       </div>
     </div>
 
-      <!-- Session Management Settings -->
+      
       <div data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
         <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center gap-3">
           <div class="p-2 bg-yellow-100 rounded-lg text-yellow-600">
@@ -276,7 +276,7 @@
           </div>
         </div>
 
-        <!-- Auth Log Auto-Purge -->
+        
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div class="flex items-center gap-3 mb-4">
             <input type="checkbox" id="authlogsPurgeEnabled" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
@@ -298,8 +298,12 @@
           </div>
         </div>
 
-        <!-- Radius Stats Maintenance -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-4">
+
+
+      </div>
+
+        
+        <div id="radiusStatsMaintenance" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-4">
           <div class="flex items-center gap-3 mb-4">
             <div class="p-2 bg-indigo-100 rounded-lg text-indigo-600">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -344,10 +348,8 @@
           </div>
         </div>
 
-      </div>
 
 
-<!-- ── Row 2: Backup & Restore ── -->
     <div id="globalBackupRestore" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
@@ -357,7 +359,7 @@
       </div>
       <div class="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-        <!-- Export -->
+        
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50">
           <div class="flex items-center gap-2 mb-4">
             <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
@@ -403,7 +405,7 @@
           </div>
         </div>
 
-        <!-- Restore -->
+        
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50">
           <div class="flex items-center gap-2 mb-4">
             <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
@@ -421,7 +423,7 @@
       </div>
     </div>
 
-    <!-- ── Row 3: Certificates ── -->
+    
     <div id="globalCertificateManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-yellow-50 flex items-center justify-center">
@@ -431,7 +433,7 @@
       </div>
       <div class="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
 
-        <!-- Generate -->
+        
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50">
           <h3 class="font-bold text-sm text-gray-700 mb-1">Generate New Certificate
             <span class="ml-1 text-gray-400 cursor-help font-normal" title="Replaces existing certs and restarts RADIUS">&#9432;</span>
@@ -449,7 +451,7 @@
           </form>
         </div>
 
-        <!-- Upload -->
+        
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50">
           <h3 class="font-bold text-sm text-gray-700 mb-1">Upload Custom Certificate
             <span class="ml-1 text-gray-400 cursor-help font-normal" title="Upload your own .pem and .key files">&#9432;</span>
@@ -475,7 +477,7 @@
           </form>
         </div>
 
-        <!-- Active Cert Details -->
+        
         <div class="border border-gray-100 rounded-xl p-5 bg-gray-50 flex flex-col">
           <div class="flex justify-between items-center mb-3">
             <h3 class="font-bold text-sm text-gray-700">Active Certificate</h3>
@@ -492,7 +494,7 @@
       </div>
     </div>
 
-    <!-- ── Row 4: System Health ── -->
+    
     <div id="globalContainerManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
         <div class="flex items-center gap-3">
@@ -520,7 +522,7 @@
 
   </div>
 
-        <!-- HA Settings Panel -->
+        
         <div id="globalHaSettings" data-settings-scope="global" hidden class="bg-white p-6 rounded-lg shadow-md mb-6">
             <h2 class="text-lg font-semibold mb-4 text-gray-800">High Availability Status</h2>
             <div id="haStatusContainer" class="text-sm">
@@ -619,9 +621,9 @@
             });
         </script>
 
-</main>
+<section id="tenantRadsecCard" data-settings-scope="tenant" hidden class="bg-amber-50 border border-amber-300 rounded-xl p-6 mt-6"><h2 class="font-bold text-amber-950">Tenant RadSec CA</h2><p class="text-sm text-amber-900 mt-1">This tenant CA signs NAS client certificates. Rotating it revokes every current tenant NAS client certificate; issue replacements from each NAS client.</p><label class="flex gap-2 mt-3 font-semibold"><input id="radsecEnabled" type="checkbox"> Enable TLS (RadSec) listener for this tenant</label><p id="radsecStatus" class="text-sm mt-2"></p><div class="flex flex-wrap gap-2 mt-3"><button type="button" onclick="provisionRadsec()" class="bg-amber-700 text-white px-3 py-2 rounded font-bold">Provision tenant CA</button><button type="button" onclick="downloadTenantRadsec('ca')" class="bg-white border border-amber-600 text-amber-900 px-3 py-2 rounded font-bold">Download tenant CA</button></div></section></main>
 
-<!-- Logs Modal -->
+
 <div id="logsModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
   <div class="bg-gray-900 w-full max-w-6xl rounded-xl shadow-2xl overflow-hidden flex flex-col h-[85vh] border border-gray-700">
     <div class="flex justify-between items-center p-4 bg-gray-800 text-white border-b border-gray-700">
@@ -705,7 +707,7 @@
   function saveCatalogueAttribute(index) { const a=window.catalogueMatches[index]; if (!a || savedCustomAttributes.some(x=>attributeKey(x)===attributeKey(a))) return; savedCustomAttributes.push({ name:a.name, value_type:a.value_type, vendor_label:a.vendor, vendor_code:a.vendor_code, vendor_attribute_number:a.vendor_attribute_number, source:'catalogue' }); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
   function addManualVsa() { const vendor_code=Number(document.getElementById('manualVsaVendorCode').value), vendor_attribute_number=Number(document.getElementById('manualVsaAttributeNumber').value), name=document.getElementById('manualVsaName').value.trim(); if (!Number.isInteger(vendor_code)||vendor_code<1||vendor_code>4294967295||!Number.isInteger(vendor_attribute_number)||vendor_attribute_number<1||vendor_attribute_number>255||!name) return alert('Vendor code, vendor attribute number, and attribute name are required.'); savedCustomAttributes.push({vendor_label:document.getElementById('manualVsaVendorLabel').value.trim() || undefined,vendor_code,vendor_attribute_number,name,value_type:document.getElementById('manualVsaValueType').value,source:'custom'}); ['manualVsaVendorLabel','manualVsaVendorCode','manualVsaAttributeNumber','manualVsaName'].forEach(id=>document.getElementById(id).value=''); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
   async function loadReplyAttributeCatalogue() { const res=await apiFetch('/api/settings/reply-attribute-catalogue'); if(res.ok) { const data=await res.json(); catalogueAttributes=data.attributes || []; renderAttributeCatalogue(); } }
-  const TENANT_SETTING_FIELDS = ['custom_reply_attributes','enforce_2fa','mask_user_passwords','mac_auth_autocreate','mac_auth_autocreate_plan','mac_auth_autocreate_profile','mac_auth_autocreate_interval','clear_stale_sessions','stale_session_threshold','stale_session_interim_threshold_minutes','stale_session_interval','radius_stats_retention_days','radius_stats_purge_interval','radius_stats_poll_interval'];
+  const TENANT_SETTING_FIELDS = ['custom_reply_attributes','enforce_2fa','mask_user_passwords','mac_auth_autocreate','mac_auth_autocreate_plan','mac_auth_autocreate_profile','mac_auth_autocreate_interval','clear_stale_sessions','stale_session_threshold','stale_session_interim_threshold_minutes','stale_session_interval','radsec_enabled'];
   const GLOBAL_SETTING_FIELDS = ['multi_tenant_enabled','radius_debug','api_debug','custom_reply_attributes','ui_theme','totp_enrollment_hours','authlogs_purge_enabled','authlogs_purge_days','authlogs_purge_interval','syslog_enabled','syslog_host','syslog_port','syslog_protocol','syslog_send_audit','syslog_send_authlogs'];
   const fieldsForScope = () => localStorage.getItem('activeTenantId') === 'global' || !window.multiTenantEnabled ? GLOBAL_SETTING_FIELDS : TENANT_SETTING_FIELDS;
   function resolveSettingsContext() { const context=window.radiusstackContext; if(!context) throw new Error('Unable to load tenant context'); window.multiTenantEnabled=context.multiTenantEnabled===true; window.currentAdminSuper=context.is_super_admin===true; window.availableTenants=Array.isArray(context.tenants)?context.tenants:[]; const multiTenantToggle=document.getElementById('multiTenantEnabled'); if (multiTenantToggle) multiTenantToggle.checked = context.multiTenantEnabled === true; return context; }
@@ -810,6 +812,7 @@
       ui_theme: document.getElementById('uiTheme').value,
       totp_enrollment_hours: document.getElementById('totpEnrollmentHours').value || '24',
       mask_user_passwords: document.getElementById('maskUserPasswords').checked ? 'true' : 'false',
+      radsec_enabled: document.getElementById('radsecEnabled')?.checked ? 'true' : 'false',
       mac_auth_autocreate: document.getElementById('macAuthAutocreate').checked ? 'true' : 'false',
       mac_auth_autocreate_plan: document.getElementById('macAuthAutocreatePlan').value,
       mac_auth_autocreate_profile: document.getElementById('macAuthAutocreateProfile').value,
@@ -1031,5 +1034,16 @@
     }
 
 </script>
+<script>
+async function radsecFetch(path, options={}) { options.headers={...(options.headers||{}),...settingsScopeHeaders()}; return apiFetch(path,options); }
+async function loadRadsec(){ if(fieldsForScope()!==TENANT_SETTING_FIELDS)return; const card=document.getElementById('tenantRadsecCard'); card.hidden=false; const r=await radsecFetch('/api/tenant-radsec/status'); if(r.ok){const x=await r.json();document.getElementById('radsecEnabled').checked=x.enabled;document.getElementById('radsecStatus').textContent=(x.enabled?'Enabled':'Disabled')+'; '+(x.provisioned?'certificates provisioned':'certificate provisioning required')+'; active clients: '+x.clients;}}
+async function saveRadsec(){const r=await radsecFetch('/api/settings',{method:'POST',body:JSON.stringify({radsec_enabled:document.getElementById('radsecEnabled').checked?'true':'false'})}); if(!r.ok)alert((await r.json()).error||'Unable to save'); else loadRadsec();}
+async function provisionRadsec(){if(!confirm('Provision tenant CA?'))return;const r=await radsecFetch('/api/tenant-radsec/provision',{method:'POST'});if(!r.ok)alert((await r.json()).error||'Provisioning failed');else loadRadsec();}
+async function downloadTenantRadsec(kind){const r=await radsecFetch('/api/tenant-radsec/download/'+kind);if(!r.ok){alert((await r.json()).error||'Download failed');return;}const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=kind==='ca'?'tenant-radsec-client-ca.pem':kind==='server-trust-ca'?'radsec-server-trust-ca.pem':'radsec-server-leaf.pem';a.click();URL.revokeObjectURL(a.href);}
+document.addEventListener('radiusstack:tenant-context-ready',()=>setTimeout(loadRadsec,0));
+
+    async function rotateTenantCa(){const confirmation=prompt("This revokes all tenant NAS client certificates. Type ROTATE_CA to continue:");if(confirmation!=="ROTATE_CA")return;const r=await radsecFetch("/api/tenant-radsec/ca/rotate",{method:"POST",body:JSON.stringify({confirm:"ROTATE_CA"})});if(!r.ok)return alert((await r.json()).error||"Tenant CA rotation failed");alert("Tenant CA rotated. Generate replacement client credentials for each TLS NAS.");loadRadsec();}
+    document.addEventListener("radiusstack:tenant-context-ready",()=>{const b=document.createElement("button");b.type="button";b.textContent="Rotate tenant CA";b.className="bg-red-700 text-white px-3 py-2 rounded font-bold mt-2";b.onclick=rotateTenantCa;document.getElementById("tenantRadsecCard").appendChild(b);});
+</script>  <script src="/js/field-help.js"></script>
 </body>
 </html>

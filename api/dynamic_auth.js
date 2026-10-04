@@ -22,9 +22,10 @@ function requiredText(value, label) {
   return value;
 }
 function sessionIdentifiers(session, packetAttributes) {
-  if (!session || net.isIP(session.nasipaddress) !== 4) throw new Error('Invalid active-session NAS IP');
-  const values = {'User-Name':requiredText(session.username,'session username'),'Acct-Session-Id':requiredText(session.acctsessionid,'accounting session ID'),'NAS-IP-Address':session.nasipaddress,'NAS-Identifier':requiredText(session.nasidentifier,'accounting NAS-Identifier'),'Calling-Station-Id':requiredText(session.callingstationid,'calling station ID'),'Framed-IP-Address':requiredText(session.framedipaddress,'framed IP')};
-  return packetAttributes.filter(name => name !== 'Profile-Reply-Attributes').map(name => [name, values[name]]);
+  if (!session || net.isIP(session.nasipaddress) !== 4) throw new Error("Invalid active-session NAS IP");
+  const values = {"User-Name": session.username, "Acct-Session-Id": session.acctsessionid, "NAS-IP-Address": session.nasipaddress, "NAS-Identifier": session.nasidentifier, "Calling-Station-Id": session.callingstationid, "Framed-IP-Address": session.framedipaddress};
+  const labels = {"User-Name": "session username", "Acct-Session-Id": "accounting session ID", "NAS-Identifier": "accounting NAS-Identifier", "Calling-Station-Id": "calling station ID", "Framed-IP-Address": "framed IP"};
+  return packetAttributes.filter(name => name !== "Profile-Reply-Attributes").map(name => [name, name === "NAS-IP-Address" ? values[name] : requiredText(values[name], labels[name])]);
 }
 function buildDynamicAuthorizationRequest({ kind, session, replyAttributes = [], packetAttributes = DEFAULT_DYNAMIC_AUTH_ATTRIBUTES }) {
   if (kind !== 'coa' && kind !== 'pod') throw new Error('Invalid dynamic authorization request type');

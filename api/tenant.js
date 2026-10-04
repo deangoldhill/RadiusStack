@@ -18,5 +18,5 @@ async function loadTenantScope(pool, admin, requestedTenantId) {
   const [memberships] = await pool.query('SELECT tenant_id FROM admin_tenants WHERE admin_id = ?', [admin.id]);
   return resolveTenantScope({ multiTenantEnabled: enabled, admin, memberships: memberships.map(r => r.tenant_id), requestedTenantId });
 }
-function scope(scope, column = 'tenant_id') { return scope.enabled ? { sql: ` AND ${column} = ?`, params: [scope.tenantId] } : { sql: '', params: [] }; }
+function scope(scope, column = 'tenant_id') { return scope.enabled ? { sql: ` AND ${column} = ?`, params: [scope.tenantId] } : { sql: ` AND ${column} IS NULL`, params: [] }; }
 module.exports = { isSingleIPv4, resolveTenantScope, loadTenantScope, scope };

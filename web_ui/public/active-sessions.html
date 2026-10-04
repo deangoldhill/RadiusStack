@@ -103,7 +103,7 @@
             </div>
         </div>
 
-        <!-- Filters -->
+        
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-5">
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
                 <div>
@@ -130,7 +130,7 @@
             </div>
         </div>
 
-        <!-- Table -->
+        
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap" id="sessTable">
                 <thead>
@@ -154,7 +154,7 @@
         </div><div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm"><span id="pageSummary" class="text-gray-500"></span><div class="flex items-center gap-2"><label>Rows <select id="pageSize" onchange="changePageSize()" class="border rounded p-1"><option>25</option><option>50</option><option>100</option></select></label><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div></div>
     </main>
 
-    <!-- Details Modal -->
+    
     <div id="detailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50 p-4">
         <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden">
             <div class="flex justify-between items-center p-4 border-b bg-gray-50">
@@ -168,9 +168,9 @@
                 </div>
             </div>
             <div class="p-5 overflow-y-auto flex-1">
-                <!-- KPI strip -->
+                
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5" id="modalKpis"></div>
-                <!-- Full fields table -->
+                
                 <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">All Fields</h3>
                 <table class="w-full text-left text-sm border-collapse rounded-lg overflow-hidden">
                     <tbody id="modalBody"></tbody>
@@ -570,7 +570,7 @@
             const totalAuths = (r.authStats || []).reduce((n, a) => n + Number(a.count), 0);
 
             return `
-            <!-- Quick KPI row: 24h / 7d -->
+            
             <div class="mb-5">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Activity — Last 24 h vs Last 7 d</h3>
               <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -614,10 +614,10 @@
               </div>
             </div>
 
-            <!-- Plan Usage -->
+            
             ${planInfo}
 
-            <!-- Auth Summary -->
+            
             <div class="mb-5">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Authentication Summary (All Time)</h3>
               <div class="grid grid-cols-3 gap-3">
@@ -636,7 +636,7 @@
               </div>
             </div>
 
-            <!-- All-time stats -->
+            
             <div class="mb-5">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">All-Time Accounting</h3>
               <div class="grid grid-cols-2 gap-3">
@@ -669,7 +669,7 @@
               </div>
             </div>
 
-            <!-- NAS Breakdown -->
+            
             ${(r.nasStats && r.nasStats.length > 0) ? `
             <div class="mb-4">
               <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">NAS Breakdown</h3>
@@ -849,7 +849,7 @@
             }
 
             var countEl = document.getElementById('sessionCount');
-            if (countEl) countEl.textContent = filtered.length;
+            if (countEl) countEl.textContent = showingStale ? filtered.length : totalRecords;
 
             if (!filtered.length) {
                 tbody.innerHTML = '<tr><td colspan="11" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
@@ -921,7 +921,9 @@
         // Close on Escape
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideModal(); });
 
-        init();
+        document.addEventListener('radiusstack:tenant-context-ready', init, { once: true });
     </script>
+
+  <script src="/js/field-help.js"></script>
 </body>
 </html>

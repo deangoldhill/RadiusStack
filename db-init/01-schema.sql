@@ -88,9 +88,10 @@ CREATE TABLE IF NOT EXISTS mac_auth_devices (
     KEY idx_mac_auth_mac_id (mac_id)
 );
 
--- Optional multi-tenancy; disabled until explicitly enabled.
-INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('multi_tenant_enabled', 'false');
+-- Multi-tenancy is mandatory. Global is reserved for platform controls.
+INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('multi_tenant_enabled', 'true');
 CREATE TABLE IF NOT EXISTS tenants (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL UNIQUE, description VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+INSERT IGNORE INTO tenants (name, description) VALUES ('Default', 'Default operational tenant');
 CREATE TABLE IF NOT EXISTS admin_tenants (admin_id INT NOT NULL, tenant_id INT NOT NULL, PRIMARY KEY (admin_id,tenant_id), FOREIGN KEY (admin_id) REFERENCES admins(id) ON DELETE CASCADE, FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);
 -- Tenant configuration is deliberately separate from platform settings. Never copy global values into this table at read time.
 CREATE TABLE IF NOT EXISTS tenant_settings (
@@ -121,3 +122,47 @@ ALTER TABLE admin_audit_log ADD COLUMN IF NOT EXISTS tenant_id INT NULL, ADD KEY
 ALTER TABLE plans DROP INDEX name, ADD UNIQUE KEY uq_plans_tenant_name (tenant_id,name);
 ALTER TABLE radgroupcheck ADD UNIQUE KEY uq_radgroupcheck_tenant_group_attribute_value (tenant_id,groupname,attribute,value);
 ALTER TABLE radgroupreply ADD UNIQUE KEY uq_radgroupreply_tenant_group_attribute (tenant_id,groupname,attribute);
+
+-- Migrate every former single-tenant operational row into Default before tenant IDs become mandatory.
+SET @default_tenant_id = (SELECT id FROM tenants WHERE name = 'Default' LIMIT 1);
+UPDATE nas SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radcheck SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radreply SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radusergroup SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radgroupcheck SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radgroupreply SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE plans SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE mac_auth_devices SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE user_plans SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE user_plan_usage SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE user_totp SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radacct SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+UPDATE radpostauth SET tenant_id = @default_tenant_id WHERE tenant_id IS NULL;
+ALTER TABLE nas MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radcheck MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radreply MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radusergroup MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radgroupcheck MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radgroupreply MODIFY tenant_id INT NOT NULL;
+ALTER TABLE plans MODIFY tenant_id INT NOT NULL;
+ALTER TABLE mac_auth_devices MODIFY tenant_id INT NOT NULL;
+ALTER TABLE user_plans MODIFY tenant_id INT NOT NULL;
+ALTER TABLE user_plan_usage MODIFY tenant_id INT NOT NULL;
+ALTER TABLE user_totp MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radacct MODIFY tenant_id INT NOT NULL;
+ALTER TABLE radpostauth MODIFY tenant_id INT NOT NULL;
+
+-- Per-plan automatic PoD is opt-in. Outcomes are durable and never retried automatically.
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS auto_pod_on_data_depleted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS auto_pod_on_time_depleted BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS plan_pod_enforcements (
+  radacctid BIGINT(21) NOT NULL, tenant_id INT NULL, reason ENUM('data','time') NOT NULL,
+  status ENUM('pending','acknowledged','nak','failed') NOT NULL, error_message VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME NULL,
+  PRIMARY KEY (radacctid, reason), KEY idx_plan_pod_enforcements_tenant_status (tenant_id, status),
+  CONSTRAINT fk_plan_pod_enforcements_session FOREIGN KEY (radacctid) REFERENCES radacct(radacctid) ON DELETE CASCADE
+);
+
+-- Tenant-scoped RadSec state; private material is stored only in the radsec_volume.
+ALTER TABLE nas ADD COLUMN IF NOT EXISTS radsec_enabled TINYINT(1) NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS radsec_clients ( id BIGINT AUTO_INCREMENT PRIMARY KEY, tenant_id INT NOT NULL, nas_id INT NOT NULL, serial VARCHAR(64) NOT NULL, common_name VARCHAR(128) NOT NULL, certificate_path VARCHAR(255) NOT NULL, issued_at DATETIME NOT NULL, revoked_at DATETIME NULL, UNIQUE KEY uq_radsec_client_serial (serial), KEY idx_radsec_clients_tenant_nas (tenant_id,nas_id), CONSTRAINT fk_radsec_clients_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE, CONSTRAINT fk_radsec_clients_nas FOREIGN KEY (nas_id) REFERENCES nas(id) ON DELETE CASCADE );

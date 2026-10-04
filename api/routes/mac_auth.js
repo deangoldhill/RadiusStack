@@ -58,7 +58,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const joinParams = req.tenantScope.enabled ? [req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId] : [];
             const clause = `WHERE ${where.join(' AND ')}${scoped.sql}`;
             const params = [...joinParams, ...values, ...scoped.params];
-            const fields = 'm.mac_id, m.mac_address, g.groupname AS profile, up.plan_id, p.name AS plan_name, 0 AS data_30d, 0 AS time_30d, 0 AS sessions_30d, NULL AS last_online, sr.value AS static_ip';
+            const fields = `m.mac_id, m.mac_address, g.groupname AS profile, up.plan_id, p.name AS plan_name, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id) AS last_online, sr.value AS static_ip`;
             if (!paginated) { const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY m.mac_id ASC`, params); return res.json(rows); }
             const [[count]] = await pool.query(`SELECT COUNT(*) AS total ${joins} ${clause}`, params);
             const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY ${sort} ${order}, m.mac_address ASC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
@@ -116,6 +116,8 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             await conn.beginTransaction();
             if (!await macExists(conn, req, address)) { await conn.rollback(); return res.status(404).json({ error: 'MAC device not found in selected tenant' }); }
             const scoped = tenantScope(req);
+            const radreplyScope = tenantScope(req, 'tenant_id');
+            await conn.query('DELETE FROM radreply WHERE username = ?' + radreplyScope.sql, [address, ...radreplyScope.params]);
             for (const table of ['mac_auth_devices', 'radcheck', 'radusergroup', 'user_plans', 'user_plan_usage', 'user_totp']) await conn.query(`DELETE FROM ${table} WHERE ${table === 'mac_auth_devices' ? 'mac_address' : 'username'} = ?` + scoped.sql, [address, ...scoped.params]);
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Deleted MAC device: ${address}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC device deleted' });
         } catch (err) { await conn.rollback(); res.status(500).json({ error: err.message }); } finally { conn.release(); }

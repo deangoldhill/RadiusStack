@@ -18,4 +18,5 @@ window.closeTenantModal = function() { document.getElementById('tenantModal').cl
 document.getElementById('tenantForm').onsubmit = async event => { event.preventDefault(); const id = document.getElementById('tenantId').value; const body = JSON.stringify({ name: document.getElementById('tenantName').value.trim(), description: document.getElementById('tenantDescription').value.trim() }); const response = id ? await apiFetch(`/api/tenants/${id}`, { method: 'PUT', body }) : await apiFetch('/api/tenants', { method: 'POST', body }); if (!response.ok) return alert((await response.json()).error || 'Unable to save tenant'); closeTenantModal(); load(); };
 window.del = async function(id) { if (!confirm('Delete this tenant?')) return; const response = await apiFetch('/api/tenants/' + id, {method:'DELETE'}); if (!response.ok) return alert((await response.json()).error || 'Unable to delete tenant'); load(); };
 load();
-</script></body></html>
+</script>  <script src="/js/field-help.js"></script>
+</body></html>

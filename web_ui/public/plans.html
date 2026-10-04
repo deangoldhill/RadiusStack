@@ -30,11 +30,11 @@
   </main>
 
   
-  <!-- Plan Detail Drawer -->
+  
   <div id="planDetailOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40 backdrop-blur-sm" onclick="closePlanDetails()"></div>
   <div id="planDetailPanel" class="fixed top-0 right-0 h-full w-full max-w-lg bg-white shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col overflow-hidden border-l border-gray-100">
 
-    <!-- Header -->
+    
     <div class="px-6 py-5 bg-gradient-to-br from-blue-50 to-indigo-50 border-b border-gray-100 flex justify-between items-start flex-shrink-0">
       <div class="flex items-center gap-3">
         <div class="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xl shadow-inner shadow-blue-800" id="dpPlanIcon">
@@ -50,10 +50,10 @@
       </button>
     </div>
 
-    <!-- Body content -->
+    
     <div class="flex-1 overflow-y-auto p-6 bg-gray-50 space-y-6" id="dpBody">
 
-      <!-- Top Stats Row -->
+      
       <div class="grid grid-cols-2 gap-4">
         <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-center">
           <span class="text-xs font-bold text-gray-500 uppercase tracking-wide">Total Users</span>
@@ -73,7 +73,7 @@
         </div>
       </div>
 
-      <!-- Limits Box -->
+      
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="bg-gray-50 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
           <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
@@ -91,7 +91,7 @@
         </div>
       </div>
 
-      <!-- Top Users List -->
+      
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="bg-gray-50 px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <div class="flex items-center gap-2">
@@ -100,7 +100,7 @@
           </div>
         </div>
         <div class="divide-y divide-gray-100" id="dpTopUsersList">
-          <!-- Populated dynamically -->
+          
         </div>
       </div>
 
@@ -131,6 +131,12 @@
             <option value="weekly">Weekly (Monday)</option>
             <option value="monthly">Monthly (1st of Month)</option>
         </select></div>
+
+        <fieldset class="border rounded-lg p-3 space-y-2"><legend class="px-1 text-sm font-bold text-gray-700">Automatic session disconnect (PoD)</legend>
+          <p class="text-xs text-gray-500">Only enabled limits trigger a server-side PoD. A failed or rejected request is recorded and not retried automatically.</p>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="pAutoPodData" class="h-4 w-4"> Disconnect active sessions when data allowance is depleted</label>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="pAutoPodTime" class="h-4 w-4"> Disconnect active sessions when time allowance is depleted</label>
+        </fieldset>
 
         <div class="flex justify-end space-x-3 pt-4 border-t">
           <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
@@ -283,6 +289,8 @@ function openModal(id = null) {
             document.getElementById('pData').value = p.data_limit_mb;
             document.getElementById('pTime').value = p.time_limit_seconds / 3600;
             document.getElementById('pReset').value = p.reset_period;
+            document.getElementById('pAutoPodData').checked = Number(p.auto_pod_on_data_depleted) === 1;
+            document.getElementById('pAutoPodTime').checked = Number(p.auto_pod_on_time_depleted) === 1;
         } else {
             document.getElementById('modalTitle').textContent = 'Create Plan';
             document.getElementById('planId').value = '';
@@ -304,7 +312,9 @@ function openModal(id = null) {
             name: document.getElementById('pName').value,
             data_limit_mb: parseInt(document.getElementById('pData').value) || 0,
             time_limit_seconds: Math.floor(parseFloat(document.getElementById('pTime').value) * 3600) || 0,
-            reset_period: document.getElementById('pReset').value
+            reset_period: document.getElementById('pReset').value,
+            auto_pod_on_data_depleted: document.getElementById('pAutoPodData').checked,
+            auto_pod_on_time_depleted: document.getElementById('pAutoPodTime').checked
         };
 
         const url = id ? `/api/plans/${id}` : '/api/plans';
@@ -317,4 +327,5 @@ function openModal(id = null) {
 
     loadPlans();
   </script>
+  <script src="/js/field-help.js"></script>
 </body></html>

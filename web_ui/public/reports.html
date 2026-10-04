@@ -63,9 +63,7 @@
             } catch (e) {}
         }
 
-            document.addEventListener('DOMContentLoaded', () => {
-            loadRadiusStats();
-        });
+
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js">
         // ── RADIUS STATS ──
@@ -126,9 +124,7 @@
             } catch (e) {}
         }
 
-            document.addEventListener('DOMContentLoaded', () => {
-            loadRadiusStats();
-        });
+
     </script>
     <style>
         @keyframes pulse-ring {
@@ -177,7 +173,7 @@
     <main>
         <h1 class="text-3xl font-bold mb-6">Reports & Analytics</h1>
 
-        <!-- ═══ LIVE STATS PANEL ═══ -->
+        
         <div class="mb-8">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-2">
@@ -244,7 +240,7 @@
             </div>
         </div>
 
-        <!-- ═══ TOP 20 CHARTS ═══ -->
+        
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div class="bg-white p-4 rounded shadow flex flex-col"><h2 class="text-lg font-bold mb-4 text-gray-800">Top 20 Users by Sessions (Last 7 Days)</h2><div class="relative flex-1 min-h-[250px]"><canvas id="topSessionsChart"></canvas></div></div>
             <div class="bg-white p-4 rounded shadow flex flex-col"><h2 class="text-lg font-bold mb-4 text-gray-800">Top 20 Users by Data Usage (Last 7 Days)</h2><div class="relative flex-1 min-h-[250px]"><canvas id="topDataChart"></canvas></div></div>
@@ -253,7 +249,7 @@
         <hr class="my-8">
 
         
-        <!-- ── RADIUS Server Stats with Date Range (Global only) ───────────── -->
+        
         <section id="globalRadiusStats" hidden>
         <div class="mb-8">
             <div class="flex justify-between items-center mb-4 border-b pb-2">
@@ -293,7 +289,7 @@
         </section>
 
 
-        <!-- ═══ USER REPORT ═══ -->
+        
         <div class="grid grid-cols-2 gap-6">
             <div class="bg-white p-6 rounded shadow">
                 <h2 class="text-xl font-bold mb-4 border-b pb-2 text-blue-600">User-Specific Executive Report</h2>
@@ -308,7 +304,7 @@
                 <div id="userReport" class="mt-8 hidden"></div>
             </div>
 
-            <!-- ═══ FAILED AUTH ═══ -->
+            
             <div class="bg-white p-6 rounded shadow">
                 <h2 class="text-xl font-bold mb-4 border-b pb-2 text-red-600">Failed Authentication Analysis</h2>
                 <button onclick="loadFailedReport()" class="bg-red-600 text-white px-4 py-2 rounded w-full font-bold">Generate Failed Auth Report</button>
@@ -376,9 +372,7 @@
             } catch (e) {}
         }
 
-            document.addEventListener('DOMContentLoaded', () => {
-            loadRadiusStats();
-        });
+
     </script>
     <script>
         // ── Helpers ──────────────────────────────────────────────────────────────
@@ -731,5 +725,6 @@
             if (!globalRadiusStats.hidden) loadRadiusStats();
         });
     </script>
+  <script src="/js/field-help.js"></script>
 </body>
 </html>

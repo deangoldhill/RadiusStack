@@ -1,41 +1,40 @@
 #!/bin/sh
+set -eu
 mkdir -p /certs_shared
 if [ ! -f /certs_shared/server.pem ]; then
     echo "Generating default 10-year CA and EAP certificates..."
-    # Generate CA
     openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509         -keyout /certs_shared/ca.key -out /certs_shared/ca.pem         -subj "/C=US/ST=State/L=City/O=RadiusCA/CN=RadiusCA"
 
-    # Generate Server Key & CSR
     openssl req -new -newkey rsa:2048 -nodes         -keyout /certs_shared/server.key -out /certs_shared/server.csr         -subj "/C=US/ST=State/L=City/O=Radius/CN=RadiusServer"
 
-    # Sign Server Cert with CA
     openssl x509 -req -days 3650 -in /certs_shared/server.csr         -CA /certs_shared/ca.pem -CAkey /certs_shared/ca.key -CAcreateserial         -out /certs_shared/server.pem
 
-    # Clean up CSR
     rm -f /certs_shared/server.csr /certs_shared/ca.srl
 fi
 
 chmod 644 /certs_shared/ca.key /certs_shared/ca.pem /certs_shared/server.key /certs_shared/server.pem
 
-# Use env vars injected by Docker Compose (from container_config.env)
 DB_HOST="${DB_HOST:-mariadb}"
 DB_USER="${DB_USER:-radius}"
 DB_PASS="${DB_PASSWORD:-}"
 DB_NAME="${DB_NAME:-radius}"
 
+DB_DEFAULTS=/run/radiusstack-radsec-db.cnf
+umask 077
+printf "[client]\nhost=%s\nuser=%s\npassword=%s\ndatabase=%s\n" "$DB_HOST" "$DB_USER" "$DB_PASS" "$DB_NAME" > "$DB_DEFAULTS"
+chmod 0600 "$DB_DEFAULTS"
+
 echo "Waiting for MariaDB at ${DB_HOST}..."
-until mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -e "SELECT 1" >/dev/null 2>&1; do
+until mysql --skip-ssl -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -e "SELECT 1" >/dev/null 2>&1; do
     sleep 2
 done
 
-# No raw dictionary text enters this container: derive a bounded include from saved
-# structured VSA fields after DB availability and before FreeRADIUS parses config.
 /usr/local/sbin/generate-vsa-dictionary
+/usr/local/sbin/generate-radsec-listener
 
-DEBUG_MODE=$(mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -N -B \
+DEBUG_MODE=$(mysql --skip-ssl -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -N -B \
     -e "SELECT setting_value FROM settings WHERE setting_key='radius_debug';" 2>/dev/null)
 
-# Locate the radiusd executable robustly
 if command -v radiusd >/dev/null 2>&1; then
     RAD_CMD="radiusd"
 elif [ -x "/opt/sbin/radiusd" ]; then
@@ -57,9 +56,8 @@ if [ -z "$RAD_CMD" ]; then
 fi
 
 if [ "$DEBUG_MODE" = "true" ]; then
-    echo "Starting FreeRADIUS ($RAD_CMD) in DEBUG mode (-X)..."
-    exec "$RAD_CMD" -X
+    echo "Starting FreeRADIUS ($RAD_CMD) with threaded foreground logging; RadSec TLS requires worker threads..."
 else
-    echo "Starting FreeRADIUS ($RAD_CMD) in NORMAL mode (logging to stdout)..."
-    exec "$RAD_CMD" -f -l stdout
+    echo "Starting FreeRADIUS ($RAD_CMD) in normal threaded foreground mode..."
 fi
+exec "$RAD_CMD" -fxx -l stdout

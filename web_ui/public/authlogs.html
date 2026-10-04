@@ -237,7 +237,8 @@
         if (urlParams.has('date_from')) document.getElementById('dateFrom').value = urlParams.get('date_from');
         if (urlParams.has('date_to')) document.getElementById('dateTo').value = urlParams.get('date_to');
 
-        loadLogs();
+        document.addEventListener('radiusstack:tenant-context-ready', loadLogs, { once: true });
     </script>
+  <script src="/js/field-help.js"></script>
 </body>
 </html>
