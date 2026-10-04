@@ -5,6 +5,12 @@ A complete, modern, containerized RADIUS authentication stack designed for ease 
 Useful for managing Wi-Fi access points, remote access, or network appliance logins, RadiusStack provides full control over users, usage plans, profile attributes, and feature riich monitoring and analytics.
 Designed for security and simplicity. 
 
+**On-prem or SaaS deployment:**
+Either deploy on-prem as a multi container stack.
+Or sign up for a free SaaS tenant and optionally use the Radsec proxy to tunnel over Radsec TLS.
+Both options are 100% free, now and forever!
+See https://radius-stack.com for further detail.
+
 **Try the demo:**
 https://demo.radius-stack.com  
 admin account:  admin / demo123  
@@ -13,7 +19,8 @@ Reports account:  reports / demo123
 ## Key Features
 * **Modern Web Interface:** WebUI frontend for managing NAS clients, users, profiles, plans etc. Also view logs for all containers within the webui.
 * **Full REST API:** The managment application is an API server. The Webui only interacts with the API and therefore doesn't have access to the backend database.
-* **Advanced Security:** Supports Time-Based One-Time Passwords (TOTP) for radius users and Webui administrators
+* **Advanced Security:** Supports Time-Based One-Time Passwords (TOTP) for radius users and Webui administrators. Radsec (radius over TLS) support with automatic certificate management.
+*  **Multi-Tenancy:** Multi-tenancy support with data seperation and per tenant or multi-tenant role based access control.
 * **Intelligent Backups:** Export and safely restore JSON-based database configurations across version upgrades.
 * **Automated Certificate Generation:** One-click custom SSL/EAP certificate generation or direct file uploads.
 * **Live Analytics:** Monitor active sessions, view authentication/accounting logs, and detailed administration audit log.
