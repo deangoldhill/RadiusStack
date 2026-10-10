@@ -5,7 +5,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         return req.tenantScope.enabled ? scope(req.tenantScope, column) : { sql: '', params: [] };
     }
     const { buildDynamicAuthorizationRequest, sendDynamicAuthorization } = require('../dynamic_auth');
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
 
 
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
@@ -524,19 +524,25 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
 
 app.post('/api/users/:username/totp/reset', requireApiAuth('users', 'read-write'), async (req, res) => {
     const { username } = req.params;
+    const tenantId = req.tenantScope.enabled ? req.tenantScope.tenantId : null;
+    if (!tenantId) return res.status(403).json({ error: 'Select a tenant for TOTP reset' });
     const conn = await pool.getConnection();
     try {
         await conn.beginTransaction();
+        const [users] = await conn.query("SELECT tenant_id FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' AND tenant_id = ? LIMIT 1", [username, tenantId]);
+        if (!users.length) { await conn.rollback(); return res.status(404).json({ error: 'User not found in selected tenant' }); }
+        const [existing] = await conn.query('SELECT tenant_id FROM user_totp WHERE username = ? LIMIT 1', [username]);
+        if (existing.length && Number(existing[0].tenant_id) !== tenantId) { await conn.rollback(); return res.status(404).json({ error: 'User not found in selected tenant' }); }
         await conn.query(
-            `INSERT INTO user_totp (username, enabled, secret, pending_secret, enrolled_at)
-             VALUES (?, 1, NULL, NULL, NULL)
-             ON DUPLICATE KEY UPDATE secret = NULL, pending_secret = NULL, enrolled_at = NULL`,
-            [username]
+            `INSERT INTO user_totp (username, enabled, secret, pending_secret, enrolled_at, tenant_id)
+             VALUES (?, 1, NULL, NULL, NULL, ?)
+             ON DUPLICATE KEY UPDATE enabled = 1, secret = NULL, pending_secret = NULL, enrolled_at = NULL`,
+            [username, tenantId]
         );
-        await syncUserTotpToRadius(conn, username);
+        await syncUserTotpToRadius(conn, username, tenantId);
 
-        const eData = await generateEnrollmentCode(conn, username);
-        const baseUrl = `${req.protocol}://${req.hostname}`;
+        const eData = await generateEnrollmentCode(conn, username, tenantId);
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
         const enrollment = {
             code: eData.code,
             expires_at: eData.expires_at,
@@ -558,14 +564,14 @@ app.post('/auth/radius/totp/start', async (req, res) => {
     const { username, password, enrollmentCode } = req.body;
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     try {
-        const radiusPassword = await getRadiusPassword(username);
-        if (!radiusPassword || radiusPassword !== password) {
+        const credential = await getRadiusCredential(username);
+        if (!credential || credential.value !== password) {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid RADIUS credentials', ip);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         const [rows] = await pool.query(
             `SELECT username, enabled, secret, pending_secret, enrolled_at, enrollment_code_hash, enrollment_expires_at
-             FROM user_totp WHERE username = ? LIMIT 1`, [username]
+             FROM user_totp WHERE username = ? AND tenant_id = ? LIMIT 1`, [username, credential.tenantId]
         );
         const totp = rows[0];
         if (!totp || Number(totp.enabled) !== 1) {
@@ -594,14 +600,14 @@ app.post('/auth/radius/totp/start', async (req, res) => {
         if (!secret) {
             secret = authenticator.generateSecret();
             await pool.query(
-                `UPDATE user_totp SET pending_secret = ?, enrolled_at = NULL WHERE username = ?`,
-                [secret, username]
+                `UPDATE user_totp SET pending_secret = ?, enrolled_at = NULL WHERE username = ? AND tenant_id = ?`,
+                [secret, username, credential.tenantId]
             );
         }
 
         const otpauth = authenticator.keyuri(username, TOTP_ISSUER, secret);
         const qrImage = await qrcode.toDataURL(otpauth);
-        const token = signTotpEnrollmentToken(username);
+        const token = signTotpEnrollmentToken(username, credential.tenantId);
 
         await auditLog(username, 'webui', 'User TOTP enrollment login', 'success', 'Enrollment session created', ip);
         return res.json({ success: true, token, username, qrImage, manualSecret: secret });
@@ -617,8 +623,9 @@ app.post('/auth/radius/totp/confirm', async (req, res) => {
     try {
         const decoded = verifyTotpEnrollmentToken(token);
         const username = decoded.username;
+        const tenantId = decoded.tenantId;
         const [rows] = await pool.query(
-            `SELECT username, enabled, secret, pending_secret FROM user_totp WHERE username = ? LIMIT 1`, [username]
+            `SELECT username, enabled, secret, pending_secret FROM user_totp WHERE username = ? AND tenant_id = ? LIMIT 1`, [username, tenantId]
         );
         const totp = rows[0];
         if (!totp || Number(totp.enabled) !== 1) {
@@ -639,9 +646,9 @@ app.post('/auth/radius/totp/confirm', async (req, res) => {
         try {
             await conn.beginTransaction();
             await conn.query(
-                `UPDATE user_totp SET secret = ?, pending_secret = NULL, enrollment_code_hash = NULL, enrolled_at = NOW() WHERE username = ?`, [secret, username]
+                `UPDATE user_totp SET secret = ?, pending_secret = NULL, enrollment_code_hash = NULL, enrolled_at = NOW() WHERE username = ? AND tenant_id = ?`, [secret, username, tenantId]
             );
-            await syncUserTotpToRadius(conn, username);
+            await syncUserTotpToRadius(conn, username, tenantId);
             await conn.commit();
         } catch (err) {
             await conn.rollback();

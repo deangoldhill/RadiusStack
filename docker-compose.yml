@@ -7,44 +7,62 @@ services:
     container_name: radius_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set required value in .env}
       MYSQL_DATABASE: radius
       MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set required value in .env}
       TZ: ${TIMEZONE:-Europe/London}
     volumes:
     - mariadb_data:/var/lib/mysql
-    - ./db-init:/docker-entrypoint-initdb.d
+    - ./db-init:/docker-entrypoint-initdb.d:ro
     ports:
     - ${DB_PORT:-3306}:3306
     networks:
     - radius_net
     healthcheck:
-      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      # The image initializes through a socket-only temporary server; require the final TCP server and initialized schema.
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mariadb --protocol=tcp -h 127.0.0.1 -u \"$$MYSQL_USER\" -D radius -e 'SELECT 1 FROM tenants LIMIT 1' >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
+  db-migrate:
+    build:
+      context: ./db-migrations
+      dockerfile: Dockerfile.migrator
+    restart: "no"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      DB_HOST: mariadb
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD:?Set required value in .env}
+      DB_NAME: radius
+    command: ["--migrate"]
+    networks:
+    - radius_net
   radius:
     build: ./radius
     container_name: radius_server
     restart: unless-stopped
     depends_on:
-      mariadb:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     environment:
       RADIUS_TOTP_ENABLED: ${RADIUS_TOTP_ENABLED:-false}
       RADIUS_TOTP_SUFFIX_DIGITS: ${RADIUS_TOTP_SUFFIX_DIGITS:-6}
       DB_HOST: mariadb
       DB_USER: ${DB_USER}
       DB_NAME: radius
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PASSWORD: ${DB_PASSWORD:?Set required value in .env}
       HA_ENABLED: ${HA_ENABLED:-false}
       HA_ROLE: ${HA_ROLE:-primary}
       HA_PEER_IP: ${HA_PEER_IP:-}
-      HA_API_TOKEN: ${HA_API_TOKEN:-ha_sync_token_123}
+      HA_API_TOKEN: ${HA_API_TOKEN:-}
       # TLS identity advertised by the shared RadSec listener.
-      RADSEC_SERVER_DNS: ${RADSEC_SERVER_DNS:-radiusstack-radsec}
+      RADSEC_SERVER_DNS: ${RADSEC_SERVER_DNS:-radius-stack.example.com}
+      # Optional certificate IP SAN; use the hostname in RADSEC_SERVER_DNS for clients.
       RADSEC_SERVER_IP: ${RADSEC_SERVER_IP:-127.0.0.1}
       TZ: ${TIMEZONE:-Europe/London}
     ports:
@@ -63,20 +81,20 @@ services:
     container_name: radius_api
     restart: unless-stopped
     depends_on:
-      mariadb:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     environment:
     - DB_HOST=mariadb
     - DB_USER=${DB_USER}
-    - DB_PASS=${DB_PASSWORD}
+    - DB_PASS=${DB_PASSWORD:?Set required value in .env}
     - DB_NAME=radius
-    - JWT_SECRET=${JWT_SECRET}
-    - RADSEC_PASSPHRASE_ENCRYPTION_KEY=${RADSEC_PASSPHRASE_ENCRYPTION_KEY}
+    - JWT_SECRET=${JWT_SECRET:?Set required value in .env}
+    - RADSEC_PASSPHRASE_ENCRYPTION_KEY=${RADSEC_PASSPHRASE_ENCRYPTION_KEY:?Set required value in .env}
     - TOTP_ISSUER=${TOTP_ISSUER}
     - HA_ENABLED=${HA_ENABLED:-false}
     - HA_ROLE=${HA_ROLE:-primary}
     - HA_PEER_IP=${HA_PEER_IP:-}
-    - HA_API_TOKEN=${HA_API_TOKEN:-ha_sync_token_123}
+    - HA_API_TOKEN=${HA_API_TOKEN:-}
     - TZ=${TIMEZONE:-Europe/London}
     ports:
     - ${API_PORT:-3000}:3000
@@ -110,7 +128,7 @@ services:
     environment:
       PMA_HOST: mariadb
       PMA_USER: root
-      PMA_PASSWORD: ${DB_ROOT_PASSWORD}
+      PMA_PASSWORD: ${DB_ROOT_PASSWORD:?Set required value in .env}
       TZ: ${TIMEZONE:-Europe/London}
     ports:
     - ${PHPMYADMIN_PORT:-8080}:80

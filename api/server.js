@@ -10,15 +10,23 @@ const multer = require('multer');
 const fs = require('fs').promises;
 const puppeteer = require('puppeteer');
 const crypto = require('crypto');
+const { createTotpHelpers } = require('./totp_helpers');
+const { createHaTransport } = require('./ha_transport');
 const { loadTenantScope } = require('./tenant');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
 require('./workers/radiusStatsWorker');
 
+const haTransport = createHaTransport(process.env);
 const app = express();
 const cors = require('cors');
 
 app.use(cors());
+// Reject non-peer HA traffic before parsing a potentially large sync body.
+app.use('/api/sync', (req, res, next) => {
+    if (!haTransport.allowIncoming(req)) return res.status(403).json({ error: 'Configured HA peer required' });
+    next();
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
@@ -33,9 +41,9 @@ if (!process.env.DB_PASS) {
     console.warn('[WARN] DB_PASS not set in environment — DB connections may fail.');
 }
 
-function signTotpEnrollmentToken(username) {
+function signTotpEnrollmentToken(username, tenantId) {
     return jwt.sign(
-        { username, scope: 'totp-enroll' },
+        { username, tenantId, scope: 'totp-enroll' },
         JWT_SECRET,
         { expiresIn: '10m' }
     );
@@ -43,65 +51,10 @@ function signTotpEnrollmentToken(username) {
 
 function verifyTotpEnrollmentToken(token) {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.scope !== 'totp-enroll') {
+    if (decoded.scope !== 'totp-enroll' || !Number.isSafeInteger(decoded.tenantId) || decoded.tenantId < 1) {
         throw new Error('Invalid enrollment scope');
     }
     return decoded;
-}
-
-async function getRadiusPassword(username) {
-    const [rows] = await pool.query(
-        "SELECT value FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' LIMIT 1",
-        [username]
-    );
-    return rows[0]?.value || null;
-}
-
-async function getUserTotp(username) {
-    const [rows] = await pool.query(
-        "SELECT username, enabled, secret, pending_secret, enrolled_at FROM user_totp WHERE username = ? LIMIT 1",
-        [username]
-    );
-    return rows[0] || null;
-}
-
-async function syncUserTotpToRadius(conn, username) {
-    const [rows] = await conn.query(
-        "SELECT enabled, secret FROM user_totp WHERE username = ? LIMIT 1",
-        [username]
-    );
-    const totp = rows[0];
-
-    await conn.query(
-        "DELETE FROM radcheck WHERE username = ? AND attribute = 'TOTP-Secret'",
-        [username]
-    );
-
-    if (totp && Number(totp.enabled) === 1 && totp.secret) {
-        await conn.query(
-            "INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'TOTP-Secret', ':=', ?)",
-            [username, totp.secret]
-        );
-    }
-}
-
-async function generateEnrollmentCode(conn, username) {
-    const plainCode = crypto.randomBytes(24).toString('base64url');
-    const hash = await bcrypt.hash(plainCode, 10);
-
-    const [settings] = await conn.query("SELECT setting_value FROM settings WHERE setting_key = 'totp_enrollment_hours'");
-    const hours = settings.length > 0 ? parseInt(settings[0].setting_value, 10) : 24;
-    const expiry = new Date(Date.now() + (hours * 3600000));
-
-    await conn.query(
-        "UPDATE user_totp SET enrollment_code_hash = ?, enrollment_expires_at = ?, pending_secret = NULL WHERE username = ?",
-        [hash, expiry, username]
-    );
-
-    return {
-        code: plainCode,
-        expires_at: expiry.toISOString()
-    };
 }
 
 const pool = mysql.createPool({
@@ -111,6 +64,7 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME || 'radius',
     dateStrings: true
 });
+const { getRadiusCredential, syncUserTotpToRadius, generateEnrollmentCode } = createTotpHelpers(pool, crypto, bcrypt);
 
 let apiDebugEnabled = false;
 
@@ -136,7 +90,7 @@ app.use((req, res, next) => {
 });
 
 
-const HA_PSK = crypto.createHash('sha256').update(process.env.HA_API_TOKEN || 'default').digest();
+const HA_PSK = crypto.createHash('sha256').update(haTransport.enabled ? process.env.HA_API_TOKEN : crypto.randomBytes(32)).digest();
 
 function encryptHaPayload(payload) {
     const iv = crypto.randomBytes(12);
@@ -160,14 +114,6 @@ function decryptHaPayload(body) {
 
 global.haRole = process.env.HA_ROLE || 'primary';
 global.haStats = { success: 0, failed: 0, lastSync: null };
-
-setTimeout(() => {
-    if (process.env.HA_ENABLED === 'true') {
-        originalPoolQuery.call(pool, "ALTER TABLE ha_queue ADD COLUMN insert_id BIGINT DEFAULT NULL", [], { isSync: true }).catch(() => {});
-        originalPoolQuery.call(pool, "ALTER TABLE ha_sync_state ADD COLUMN last_time VARCHAR(30) DEFAULT '1970-01-01 00:00:00.000000'", [], { isSync: true }).catch(() => {});
-        originalPoolQuery.call(pool, "ALTER TABLE radacct ADD COLUMN ha_updated_at TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)", [], { isSync: true }).catch(() => {});
-    }
-}, 5000);
 
 app.use((req, res, next) => {
     if (process.env.HA_ENABLED === 'true' && global.haRole === 'secondary') {
@@ -246,7 +192,7 @@ pool.execute = async function() {
 };
 
 async function processHaQueue() {
-    if (process.env.HA_ENABLED !== 'true' || !process.env.HA_PEER_IP) return;
+    if (!haTransport.enabled) return;
 
     try {
         const [rows] = await originalPoolQuery.call(pool, "SELECT * FROM ha_queue ORDER BY id ASC LIMIT 50", [], { isSync: true });
@@ -261,7 +207,7 @@ async function processHaQueue() {
 
                 const securePayload = encryptHaPayload(rawPayload);
 
-                const response = await fetch(`http://${process.env.HA_PEER_IP}:${process.env.API_PORT || 3000}/api/sync/execute`, {
+                const response = await fetch(haTransport.peerURL('/api/sync/execute'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -291,7 +237,7 @@ async function processHaQueue() {
 }
 
 async function syncRadiusTables() {
-    if (process.env.HA_ENABLED !== 'true' || !process.env.HA_PEER_IP) return;
+    if (!haTransport.enabled) return;
     try {
         let hasUpdatedCol = true;
         try { await originalPoolQuery.call(pool, "SELECT ha_updated_at FROM radacct LIMIT 1", [], { isSync: true }); } 
@@ -367,7 +313,7 @@ async function syncRadiusTables() {
     }
 }
 
-if (process.env.HA_ENABLED === 'true') {
+if (haTransport.enabled) {
     setInterval(processHaQueue, 2000);
     setInterval(syncRadiusTables, 5000);
 }
@@ -394,7 +340,8 @@ app.get('/api/ha/status', requireHaAdmin('read-only'), async (req, res) => {
     res.json({
         enabled: process.env.HA_ENABLED === 'true',
         role: global.haRole,
-        peer: process.env.HA_PEER_IP || 'Not configured',
+        peer: haTransport.enabled ? haTransport.peer : 'Not configured',
+        transport: haTransport.mode,
         queueLength,
         stats: global.haStats
     });
@@ -419,7 +366,7 @@ app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
 
 const HA_CERT_ROOTS = ['/certs_radsec', '/certs_shared'];
 async function readHaCertificateBundle() { const files=[]; async function walk(root,dir=root){for(const entry of await fs.readdir(dir,{withFileTypes:true})){const full=`${dir}/${entry.name}`;if(entry.isDirectory())await walk(root,full);else if(entry.isFile()&&/\.(pem|key)$/.test(entry.name)){const data=await fs.readFile(full);if(data.length>1048576)throw new Error('Certificate artifact too large');files.push({path:full.slice(root.length+1),root,data:data.toString('base64')});}}} for(const root of HA_CERT_ROOTS)await walk(root);return {version:Date.now(),files}; }
-app.post('/api/ha/radsec-bundle', requireHaAdmin('read-write'), async (req,res)=>{if(global.haRole!=='primary'||process.env.HA_ENABLED!=='true'||!process.env.HA_PEER_IP)return res.status(409).json({error:'HA peer is not configured'});try{const bundle=await readHaCertificateBundle();const r=await fetch(`http://${process.env.HA_PEER_IP}:${process.env.API_PORT||3000}/api/sync/certificates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(encryptHaPayload({_ts:Date.now(),bundle}))});if(!r.ok)throw new Error('Secondary rejected certificate bundle');res.json({success:true,version:bundle.version,files:bundle.files.length});}catch(e){console.error('[HA Certificate Sync]',e.message);res.status(500).json({error:'Certificate sync failed'});}});
+app.post('/api/ha/radsec-bundle', requireHaAdmin('read-write'), async (req,res)=>{if(global.haRole!=='primary'||!haTransport.enabled)return res.status(409).json({error:'HA peer is not configured'});try{const bundle=await readHaCertificateBundle();const r=await fetch(haTransport.peerURL('/api/sync/certificates'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(encryptHaPayload({_ts:Date.now(),bundle}))});if(!r.ok)throw new Error('Secondary rejected certificate bundle');res.json({success:true,version:bundle.version,files:bundle.files.length});}catch(e){console.error('[HA Certificate Sync]',e.message);res.status(500).json({error:'Certificate sync failed'});}});
 app.post('/api/sync/certificates', async (req,res)=>{let payload;try{payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}if(global.haRole!=='secondary'||Date.now()-payload._ts>60000||!Array.isArray(payload.bundle?.files))return res.status(401).json({error:'Invalid certificate bundle'});try{for(const f of payload.bundle.files){if(!HA_CERT_ROOTS.includes(f.root)||!/^[A-Za-z0-9_./-]+\.(pem|key)$/.test(f.path))throw new Error('Invalid certificate path');const target=`${f.root}/${f.path}`,data=Buffer.from(f.data,'base64');if(data.length>1048576)throw new Error('Certificate artifact too large');await fs.mkdir(target.slice(0,target.lastIndexOf('/')),{recursive:true,mode:0o700});await fs.writeFile(`${target}.incoming`,data,{mode:f.path.endsWith('.key')?0o600:0o644});await fs.rename(`${target}.incoming`,target);}exec('docker restart radius_server');res.json({success:true,version:payload.bundle.version});}catch(e){console.error('[HA Certificate Install]',e.message);res.status(400).json({error:'Certificate install failed'});}});
 
 app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => {
@@ -737,7 +684,7 @@ function setApiDebugMode(enabled) {
 
 const routeDependencies = {
     bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, puppeteer, multer,
-    JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage,
+    JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
     signTotpEnrollmentToken, verifyTotpEnrollmentToken,
     apiDebugLog, setApiDebugMode, requireGlobalSuperAdmin
