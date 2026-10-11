@@ -112,6 +112,7 @@ services:
     - ${WEB_UI_PORT:-80}:80
     volumes:
     - ./web_ui/public:/usr/share/nginx/html
+    - ./VERSION:/usr/share/nginx/html/version.txt:ro
     - ./web_ui/nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
     - api

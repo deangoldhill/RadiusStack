@@ -68,20 +68,42 @@ print(a['digest'][7:].lower())
 PY
 curl -fsSL -o "$work/source.tar.gz" "https://github.com/deangoldhill/RadiusStack/releases/download/$version/radiusstack-source.tar.gz"
 python3 - "$work/source.tar.gz" "$work/asset" "$work/stage" "$version" <<'PY'
-import hashlib, pathlib, sys, tarfile
+import hashlib, pathlib, shutil, sys, tarfile
 archive, expected_file, destination, version = sys.argv[1:]
 expected = pathlib.Path(expected_file).read_text().strip()
-if hashlib.file_digest(open(archive, 'rb'), 'sha256').hexdigest() != expected:
+hasher = hashlib.sha256()
+with open(archive, 'rb') as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        hasher.update(chunk)
+if hasher.hexdigest() != expected:
     raise SystemExit('Release archive SHA-256 mismatch')
 root = f'radiusstack-{version}'
 with tarfile.open(archive, 'r:gz') as tar:
     members = tar.getmembers()
-    if not members or any(m.issym() or m.islnk() or m.isdev() or m.isfifo() or
-       not (m.isfile() or m.isdir()) or
-       pathlib.PurePosixPath(m.name).is_absolute() or '..' in pathlib.PurePosixPath(m.name).parts or
-       pathlib.PurePosixPath(m.name).parts[0] != root for m in members):
+    names = [member.name for member in members]
+    if not members or len(names) != len(set(names)) or any(
+        member.issym() or member.islnk() or member.isdev() or member.isfifo() or
+        not (member.isfile() or member.isdir()) or
+        not (member.name.startswith(root + '/') or (member.name == root and member.isdir())) or
+        any(part in ('', '.', '..') for part in member.name.split('/')[1:]) or
+        pathlib.PurePosixPath(member.name).is_absolute() or
+        '..' in pathlib.PurePosixPath(member.name).parts
+        for member in members
+    ):
         raise SystemExit('Unsafe release archive')
-    tar.extractall(destination, filter='data')
+    target = pathlib.Path(destination)
+    target.mkdir(parents=True, exist_ok=True)
+    for member in members:
+        path = target.joinpath(*member.name.split('/'))
+        if member.isdir():
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(0o755)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tar.extractfile(member) as source, path.open('xb') as output:
+                shutil.copyfileobj(source, output)
+            path.chmod(0o600 if member.name == root + '/.env' else
+                       (0o755 if member.mode & 0o111 else 0o644))
 p = pathlib.Path(destination) / root
 for required in ('VERSION', '.radiusstack-version', 'docker-compose.yml', 'db-migrations/runner.py', 'db-migrations/Dockerfile.migrator', 'radius/Dockerfile', 'api/Dockerfile', 'web_ui/public/index.html', 'upgrade.sh'):
     if not (p / required).is_file():

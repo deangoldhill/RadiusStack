@@ -77,6 +77,21 @@ function showAccessDenied() {
   document.body.appendChild(el);
 }
 
+async function loadAppVersion() {
+  let label = 'Version unavailable';
+  try {
+    const response = await fetch('/version.txt', { cache: 'no-store' });
+    if (response.ok) {
+      const version = (await response.text()).trim();
+      if (/^\d+\.\d+(?:\.\d+)?$/.test(version)) label = `Version ${version}`;
+    }
+  } catch (error) { console.warn('RadiusStack version unavailable', error); }
+  for (const id of ['sidebarVersion', 'profileVersion', 'settingsVersion']) {
+    const target = document.getElementById(id);
+    if (target) target.textContent = label;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   if (window.location.pathname.endsWith('login.html')) return;
   getApiKey();
@@ -152,6 +167,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             <span style="color:#f1f5f9;">Radius</span><span style="color:#3b82f6;">Stack</span>
           </div>
           <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#475569;font-weight:600;margin-top:1px;">Network Auth</div>
+          <p id="sidebarVersion" class="text-xs" style="color:#94a3b8;margin-top:2px;">Version unavailable</p>
           <p id="sidebarUsername" class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;"></p>
         </div>
       </div>
@@ -222,6 +238,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">
         <h2 class="text-xl font-bold mb-4 text-gray-800">My Profile</h2>
         <p class="text-sm mb-4">Username: <strong id="profileUsername"></strong></p>
+        <p id="profileVersion" class="text-sm mb-4 text-gray-600" role="status">Version unavailable</p>
         <form id="profileThemeForm" class="space-y-3 mb-6">
           <label class="block text-sm font-bold text-gray-700" for="profileTheme">Colour scheme</label>
           <select id="profileTheme" class="w-full border p-2 rounded-lg">
@@ -253,6 +270,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   `);
 
   document.getElementById('profileUsername').textContent = window.currentAdmin || '';
+  loadAppVersion();
   document.getElementById('profileTheme').value = personalTheme || '';
   document.getElementById('profileThemeForm').onsubmit = async (e) => {
     e.preventDefault();
