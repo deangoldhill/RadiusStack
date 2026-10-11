@@ -8,14 +8,16 @@ app.get('/api/audit', requireApiAuth('admins', 'read-only'), async (req, res) =>
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = [25, 50, 100].includes(parseInt(req.query.page_size, 10)) ? parseInt(req.query.page_size, 10) : 25;
     let where = ' WHERE 1=1'; const params = [];
-    const scoped = scope(req.tenantScope, 'l.tenant_id');
+    const scoped = req.tenantScope.globalContext && req.tenantScope.superAdmin
+        ? { sql: '', params: [] }
+        : scope(req.tenantScope, 'l.tenant_id');
     where += scoped.sql; params.push(...scoped.params);
     if (search) { where += ' AND (l.admin_username LIKE ? OR l.action LIKE ? OR l.details LIKE ?)'; params.push(`%${String(search).slice(0,100)}%`, `%${String(search).slice(0,100)}%`, `%${String(search).slice(0,100)}%`); }
     if (result) { where += ' AND l.result = ?'; params.push(result); }
     if (start_date) { where += ' AND l.timestamp >= ?'; params.push(start_date); }
     if (end_date) { where += ' AND l.timestamp <= ?'; params.push(end_date); }
     const from = ' FROM admin_audit_log l LEFT JOIN tenants t ON t.id=l.tenant_id';
-    const select = "SELECT l.*,COALESCE(t.name, 'Global') AS tenant_name";
+    const select = "SELECT l.*,CASE WHEN l.tenant_id IS NULL THEN 'Global' ELSE t.name END AS tenant_name";
     if (!paginated) { const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),1000); const [rows]=await pool.query(select+from+where+' ORDER BY l.timestamp DESC LIMIT ?', [...params,limit]); return res.json(rows); }
     const [[count]] = await pool.query('SELECT COUNT(*) AS total'+from+where, params);
     const total=Number(count.total); const safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));
@@ -37,7 +39,7 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
         if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
         if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
         const [result] = await pool.query(query, params);
-        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip);
+        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip, req.tenantScope);
         res.json({ deleted: result.affectedRows });
     } catch (err) {
         console.error('DELETE /api/logs/auth error:', err);

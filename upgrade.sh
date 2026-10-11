@@ -123,15 +123,31 @@ for path in VERSION docker-compose.yml api radius web_ui/public db-migrations db
     fi
   fi
 done
+# Python's tarfile extraction under umask 077 can stage directories as 0700;
+# cp -a preserves that mode on the existing public web root. Static assets must
+# remain traversable/readable by the unprivileged Nginx worker, not just root.
+chmod -R a+rX web_ui/public
 # Compose must be valid with the installed local override before any migration.
 "${compose[@]}" config -q
 "${compose[@]}" build db-migrate radius api
 # Explicit one-shot migration; never let `up` implicitly retry a failed migration.
 "${compose[@]}" run --rm --no-deps db-migrate
 "${compose[@]}" up -d --no-deps radius api web_ui
-"${compose[@]}" exec -T radius sh -c 'kill -0 1'
-"${compose[@]}" exec -T api node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
-"${compose[@]}" exec -T web_ui wget -q -O /dev/null http://127.0.0.1/
+# Compose reports containers started before their listeners are necessarily ready.
+# Retry transient cold-start refusals, but retain the existing rollback on a persistent failure.
+wait_until_ready() {
+  local service=$1 attempt
+  shift
+  for (( attempt=1; attempt<=30; attempt++ )); do
+    if "${compose[@]}" exec -T "$service" "$@"; then return 0; fi
+    if (( attempt < 30 )); then sleep 1; fi
+  done
+  echo "$service did not become ready after 30 checks" >&2
+  return 1
+}
+wait_until_ready radius sh -c 'kill -0 1'
+wait_until_ready api node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
+wait_until_ready web_ui wget -q -O /dev/null http://127.0.0.1/
 if [[ -n "$phpmyadmin_running" ]]; then "${compose[@]}" up -d --no-deps phpmyadmin; fi
 # Replace the running script only after all commands have finished reading it.
 cp -a -- "$stage/upgrade.sh" upgrade.sh

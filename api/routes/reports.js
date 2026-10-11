@@ -113,20 +113,21 @@ app.post('/api/sessions/:sessionId/dynamic-auth', requireApiAuth('reports', 'rea
 });
 
 app.get('/api/logs/auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
- const {username,nasip,callingstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=reportScope(req,'p.tenant_id');let where='';const params=[...scoped.params];
- const c=[scoped.sql.slice(5)].filter(Boolean);if(username){c.push('(p.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');}if(nasip){c.push('p.nasipaddress=?');params.push(nasip);}if(callingstationid){c.push('p.callingstationid LIKE ?');params.push('%'+callingstationid+'%');}if(date_from){c.push('p.authdate>=?');params.push(new Date(date_from).toISOString().slice(0,19).replace('T',' '));}if(date_to){c.push('p.authdate<=?');params.push(new Date(date_to).toISOString().slice(0,19).replace('T',' '));}if(reply){c.push('p.reply=?');params.push(reply);}if(c.length)where=' WHERE '+c.join(' AND ');
+ const {username,nasip,callingstationid,calledstationid,date_from,date_to,reply}=req.query,paginated=req.query.page!==undefined;const page=Math.max(1,parseInt(req.query.page,10)||1),pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;const scoped=reportScope(req,'p.tenant_id');let where='';const params=[...scoped.params];
+ const c=[scoped.sql.slice(5)].filter(Boolean);if(username){c.push('(p.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');}if(nasip){c.push('p.nasipaddress=?');params.push(nasip);}if(callingstationid){c.push('p.callingstationid LIKE ?');params.push('%'+callingstationid+'%');}if(calledstationid){c.push('p.calledstationid LIKE ?');params.push('%'+calledstationid+'%');}if(date_from){c.push('p.authdate>=?');params.push(new Date(date_from).toISOString().slice(0,19).replace('T',' '));}if(date_to){c.push('p.authdate<=?');params.push(new Date(date_to).toISOString().slice(0,19).replace('T',' '));}if(reply){c.push('p.reply=?');params.push(reply);}if(c.length)where=' WHERE '+c.join(' AND ');
  const from=' FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address=p.username AND m.tenant_id <=> p.tenant_id LEFT JOIN tenants t ON t.id=p.tenant_id'+where,select="SELECT p.*,COALESCE(m.mac_id,p.username) AS username,COALESCE(t.name, 'Default') AS tenant_name";if(!paginated){const limit=Math.min(Math.max(parseInt(req.query.limit,10)||100,1),10000);const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ?',[...params,limit]);return res.json(rows);}const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY authdate DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
 });
 
 app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req, res) => {
     try {
-        const { username, nasip, callingstationid, date_from, date_to, reply } = req.query;
+        const { username, nasip, callingstationid, calledstationid, date_from, date_to, reply } = req.query;
         const scoped = scope(req.tenantScope, 'p.tenant_id');
         let query = 'DELETE p FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username' + (req.tenantScope.enabled ? ' AND m.tenant_id = ?' : '');
         const conditions = req.tenantScope.enabled ? [scoped.sql.slice(5)] : []; const params = [...(req.tenantScope.enabled ? [req.tenantScope.tenantId] : []), ...scoped.params];
         if (username) { conditions.push('(p.username LIKE ? OR m.mac_id LIKE ?)'); params.push('%' + username + '%', '%' + username + '%'); }
         if (nasip) { conditions.push('p.nasipaddress = ?'); params.push(nasip); }
         if (callingstationid) { conditions.push('p.callingstationid LIKE ?'); params.push('%' + callingstationid + '%'); }
+        if (calledstationid) { conditions.push('p.calledstationid LIKE ?'); params.push('%' + calledstationid + '%'); }
         if (date_from) { conditions.push('p.authdate >= ?'); params.push(new Date(date_from).toISOString().slice(0, 19).replace('T', ' ')); }
         if (date_to) { conditions.push('p.authdate <= ?'); params.push(new Date(date_to).toISOString().slice(0, 19).replace('T', ' ')); }
         if (reply) { conditions.push('p.reply = ?'); params.push(reply); }

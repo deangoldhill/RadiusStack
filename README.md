@@ -5,12 +5,6 @@ A complete, modern, containerized RADIUS authentication stack designed for ease 
 Useful for managing Wi-Fi access points, remote access, or network appliance logins, RadiusStack provides full control over users, usage plans, profile attributes, and feature riich monitoring and analytics.
 Designed for security and simplicity. 
 
-**On-prem or SaaS deployment:**
-Either deploy on-prem as a multi container stack.
-Or sign up for a free SaaS tenant and optionally use the Radsec proxy to tunnel over Radsec TLS.
-Both options are 100% free, now and forever!
-See https://radius-stack.com for further detail.
-
 **Try the demo:**
 https://demo.radius-stack.com  
 admin account:  admin / demo123  
@@ -19,12 +13,23 @@ Reports account:  reports / demo123
 ## Key Features
 * **Modern Web Interface:** WebUI frontend for managing NAS clients, users, profiles, plans etc. Also view logs for all containers within the webui.
 * **Full REST API:** The managment application is an API server. The Webui only interacts with the API and therefore doesn't have access to the backend database.
-* **Advanced Security:** Supports Time-Based One-Time Passwords (TOTP) for radius users and Webui administrators. Radsec (radius over TLS) support with automatic certificate management.
-*  **Multi-Tenancy:** Multi-tenancy support with data seperation and per tenant or multi-tenant role based access control.
+* **Advanced Security:** Supports Time-Based One-Time Passwords (TOTP) for radius users and Webui administrators
 * **Intelligent Backups:** Export and safely restore JSON-based database configurations across version upgrades.
 * **Automated Certificate Generation:** One-click custom SSL/EAP certificate generation or direct file uploads.
 * **Live Analytics:** Monitor active sessions, view authentication/accounting logs, and detailed administration audit log.
 * **High Availability:** Full config, object and session sync between members. See the wiki for more details. 
+
+HA sync uses the configured peer's API (`HA_PEER_IP`) with AES-256-GCM encrypted payloads. Leave `HA_ENABLED=false` until both nodes and the shared `HA_API_TOKEN` are configured and tested.
+
+## Fresh installation
+
+Extract the versioned source asset on the new machine. It contains a grouped `.env` with working **public defaults** and needs no first-run script. From that directory run `docker compose up -d --build` (provided its published ports are free). Review `RADSEC_SERVER_DNS` before using RadSec. **Change the shared default passwords and encryption key before exposing a production installation**, and keep the customized `.env` private and unchanged during upgrades. A Git checkout carries the same public-default `.env` alongside `.env.example`, never the primary machine's private `.env`; customize it before exposing the new installation.
+
+## Release upgrades
+
+**Version 5.5** adds correctly tenant-attributed login audit entries and a cross-tenant Global audit view; default-on dashboard auto-refresh; administrator-specific colour preferences with a platform default; updated Syslog/SIEM event fields, destination validation and a persistent auth-forwarding cursor; Docker-backed Global Server Health; refreshed guide and API routes; and Called-Station-ID capture/filtering. Fresh installs include the schema, while upgrades from 5.4 apply additive, tracked migrations that retain existing records.
+
+For an existing **published 5.4 installation**, follow [the upgrade runbook](docs/UPGRADE.md) to run the digest-verified 5.5 upgrader from the 5.5 release asset. The old 5.4 upgrader has a cold-start readiness race, so running `./upgrade.sh --to 5.5` directly from an unmodified 5.4 asset can leave its writers stopped. Subsequent upgrades use the installed upgraded script. `VERSION` is the committed source version, and the Git tag and GitHub Release must use that exact number, without a `v` prefix (for example, `5.5`). It downloads a specific GitHub Release asset, verifies the SHA-256 digest published by the GitHub API, validates the bundle, builds the new images locally, stops local writers, backs up MariaDB, applies locked/checksummed migrations, then starts and checks the services. It preserves `.env`, generated RADIUS files, Compose overrides and named volumes. See [the upgrade runbook](docs/UPGRADE.md) before running it. A first release must be reviewed, tagged and published with `.github/workflows/release.yml`; an unpublished tag cannot be upgraded to.
 
 ## Documentation
 
@@ -57,3 +62,6 @@ For full installation instructions, feature breakdowns, and management guides, p
 
 
 
+
+## RadSec credential sets and UniFi
+For a UniFi network, create one credential set and assign it to every AP/NAS in that network; upload the same client fullchain/key/password and server trust CA to the UniFi RADIUS profile. This simplifies lifecycle and is distinct from the AP TLS-close issue. Evidence: server verifies forced TLS 1.2 and TLS 1.3 mTLS locally; U6-LR firmware 6.7.57 still closes before ClientHello. This is not a firmware claim. Keep classic RADIUS as the safe fallback while feature work proceeds.

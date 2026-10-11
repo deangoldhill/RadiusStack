@@ -41,8 +41,8 @@ EOF
 # This is deliberately query-only; no custom uninvoked policy is added.
 COPY queries.conf /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
 
-RUN sed -i 's/(username, pass, reply, authdate ${..class.column_name})/(username, pass, reply, authdate ${..class.column_name}, nasipaddress, callingstationid, replymessage)/' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf && \
-    sed -i 's/${..class.reply_xlat})"/${..class.reply_xlat}, '"'"'%{NAS-IP-Address}'"'"', '"'"'%{Calling-Station-Id}'"'"', '"'"'%{reply:Reply-Message}'"'"')"/g' /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
+# The project-owned queries.conf includes the post-auth Called-Station-Id insert.
+# Do not patch vendor queries here; the copied file is the single source of truth.
 
 RUN sed -i 's/^[[:space:]]*#[[:space:]]*sql[[:space:]]*$/\tsql/g' /opt/etc/raddb/sites-available/default && \
     sed -i 's/^[[:space:]]*#[[:space:]]*sql[[:space:]]*$/\tsql/g' /opt/etc/raddb/sites-available/inner-tunnel && \

@@ -531,6 +531,7 @@ async function initDb() {
 }
 initDb();
 
+const { resolveLoginAuditScope } = require('./routes/auth_self');
 app.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
@@ -543,12 +544,13 @@ app.post('/auth/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    const loginAuditScope = await resolveLoginAuditScope(pool, admin);
     if (!(await bcrypt.compare(password, admin.password_hash))) {
-        await auditLog(username, 'webui', 'Login attempt', 'failed', 'Invalid password', ip);
+        await auditLog(username, 'webui', 'Login attempt', 'failed', 'Invalid password', ip, loginAuditScope);
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    await auditLog(username, 'webui', 'Login attempt', 'success', 'Password validated', ip);
+    await auditLog(username, 'webui', 'Login attempt', 'success', 'Password validated', ip, loginAuditScope);
 
     const payload = { id: admin.id };
 
@@ -565,7 +567,7 @@ app.post('/auth/login', async (req, res) => {
     if (admin.two_factor_enabled && admin.two_factor_setup_complete)
         return res.json({ status: 'needs_2fa_verify', token: jwt.sign({ ...payload, step: '2fa_verify' }, JWT_SECRET, { expiresIn: '15m' }) });
 
-    await auditLog(username, 'webui', 'Login completed', 'success', 'Granted API key', ip);
+    await auditLog(username, 'webui', 'Login completed', 'success', 'Granted API key', ip, loginAuditScope);
     res.json({ status: 'success', api_key: admin.api_key });
 });
 
@@ -577,12 +579,13 @@ app.post('/auth/verify-2fa', async (req, res) => {
         const [admins] = await pool.query('SELECT * FROM admins WHERE id = ?', [decoded.id]);
         const admin = admins[0];
 
+        const loginAuditScope = await resolveLoginAuditScope(pool, admin);
         if (!authenticator.check(code, admin.two_factor_secret)) {
-            await auditLog(admin.username, 'webui', '2FA verification', 'failed', 'Invalid TOTP code', ip);
+            await auditLog(admin.username, 'webui', '2FA verification', 'failed', 'Invalid TOTP code', ip, loginAuditScope);
             return res.status(401).json({ error: 'Invalid Code' });
         }
 
-        await auditLog(admin.username, 'webui', '2FA verification', 'success', 'TOTP validated', ip);
+        await auditLog(admin.username, 'webui', '2FA verification', 'success', 'TOTP validated', ip, loginAuditScope);
 
         if (decoded.step === '2fa_setup')
             await pool.query('UPDATE admins SET two_factor_setup_complete = true WHERE id = ?', [admin.id]);
@@ -605,7 +608,7 @@ app.post('/auth/change-pwd', async (req, res) => {
         const [admins] = await pool.query('SELECT * FROM admins WHERE id = ?', [decoded.id]);
         const admin = admins[0];
 
-        await auditLog(admin.username, 'webui', 'Password changed', 'success', 'Forced password change completed', ip);
+        await auditLog(admin.username, 'webui', 'Password changed', 'success', 'Forced password change completed', ip, await resolveLoginAuditScope(pool, admin));
 
         if (admin.two_factor_enabled && !admin.two_factor_setup_complete) {
             const secret = authenticator.generateSecret();

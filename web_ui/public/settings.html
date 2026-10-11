@@ -35,8 +35,8 @@
             <a href="tenant-management.html" class="inline-block mt-3 text-sm font-bold text-indigo-700 underline">Open Tenant Management</a>
           </div>
 
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5">UI Theme Color</label>
+          <div data-settings-scope="global" hidden>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5" for="uiTheme">UI Theme Color (platform default)</label>
             <select id="uiTheme" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none">
               <option value="blue">Default Blue</option>
               <option value="red">Danger Red</option>
@@ -44,6 +44,7 @@
               <option value="purple">Royal Purple</option>
               <option value="gray">Dark Mode Accent</option>
             </select>
+            <p class="text-xs text-gray-500 mt-1">Administrators may override this from their Profile.</p>
           </div>
 
 
@@ -760,12 +761,12 @@
       document.getElementById('enforce2FA').checked = data.enforce_2fa === 'true';
       const radiusDebugToggle=document.getElementById('radiusDebug'); if (radiusDebugToggle) radiusDebugToggle.checked = data.radius_debug === 'true';
       const apiDebugToggle=document.getElementById('apiDebug'); if (apiDebugToggle) apiDebugToggle.checked = data.api_debug === 'true';
+      if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
       savedCustomAttributes = normalizeCustomReplyAttributes(data.custom_reply_attributes);
       renderSavedReplyAttributes();
       await loadReplyAttributeCatalogue();
       document.getElementById('totpEnrollmentHours').value = data.totp_enrollment_hours || '24';
       document.getElementById('maskUserPasswords').checked = data.mask_user_passwords === 'true';
-      if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
       if (fieldsForScope() === TENANT_SETTING_FIELDS) {
         await loadProfilesDropdown();
         await loadPlansDropdown();
@@ -793,6 +794,7 @@
       if (document.getElementById('syslogHost')) document.getElementById('syslogHost').value = data.syslog_host || '';
       if (document.getElementById('syslogPort')) document.getElementById('syslogPort').value = data.syslog_port || '514';
       if (document.getElementById('syslogProtocol')) document.getElementById('syslogProtocol').value = data.syslog_protocol || 'udp';
+      syslogSavedConfig = { host: data.syslog_host || '', port: String(data.syslog_port || '514'), protocol: data.syslog_protocol || 'udp' };
       if (document.getElementById('syslogSendAudit')) document.getElementById('syslogSendAudit').checked = data.syslog_send_audit === 'true';
       if (document.getElementById('syslogSendAuthlogs')) document.getElementById('syslogSendAuthlogs').checked = data.syslog_send_authlogs === 'true';
       if (document.getElementById('syslogFields')) {
@@ -808,8 +810,8 @@
       enforce_2fa: document.getElementById('enforce2FA').checked ? 'true' : 'false',
       radius_debug: document.getElementById('radiusDebug')?.checked ? 'true' : 'false',
       api_debug: document.getElementById('apiDebug') ? (document.getElementById('apiDebug').checked ? 'true' : 'false') : 'false',
-      custom_reply_attributes: savedCustomAttributes,
       ui_theme: document.getElementById('uiTheme').value,
+      custom_reply_attributes: savedCustomAttributes,
       totp_enrollment_hours: document.getElementById('totpEnrollmentHours').value || '24',
       mask_user_passwords: document.getElementById('maskUserPasswords').checked ? 'true' : 'false',
       radsec_enabled: document.getElementById('radsecEnabled')?.checked ? 'true' : 'false',
@@ -981,15 +983,20 @@
   };
 
   
+  let syslogSavedConfig = null;
   async function testSyslog() {
     const host = document.getElementById('syslogHost').value.trim();
     const port = document.getElementById('syslogPort').value || '514';
     const protocol = document.getElementById('syslogProtocol').value || 'udp';
     const resEl = document.getElementById('syslogTestResult');
     if (!host) { resEl.textContent = '⚠ Enter a host first'; resEl.className = 'text-sm font-semibold text-yellow-600'; return; }
-    resEl.textContent = 'Sending...'; resEl.className = 'text-sm font-semibold text-gray-500';
+    if (!syslogSavedConfig || host !== syslogSavedConfig.host || port !== syslogSavedConfig.port || protocol !== syslogSavedConfig.protocol) {
+      resEl.textContent = '⚠ Save the destination settings before sending a test';
+      resEl.className = 'text-sm font-semibold text-yellow-600'; return;
+    }
+    resEl.textContent = 'Sending to saved destination...'; resEl.className = 'text-sm font-semibold text-gray-500';
     try {
-      const res = await apiFetch('/api/settings/syslog/test', { method: 'POST', body: JSON.stringify({ host, port, protocol }) });
+      const res = await apiFetch('/api/settings/syslog/test', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) { resEl.textContent = '✓ Test sent'; resEl.className = 'text-sm font-semibold text-green-600'; }
       else { resEl.textContent = '✗ ' + (data.error || 'Failed'); resEl.className = 'text-sm font-semibold text-red-600'; }

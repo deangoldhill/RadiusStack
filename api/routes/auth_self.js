@@ -1,3 +1,15 @@
+// Login happens before a tenant is selected. Attribute it only when the actor
+// has exactly one tenant; never guess for a multi-tenant administrator.
+async function resolveLoginAuditScope(pool, admin) {
+    if (Number(admin.is_super_admin) === 1) return null;
+    const [[setting]] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'multi_tenant_enabled'");
+    if (!['true', '1'].includes(String(setting?.setting_value || '').toLowerCase())) return null;
+    const [memberships] = await pool.query('SELECT tenant_id FROM admin_tenants WHERE admin_id = ? LIMIT 2', [admin.id]);
+    if (memberships.length !== 1) return null;
+    const tenantId = Number(memberships[0].tenant_id);
+    return Number.isSafeInteger(tenantId) && tenantId > 0 ? { enabled: true, tenantId } : null;
+}
+
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
@@ -49,3 +61,4 @@ app.put('/api/auth/me/password', async (req, res) => {
 
 
 };
+module.exports.resolveLoginAuditScope = resolveLoginAuditScope;

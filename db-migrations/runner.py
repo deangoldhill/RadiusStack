@@ -97,6 +97,8 @@ POSTCONDITIONS = {
     '20260924_radsec_proxy_enrollments': ({'radsec_proxy_enrollments'}, {('radsec_proxy_enrollments', 'tenant_id'), ('radsec_proxy_enrollments', 'radsec_client_id')}, {('radsec_proxy_enrollments', 'uq_radsec_proxy_enrollments_client')}),
     '20260929_radsec_nas_passphrases': ({'radsec_nas_passphrases'}, {('radsec_nas_passphrases', 'ciphertext'), ('radsec_nas_passphrases', 'auth_tag')}, {('nas', 'uq_nas_tenant_id'), ('radsec_nas_passphrases', 'uq_radsec_nas_passphrase_tenant_nas')}),
     '20261009_ha_columns': (set(), {('ha_queue', 'insert_id'), ('ha_sync_state', 'last_time'), ('radacct', 'ha_updated_at')}, set()),
+    '20261010_authlog_called_station': (set(), {('radpostauth', 'calledstationid')}, set()),
+    '20261011_syslog_auth_checkpoint': ({'syslog_auth_checkpoint'}, {('syslog_auth_checkpoint', 'last_id')}, set()),
 }
 
 

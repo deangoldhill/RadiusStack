@@ -1,6 +1,36 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
+    // Profile preferences are keyed to the authenticated administrator, not the active tenant.
+    async function ownProfile(req, res) {
+        const apiKey = req.header('X-API-Key');
+        if (!apiKey) { res.status(401).json({ error: 'API Key missing' }); return null; }
+        const [rows] = await pool.query('SELECT id, username, ui_theme FROM admins WHERE api_key = ?', [apiKey]);
+        if (!rows.length) { res.status(401).json({ error: 'Invalid API Key' }); return null; }
+        return rows[0];
+    }
+    app.get('/api/admins/me/theme', async (req, res) => {
+        try {
+            const admin = await ownProfile(req, res);
+            if (admin) {
+                const [settings] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'ui_theme'");
+                const platformTheme = settings[0]?.setting_value;
+                res.json({ username: admin.username, ui_theme: admin.ui_theme,
+                    platform_ui_theme: ['blue', 'red', 'green', 'purple', 'gray'].includes(platformTheme) ? platformTheme : 'blue' });
+            }
+        } catch (_) { res.status(500).json({ error: 'Unable to load profile theme' }); }
+    });
+    app.put('/api/admins/me/theme', async (req, res) => {
+        try {
+            const admin = await ownProfile(req, res);
+            if (!admin) return;
+            const color = req.body && req.body.ui_theme;
+            if (color !== null && !['blue', 'red', 'green', 'purple', 'gray'].includes(color)) return res.status(400).json({ error: 'Invalid theme' });
+            await pool.query('UPDATE admins SET ui_theme = ? WHERE id = ?', [color, admin.id]);
+            res.json({ username: admin.username, ui_theme: color });
+        } catch (_) { res.status(500).json({ error: 'Unable to save profile theme' }); }
+    });
+
     const isGlobalSuperAdmin = req => req.tenantScope.globalContext && Number(req.admin.is_super_admin) === 1;
     async function assertAdminTargetAccess(req, adminId) {
         if (isGlobalSuperAdmin(req)) return true;

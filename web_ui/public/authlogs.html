@@ -54,6 +54,11 @@
                     <input type="text" id="callingStationFilter" placeholder="e.g. AA:BB:CC:DD:EE:FF" class="border p-2 rounded w-full">
                     <div class="filter-hint">Click a Calling Station ID in the table to filter</div>
                 </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Called Station ID</label>
+                    <input type="text" id="calledStationFilter" placeholder="Called-Station-Id" class="border p-2 rounded w-full">
+                    <div class="filter-hint">Click a Called Station ID in the table to filter</div>
+                </div>
 
                 <div>
                     <label class="block text-sm font-bold mb-1">Date From</label>
@@ -97,6 +102,7 @@
                         <th class="p-2">Reply</th>
                         <th class="p-2">NAS IP</th>
                         <th class="p-2">Calling Station ID</th>
+                        <th class="p-2">Called Station ID</th>
                         <th class="p-2">Reply Message</th>
                         <th class="p-2">Date/Time</th>
                     </tr>
@@ -129,6 +135,7 @@
             const username = document.getElementById('usernameFilter').value.trim();
             const nasip = document.getElementById('nasipFilter').value.trim();
             const callingstation = document.getElementById('callingStationFilter').value.trim();
+            const calledstation = document.getElementById('calledStationFilter').value.trim();
             const dateFrom = document.getElementById('dateFrom').value;
             const dateTo = document.getElementById('dateTo').value;
             const reply = document.getElementById('replyFilter').value;
@@ -137,6 +144,7 @@
             if (username) params.set('username', username);
             if (nasip) params.set('nasip', nasip);
             if (callingstation) params.set('callingstationid', callingstation);
+            if (calledstation) params.set('calledstationid', calledstation);
             if (dateFrom) params.set('date_from', dateFrom);
             if (dateTo) params.set('date_to', dateTo);
             if (reply) params.set('reply', reply);
@@ -164,6 +172,7 @@
             const username = document.getElementById('usernameFilter').value.trim();
             const nasip = document.getElementById('nasipFilter').value.trim();
             const callingstation = document.getElementById('callingStationFilter').value.trim();
+            const calledstation = document.getElementById('calledStationFilter').value.trim();
             const dateFrom = document.getElementById('dateFrom').value;
             const dateTo = document.getElementById('dateTo').value;
             const reply = document.getElementById('replyFilter').value;
@@ -172,6 +181,7 @@
             if (username) params.set('username', username);
             if (nasip) params.set('nasip', nasip);
             if (callingstation) params.set('callingstationid', callingstation);
+            if (calledstation) params.set('calledstationid', calledstation);
             if (dateFrom) params.set('date_from', dateFrom);
             if (dateTo) params.set('date_to', dateTo);
             if (reply) params.set('reply', reply);
@@ -183,12 +193,13 @@
             if (res.ok) {
                 const payload = await res.json(); const data=payload.items; totalPages=payload.totalPages; totalRecords=payload.total; const size=Number(document.getElementById('pageSize').value),start=totalRecords?(currentPage-1)*size+1:0; document.getElementById('resultCount').textContent=totalRecords?`Showing ${start.toLocaleString()}-${Math.min(currentPage*size,totalRecords).toLocaleString()} of ${totalRecords.toLocaleString()} records`:''; document.getElementById('pageSummary').textContent=`Page ${currentPage} of ${totalPages}`;document.getElementById('prevPage').disabled=currentPage<=1;document.getElementById('nextPage').disabled=currentPage>=totalPages;
                 document.querySelector('#logsTable tbody').innerHTML = data.length === 0
-                    ? '<tr><td colspan="7" class="p-4 text-center text-gray-400">No results found</td></tr>'
+                    ? '<tr><td colspan="8" class="p-4 text-center text-gray-400">No results found</td></tr>'
                     : data.map(l => {
                         const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
                         const username = escHtml(l.username);
                         const nasip = escHtml(l.nasipaddress);
                         const callingstation = escHtml(l.callingstationid);
+                        const calledstation = escHtml(l.calledstationid);
                         const replymsg = escHtml(l.replymessage);
                         const authdate = escHtml(l.authdate);
                         const authdateLocal = toDatetimeLocal(l.authdate);
@@ -208,6 +219,9 @@
                     <td class="p-2 border-b text-xs font-mono text-gray-600">
                       ${callingstation ? `<span class="filterable" title="Filter by this Calling Station ID" onclick="setFilter('callingStationFilter', '${callingstation}')">${callingstation}</span>` : ''}
                     </td>
+                    <td class="p-2 border-b text-xs font-mono text-gray-600">
+                      ${calledstation ? `<span class="filterable" title="Filter by this Called Station ID" onclick="setFilter('calledStationFilter', '${calledstation}')">${calledstation}</span>` : ''}
+                    </td>
                     <td class="p-2 border-b text-xs text-gray-600 truncate max-w-xs" title="${replymsg}">${replymsg}</td>
                     <td class="p-2 border-b text-xs">
                       ${authdateLocal ? `<span class="filterable" title="Set as Date To filter" onclick="setFilter('dateTo', '${authdateLocal}')">${authdate}</span>` : authdate}
@@ -221,6 +235,7 @@
             document.getElementById('usernameFilter').value = '';
             document.getElementById('nasipFilter').value = '';
             document.getElementById('callingStationFilter').value = '';
+            document.getElementById('calledStationFilter').value = '';
             document.getElementById('dateFrom').value = '';
             document.getElementById('dateTo').value = '';
             document.getElementById('replyFilter').value = '';
@@ -234,6 +249,7 @@
         if (urlParams.has('username')) document.getElementById('usernameFilter').value = urlParams.get('username');
         if (urlParams.has('nasip')) document.getElementById('nasipFilter').value = urlParams.get('nasip');
         if (urlParams.has('callingstationid')) document.getElementById('callingStationFilter').value = urlParams.get('callingstationid');
+        if (urlParams.has('calledstationid')) document.getElementById('calledStationFilter').value = urlParams.get('calledstationid');
         if (urlParams.has('date_from')) document.getElementById('dateFrom').value = urlParams.get('date_from');
         if (urlParams.has('date_to')) document.getElementById('dateTo').value = urlParams.get('date_to');
 

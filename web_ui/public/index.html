@@ -81,6 +81,7 @@
             <h1 class="text-3xl font-bold text-gray-800">Dashboard</h1>
             <div class="flex items-center gap-3">
                 <span id="lastUpdated" class="text-xs text-gray-400"></span>
+                <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">⏱ Auto-refresh: ON</button>
                 <button id="refreshBtn" onclick="loadAll()" class="flex items-center gap-1 text-xs border rounded px-3 py-1.5 text-gray-500 hover:text-blue-600 transition-colors">
                     <svg id="refreshIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6" /><path d="M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
                     Refresh
@@ -238,7 +239,7 @@
                     <div class="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                     </div>
-                    <h3 class="font-bold text-gray-700 text-sm">Server Health</h3>
+                    <h3 class="font-bold text-gray-700 text-sm">RADIUS Container Health</h3>
                 </div>
                 <div id="radiusHealth" class="space-y-3"></div>
             </div>
@@ -404,7 +405,6 @@
                 if (!res.ok) {
                     document.getElementById('radiusAuthStats').innerHTML = '<div class="text-gray-400">Not available</div>';
                     document.getElementById('radiusAcctStats').innerHTML = '<div class="text-gray-400">Not available</div>';
-                    document.getElementById('radiusHealth').innerHTML = '<div class="text-gray-400">Not available</div>';
                     return;
                 }
                 var d = await res.json();
@@ -429,44 +429,70 @@
                         statRow('Dropped',   Number(ac.dropped_requests).toLocaleString(),  Number(ac.dropped_requests) > 0 ? 'text-red-400' : '');
                 } else document.getElementById('radiusAcctStats').innerHTML = '<div class="text-gray-400 text-xs py-2">No data yet</div>';
 
-                var rate = d.acceptRate !== null ? d.acceptRate + '%' : '—';
-                var rateColor = d.acceptRate >= 90 ? 'text-green-600' : d.acceptRate >= 70 ? 'text-amber-500' : 'text-red-500';
-                document.getElementById('radiusHealth').innerHTML =
-                    '<div class="bg-gray-50 rounded-lg p-3 text-center border">' +
-                        '<div class="text-xs text-gray-500 font-bold uppercase mb-1">Accept Rate</div>' +
-                        '<div class="text-3xl font-black ' + rateColor + '">' + rate + '</div>' +
-                    '</div>' +
-                    '<div class="bg-gray-50 rounded-lg p-3 text-center border">' +
-                        '<div class="text-xs text-gray-500 font-bold uppercase mb-1">Server Uptime</div>' +
-                        '<div class="text-xl font-black text-indigo-600">' + fmtUptime(d.uptimeSeconds) + '</div>' +
-                    '</div>' +
-                    (a ? '<div class="text-xs text-gray-400 text-center">Last polled: ' + new Date(a.collected_at).toLocaleTimeString() + '</div>' : '');
             } catch (e) {}
         }
 
-        function isGlobalTenantContext() {
-            return !window.multiTenantEnabled || localStorage.getItem('activeTenantId') === 'global';
+        function fmtMiB(bytes) {
+            return bytes == null ? '—' : (bytes / 1048576).toFixed(1) + ' MiB';
+        }
+        async function loadServerHealth() {
+            var el = document.getElementById('radiusHealth');
+            try {
+                var res = await apiFetch('/api/system/health');
+                if (!res.ok) throw new Error('Health unavailable');
+                var h = await res.json();
+                el.innerHTML = statRow('RADIUS container', h.state === 'running' ? 'Running' : 'Stopped') +
+                    statRow('Docker healthcheck', h.health || 'unknown') +
+                    statRow('Container uptime', fmtUptime(h.uptimeSeconds)) +
+                    statRow('Container CPU', h.cpuPercent == null ? '—' : h.cpuPercent.toFixed(1) + '%') +
+                    statRow('Container memory', fmtMiB(h.memoryBytes) + ' / ' + fmtMiB(h.memoryLimitBytes)) +
+                    '<div class="text-xs text-gray-400">Source: Docker radius_server container; CPU % is per host core, memory is working set / cgroup limit (not host usage).</div>';
+            } catch (e) { el.innerHTML = '<div class="text-xs text-gray-400">Docker health unavailable</div>'; }
         }
 
+        function isGlobalTenantContext() {
+            return !!window.currentAdminSuper && (!window.multiTenantEnabled || localStorage.getItem('activeTenantId') === 'global');
+        }
+
+        var dashboardStarted = false, dashboardAutoRefresh = true, dashboardRefreshTimer = null, dashboardLoading = false;
+        function scheduleDashboardRefresh() {
+            clearTimeout(dashboardRefreshTimer);
+            dashboardRefreshTimer = dashboardAutoRefresh && dashboardStarted ? setTimeout(loadAll, 30000) : null;
+        }
+        function toggleAutoRefresh() {
+            dashboardAutoRefresh = !dashboardAutoRefresh;
+            document.getElementById('autoRefreshBtn').textContent = '⏱ Auto-refresh: ' + (dashboardAutoRefresh ? 'ON' : 'OFF');
+            scheduleDashboardRefresh();
+        }
         async function loadAll() {
+            if (dashboardLoading) return;
+            dashboardLoading = true;
+            clearTimeout(dashboardRefreshTimer);
             var global = isGlobalTenantContext();
             document.getElementById('containerHealthWidget').hidden = !global;
             document.getElementById('globalDashboardWidgets').hidden = !global;
             const authTrendWidget = document.getElementById('authTrendWidget');
             authTrendWidget.classList.toggle('lg:col-span-3', !global);
             authTrendWidget.classList.toggle('lg:col-span-2', global);
-            var tasks = [loadOverview()];
-            if (isGlobalTenantContext()) tasks.push(loadContainers(), loadRadiusStats());
-            await Promise.all(tasks);
+            try {
+                var tasks = [loadOverview()];
+                if (global) tasks.push(loadContainers(), loadRadiusStats(), loadServerHealth());
+                await Promise.all(tasks);
+            } finally {
+                dashboardLoading = false;
+                scheduleDashboardRefresh();
+            }
         }
-        let dashboardStarted = false;
         function startDashboard() {
+            if (!window.radiusstackContext || typeof window.currentAdminSuper !== 'boolean') return;
             if (dashboardStarted) return;
             dashboardStarted = true;
             loadAll();
-            setInterval(loadAll, 30000);
         }
-        document.addEventListener('radiusstack:tenant-context-ready', startDashboard);
+        document.addEventListener('radiusstack:tenant-context-ready', function () {
+            if (dashboardStarted) loadAll(); else startDashboard();
+        });
+        window.addEventListener('load', startDashboard);
     </script>
   <script src="/js/field-help.js"></script>
 </body>

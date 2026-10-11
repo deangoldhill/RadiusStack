@@ -82,6 +82,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   getApiKey();
 
   let themeColor = 'blue';
+  let personalTheme = null;
+  let platformTheme = 'blue';
   let perms = {};
 
   try {
@@ -105,10 +107,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       localStorage.removeItem('activeTenantId');
     }
 
-    const settingsRes = await apiFetch('/api/settings');
-    if (settingsRes.ok) {
-      const d = await settingsRes.json();
-      if (d.ui_theme) themeColor = d.ui_theme;
+    const themeRes = await apiFetch('/api/admins/me/theme', { withoutTenantContext: true });
+    if (themeRes.ok) {
+      const profile = await themeRes.json();
+      if (['blue', 'red', 'green', 'purple', 'gray'].includes(profile.platform_ui_theme)) platformTheme = profile.platform_ui_theme;
+      if (['blue', 'red', 'green', 'purple', 'gray'].includes(profile.ui_theme)) personalTheme = profile.ui_theme;
+      themeColor = personalTheme || platformTheme;
     }
   } catch(e) { console.warn('RadiusStack layout: permission/context fetch failed', e); }
 
@@ -148,7 +152,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             <span style="color:#f1f5f9;">Radius</span><span style="color:#3b82f6;">Stack</span>
           </div>
           <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#475569;font-weight:600;margin-top:1px;">Network Auth</div>
-          ${window.currentAdmin ? `<p class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;">${window.currentAdmin}</p>` : ''}
+          <p id="sidebarUsername" class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;"></p>
         </div>
       </div>
       <a href="documentation.html" target="_blank" rel="noopener" class="mb-4 flex items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm font-bold text-blue-200 transition hover:bg-blue-500/20 hover:text-white"><svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-1.7 1.4-1.7 2-1.7 3.2"></path><path d="M12 17h.01"></path></svg> Documentation</a>
@@ -181,6 +185,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     </div>
   `);
 
+  document.getElementById('sidebarUsername').textContent = window.currentAdmin || '';
   document.body.className = "flex bg-gray-100 font-sans h-screen text-gray-800 antialiased";
 
   if (!window.currentAdminSuper) document.getElementById('tenantManagementNav')?.remove();
@@ -215,7 +220,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.insertAdjacentHTML('beforeend', `
     <div id="adminPasswordModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
       <div class="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full border border-gray-100">
-        <h2 class="text-xl font-bold mb-4 text-gray-800">Change My Password</h2>
+        <h2 class="text-xl font-bold mb-4 text-gray-800">My Profile</h2>
+        <p class="text-sm mb-4">Username: <strong id="profileUsername"></strong></p>
+        <form id="profileThemeForm" class="space-y-3 mb-6">
+          <label class="block text-sm font-bold text-gray-700" for="profileTheme">Colour scheme</label>
+          <select id="profileTheme" class="w-full border p-2 rounded-lg">
+            <option value="">Use platform default</option>
+            <option value="blue">Default Blue</option><option value="red">Danger Red</option>
+            <option value="green">Secure Green</option><option value="purple">Royal Purple</option>
+            <option value="gray">Dark Mode Accent</option>
+          </select>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Save colour scheme</button>
+          <p id="profileThemeStatus" role="status" class="text-sm text-gray-600"></p>
+        </form>
+        <h3 class="font-bold mb-2">Change My Password</h3>
         <form id="adminPasswordForm" class="space-y-4">
           <div>
             <label class="block text-sm font-bold text-gray-700 mb-1">Current Password</label>
@@ -233,6 +251,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
     </div>
   `);
+
+  document.getElementById('profileUsername').textContent = window.currentAdmin || '';
+  document.getElementById('profileTheme').value = personalTheme || '';
+  document.getElementById('profileThemeForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('profileThemeStatus');
+    status.textContent = 'Saving…';
+    try {
+      const res = await apiFetch('/api/admins/me/theme', {
+        method: 'PUT', withoutTenantContext: true,
+        body: JSON.stringify({ ui_theme: document.getElementById('profileTheme').value || null })
+      });
+      if (!res.ok) throw new Error('Could not save your colour scheme');
+      window.location.reload();
+    } catch (err) { status.textContent = err.message; }
+  };
 
   window.openadminPasswordModal = () => {
       document.getElementById('adminPasswordModal').classList.remove('hidden');

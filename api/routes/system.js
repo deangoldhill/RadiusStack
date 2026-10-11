@@ -1,5 +1,15 @@
+const { getContainerHealth } = require('../container_health');
+
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
+
+app.get('/api/system/health', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, async (req, res) => {
+    try {
+        res.json(await getContainerHealth());
+    } catch (err) {
+        res.status(503).json({ error: 'Docker container health unavailable' });
+    }
+});
 
 app.get('/api/system/status', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, (req, res) => {
     exec('docker ps -a --format "{{.Names}}|{{.State}}|{{.Status}}" | grep radius_', (error, stdout) => {

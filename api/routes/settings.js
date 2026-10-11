@@ -51,6 +51,23 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
       if (unexpected.length) entries.splice(0, entries.length, ...entries.filter(([key]) => allowed.has(key)));
       if (!req.tenantScope.enabled && req.tenantScope.globalContext && Number(req.admin.is_super_admin) !== 1) return res.status(403).json({ error: 'Global settings require a super administrator' });
 
+      if (!req.tenantScope.enabled && entries.some(([key]) => key.startsWith('syslog_'))) {
+        if (Number(req.admin.is_super_admin) !== 1) return res.status(403).json({ error: 'Syslog settings require a super administrator' });
+        const updates = Object.fromEntries(entries);
+        const [existing] = await pool.query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('syslog_enabled','syslog_host','syslog_port','syslog_protocol')");
+        const merged = { ...asMap(existing), ...updates };
+        const { validateDestination } = syslog;
+        if (Object.hasOwn(updates, 'syslog_host') || Object.hasOwn(updates, 'syslog_port') || Object.hasOwn(updates, 'syslog_protocol') || merged.syslog_enabled === 'true') {
+          try {
+            if (merged.syslog_host || merged.syslog_enabled === 'true') validateDestination(merged.syslog_host, merged.syslog_port, merged.syslog_protocol);
+            else {
+              if (Object.hasOwn(updates, 'syslog_host') && updates.syslog_host !== '') throw Error('Invalid syslog host');
+              validateDestination('localhost', merged.syslog_port, merged.syslog_protocol);
+            }
+          } catch (err) { return res.status(400).json({ error: err.message }); }
+        }
+      }
+
       if (req.tenantScope.enabled) {
         for (const [key, value] of entries) {
           await pool.query(
