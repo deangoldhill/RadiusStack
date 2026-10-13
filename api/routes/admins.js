@@ -56,12 +56,12 @@ async function replaceTenantMemberships(connection, adminId, tenantIds, isSuperA
 }
 
 app.get('/api/admins', requireApiAuth('admins', 'read-only'), async (req, res) => {
-    const columns = 'a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin';
+    const columns = 'a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin, a.last_login_at';
     let rows;
     if (req.tenantScope.enabled) {
-        [rows] = await pool.query(`SELECT ${columns}, GROUP_CONCAT(at.tenant_id ORDER BY at.tenant_id) AS tenant_ids FROM admins a LEFT JOIN admin_tenants at ON at.admin_id = a.id WHERE a.is_super_admin = 0 AND at.tenant_id = ? GROUP BY a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin`, [req.tenantScope.tenantId]);
+        [rows] = await pool.query(`SELECT ${columns}, GROUP_CONCAT(at.tenant_id ORDER BY at.tenant_id) AS tenant_ids FROM admins a LEFT JOIN admin_tenants at ON at.admin_id = a.id WHERE a.is_super_admin = 0 AND at.tenant_id = ? GROUP BY a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin, a.last_login_at`, [req.tenantScope.tenantId]);
     } else if (req.tenantScope.superAdmin) {
-        [rows] = await pool.query(`SELECT ${columns}, GROUP_CONCAT(at.tenant_id ORDER BY at.tenant_id) AS tenant_ids FROM admins a LEFT JOIN admin_tenants at ON at.admin_id = a.id GROUP BY a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin`);
+        [rows] = await pool.query(`SELECT ${columns}, GROUP_CONCAT(at.tenant_id ORDER BY at.tenant_id) AS tenant_ids FROM admins a LEFT JOIN admin_tenants at ON at.admin_id = a.id GROUP BY a.id, a.username, a.require_password_change, a.two_factor_enabled, a.two_factor_setup_complete, a.permissions, a.is_super_admin, a.last_login_at`);
     } else rows = [];
     res.json(rows.map(row => ({ ...row, tenant_ids: !Number(row.is_super_admin) ? String(row.tenant_ids || '').split(',').filter(Boolean).map(Number) : [] })));
 });

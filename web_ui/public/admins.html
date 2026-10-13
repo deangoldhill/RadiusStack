@@ -17,7 +17,7 @@
 
     <div class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 overflow-x-auto">
       <table class="w-full text-left text-sm whitespace-nowrap" id="adminsTable">
-        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">ID</th><th class="p-3">Username</th><th class="p-3">Role Type</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
+        <thead><tr class="bg-gray-50 text-gray-600"><th class="p-3 rounded-tl-lg">ID</th><th class="p-3">Username</th><th class="p-3">Role Type</th><th class="p-3">Last Login</th><th class="p-3 text-right rounded-tr-lg">Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -133,6 +133,7 @@
             <td class="p-3 font-mono text-gray-500">${a.id}</td>
             <td class="p-3 font-bold text-gray-800">${a.username}</td>
             <td class="p-3">${roleBadge}</td>
+            <td class="p-3 text-gray-500" data-last-login>${a.last_login_at ? new Date(a.last_login_at).toLocaleDateString() : '—'}</td>
             <td class="p-3 text-right space-x-2">
                 <button type="button" onclick="generateKey(${a.id})" class="bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Gen API Key</button>
                 <button type="button" onclick="${a.two_factor_enabled ? `disable2FA(${a.id}, '${a.username}')` : `enable2FA(${a.id}, '${a.username}')`}" class="bg-${a.two_factor_enabled ? 'yellow' : 'green'}-50 text-${a.two_factor_enabled ? 'yellow' : 'green'}-700 border border-${a.two_factor_enabled ? 'yellow' : 'green'}-200 hover:bg-${a.two_factor_enabled ? 'yellow' : 'green'}-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">${a.two_factor_enabled ? 'Disable 2FA' : 'Enable 2FA'}</button>

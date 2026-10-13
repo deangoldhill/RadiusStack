@@ -11,6 +11,7 @@
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">MAC Authentication</h1>
             <div class="flex space-x-3 items-center">
+                <button id="resetSelectedUsageBtn" onclick="resetSelectedUsage()" class="hidden bg-yellow-100 hover:bg-yellow-200 text-yellow-700 border border-yellow-200 px-4 py-2 rounded-lg font-bold shadow-sm">Reset Usage Selected</button>
                 <button id="deleteSelectedBtn" onclick="deleteSelected()" class="hidden bg-red-600 hover:bg-red-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm">Delete Selected</button>
                 <a href="data:text/csv;charset=utf-8,mac_address%2Cmac_id%2Cprofile%2Cplan_id%0A1a%3A2b%3A3c%3A4d%3A5e%3A6f%2CAlices-Phone%2CStaff%2C%0Aaa%3Abb%3Acc%3Add%3Aee%3Aff%2CLobby-Printer%2C%2C1" download="mac_template.csv" class="text-sm text-gray-500 hover:text-blue-600 underline mr-2">Download Template</a>
                 <label class="bg-green-600 hover:bg-green-700 transition-colors text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer flex items-center">
@@ -282,7 +283,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(d =>
               <td class="p-3 font-mono text-xs text-gray-600">${d.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((d.time_30d || 0) / 3600).toFixed(1)} hrs</td>
-              <td class="p-3 font-mono text-xs text-gray-500">${d.last_online ? new Date(d.last_online).toLocaleString() : '—'}</td>
+              <td class="p-3 font-mono text-xs text-gray-500">${d.last_online ? new Date(d.last_online).toLocaleDateString() : '—'}</td>
               <td class="p-3 text-right" onclick="event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1">
                   ${d.plan_id ? `<button onclick="resetPlan('${escapeJS(d.mac_address)}')" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">Reset Usage</button>` : ''}
@@ -638,6 +639,11 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(d =>
                 }
             }
 
+            const resetBtn = document.getElementById('resetSelectedUsageBtn');
+            if (resetBtn) {
+                resetBtn.textContent = `Reset Usage Selected (${checkedCount})`;
+                resetBtn.classList.toggle('hidden', checkedCount === 0);
+            }
             const deleteBtn = document.getElementById('deleteSelectedBtn');
             if (deleteBtn) {
                 if (checkedCount > 0) {
@@ -646,6 +652,36 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(d =>
                 } else {
                     deleteBtn.classList.add('hidden');
                 }
+            }
+        }
+
+        async function resetSelectedUsage() {
+            const selected = Array.from(document.querySelectorAll('.row-checkbox:checked'), cb => cb.value);
+            if (!selected.length || !confirm(`Reset plan usage for ${selected.length} selected MAC devices? Only records on this page are selected.`)) return;
+            const button = document.getElementById('resetSelectedUsageBtn');
+            const deleteButton = document.getElementById('deleteSelectedBtn');
+            button.disabled = true;
+            deleteButton.disabled = true;
+            const failures = [];
+            let resetCount = 0;
+            try {
+                for (const [index, macAddress] of selected.entries()) {
+                    button.textContent = `Resetting ${index + 1}/${selected.length}...`;
+                    try {
+                        const res = await apiFetch(`/api/users/${encodeURIComponent(macAddress)}/reset-plan`, { method: 'POST' });
+                        if (res.ok) resetCount++;
+                        else {
+                            const reason = res.status === 404 ? (await res.json()).error : `HTTP ${res.status}`;
+                            failures.push(`${macAddress}: ${reason || 'Reset failed'}`);
+                        }
+                    } catch (err) { failures.push(`${macAddress}: Request failed`); }
+                }
+                await loadData();
+                alert(`${resetCount} of ${selected.length} usage resets completed.${failures.length ? `\nFailed:\n${failures.join('\n')}` : ''}`);
+            } finally {
+                button.disabled = false;
+                deleteButton.disabled = false;
+                updateMultiSelect();
             }
         }
 

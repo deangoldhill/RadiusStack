@@ -95,6 +95,10 @@
         </div>
 
         
+        <section class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-4" aria-label="Depleted allocations">
+            <div class="flex justify-between items-center mb-2"><h2 class="font-bold text-gray-700">Depleted allocations — current cycle</h2><a href="reports.html#depleted-allocations" class="text-xs text-blue-600 hover:underline">View details →</a></div>
+            <div id="depletedDashboard" class="text-sm text-gray-500">Loading...</div>
+        </section>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
 
             <div id="authTrendWidget" class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
@@ -251,6 +255,31 @@
     <script src="/js/layout.js"></script>
     <script>
         var trendChart = null, profileChart = null, planChart = null;
+        function depletedEscape(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+        }
+        async function loadDepletedDashboard() {
+            var el = document.getElementById('depletedDashboard');
+            try {
+                var responses = await Promise.all([
+                    apiFetch('/api/reports/depleted-allocations?view=summary'),
+                    apiFetch('/api/reports/depleted-allocations?page=1&page_size=25')
+                ]);
+                if (!responses.every(function (res) { return res.ok; })) throw new Error('Depleted allocations unavailable');
+                var s = (await responses[0].json()).summary;
+                var detail = await responses[1].json();
+                var preview = (detail.items || []).slice(0, 8).map(function (item) {
+                    var username = depletedEscape(item.username);
+                    var display = depletedEscape(item.display_name || item.username);
+                    var label = display === username ? display : display + ' (' + username + ')';
+                    var reason = [item.data_depleted ? 'Data' : '', item.time_depleted ? 'Time' : ''].filter(Boolean).join(' + ');
+                    return '<li class="flex justify-between gap-2 border-b py-1"><span>' + label + ' <small class="text-gray-400">' + (item.type === 'mac' ? 'MAC device' : 'User') + '</small></span><span class="text-red-700">' + reason + '</span></li>';
+                }).join('');
+                el.innerHTML = '<div class="flex flex-wrap gap-5 mb-2"><span><strong>' + Number(s.total || 0) + '</strong> total</span><span><strong>' + Number(s.users || 0) + '</strong> Users</span><span><strong>' + Number(s.mac_devices || 0) + '</strong> MAC devices</span></div>' +
+                    ((s.plans || []).length ? '<div class="flex flex-wrap gap-3 text-xs">' + s.plans.map(function (p) { return '<span class="bg-red-50 rounded px-2 py-1">' + depletedEscape(p.plan_name) + ': ' + Number(p.total || 0) + ' (' + Number(p.users || 0) + ' users, ' + Number(p.mac_devices || 0) + ' MAC)</span>'; }).join('') + '</div>' : '<div class="text-xs text-gray-400">No depleted plans</div>') +
+                    (preview ? '<ul class="mt-3 text-xs">' + preview + '</ul>' : '');
+            } catch (e) { el.textContent = 'Depleted allocations unavailable'; }
+        }
         var PALETTE = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#14b8a6', '#8b5cf6', '#f97316', '#3b82f6'];
 
         function fmtGB(b) { var g = b / 1073741824; return g >= 1 ? g.toFixed(2) + ' GB' : (b / 1048576).toFixed(0) + ' MB'; }
@@ -475,7 +504,7 @@
             authTrendWidget.classList.toggle('lg:col-span-3', !global);
             authTrendWidget.classList.toggle('lg:col-span-2', global);
             try {
-                var tasks = [loadOverview()];
+                var tasks = [loadOverview(), loadDepletedDashboard()];
                 if (global) tasks.push(loadContainers(), loadRadiusStats(), loadServerHealth());
                 await Promise.all(tasks);
             } finally {

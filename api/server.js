@@ -568,6 +568,7 @@ app.post('/auth/login', async (req, res) => {
         return res.json({ status: 'needs_2fa_verify', token: jwt.sign({ ...payload, step: '2fa_verify' }, JWT_SECRET, { expiresIn: '15m' }) });
 
     await auditLog(username, 'webui', 'Login completed', 'success', 'Granted API key', ip, loginAuditScope);
+    await pool.query('UPDATE admins SET last_login_at = NOW(6) WHERE id = ?', [admin.id]);
     res.json({ status: 'success', api_key: admin.api_key });
 });
 
@@ -590,6 +591,7 @@ app.post('/auth/verify-2fa', async (req, res) => {
         if (decoded.step === '2fa_setup')
             await pool.query('UPDATE admins SET two_factor_setup_complete = true WHERE id = ?', [admin.id]);
 
+        await pool.query('UPDATE admins SET last_login_at = NOW(6) WHERE id = ?', [admin.id]);
         res.json({ status: 'success', api_key: admin.api_key });
     } catch (err) {
         await auditLog('unknown', 'webui', '2FA verification', 'failed', 'Invalid session token', ip);

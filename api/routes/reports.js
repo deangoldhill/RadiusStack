@@ -312,6 +312,64 @@ app.get('/api/users/:username/stats', requireApiAuth('users', 'read-only'), asyn
     }
 });
 
+// A cycle is all-time accounting minus its saved reset baseline, never a date-window total.
+app.get('/api/reports/depleted-allocations', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    const tenant = scope(req.tenantScope, 'up.tenant_id');
+    const accountingTenant = scope(req.tenantScope, 'tenant_id');
+    const base = `WITH allocations AS (
+        SELECT up.username, COALESCE(m.mac_id, up.username) AS display_name,
+          CASE WHEN m.mac_address IS NULL THEN 'user' ELSE 'mac' END AS type,
+          p.id AS plan_id, p.name AS plan_name,
+          GREATEST(0, COALESCE(a.total_input,0) + COALESCE(a.total_output,0) - COALESCE(u.base_input_octets,0) - COALESCE(u.base_output_octets,0)) AS data_used_bytes,
+          p.data_limit_mb * 1048576 AS data_limit_bytes,
+          GREATEST(0, COALESCE(a.total_time,0) - COALESCE(u.base_session_seconds,0)) AS time_used_seconds,
+          p.time_limit_seconds AS time_limit_seconds
+        FROM user_plans up
+        INNER JOIN plans p ON p.id=up.plan_id AND p.tenant_id <=> up.tenant_id
+        LEFT JOIN user_plan_usage u ON u.username=up.username AND u.tenant_id <=> up.tenant_id
+        LEFT JOIN mac_auth_devices m ON m.mac_address=up.username AND m.tenant_id <=> up.tenant_id
+        LEFT JOIN (SELECT username, tenant_id, SUM(acctinputoctets) AS total_input,
+           SUM(acctoutputoctets) AS total_output, SUM(acctsessiontime) AS total_time
+           FROM radacct WHERE 1=1${accountingTenant.sql} GROUP BY username,tenant_id) a
+           ON a.username=up.username AND a.tenant_id <=> up.tenant_id
+        WHERE 1=1${tenant.sql}
+      ), depleted AS (
+        SELECT allocations.*, (data_limit_bytes > 0 AND data_used_bytes >= data_limit_bytes) AS data_depleted,
+          (time_limit_seconds > 0 AND time_used_seconds >= time_limit_seconds) AS time_depleted FROM allocations
+      )`;
+    const baseParams = [...accountingTenant.params, ...tenant.params];
+    const where = ' WHERE (data_depleted OR time_depleted)';
+    try {
+        if (req.query.view === 'summary') {
+            const [plans] = await pool.query(`${base} SELECT plan_id,plan_name,
+              SUM(type='user') AS users,SUM(type='mac') AS mac_devices,COUNT(*) AS total
+              FROM depleted${where} GROUP BY plan_id,plan_name ORDER BY plan_name,plan_id`, baseParams);
+            const normalized = plans.map(p => ({ plan_id: Number(p.plan_id), plan_name: p.plan_name, users: Number(p.users), mac_devices: Number(p.mac_devices), total: Number(p.total) }));
+            return res.json({ summary: { total: normalized.reduce((n,p) => n+p.total,0), users: normalized.reduce((n,p) => n+p.users,0), mac_devices: normalized.reduce((n,p) => n+p.mac_devices,0), plans: normalized } });
+        }
+        const pageSize = [25,50,100].includes(Number(req.query.page_size)) ? Number(req.query.page_size) : 25;
+        const requestedPage = Number.isSafeInteger(Number(req.query.page)) && Number(req.query.page) > 0 ? Number(req.query.page) : 1;
+        const filters = [], filterParams = [];
+        if (req.query.plan_id !== undefined) {
+            const planId = Number(req.query.plan_id);
+            if (!Number.isSafeInteger(planId) || planId < 1) return res.status(400).json({ error: 'Invalid plan_id' });
+            filters.push('plan_id = ?'); filterParams.push(planId);
+        }
+        if (req.query.type !== undefined) {
+            if (!['user','mac'].includes(req.query.type)) return res.status(400).json({ error: 'Invalid type' });
+            filters.push('type = ?'); filterParams.push(req.query.type);
+        }
+        const filtered = where + (filters.length ? ' AND ' + filters.join(' AND ') : '');
+        const params = [...baseParams, ...filterParams];
+        const [[count]] = await pool.query(`${base} SELECT COUNT(*) AS total FROM depleted${filtered}`, params);
+        const total = Number(count.total);
+        const totalPages = Math.max(1, Math.ceil(total/pageSize));
+        const page = Math.min(requestedPage, totalPages);
+        const [rows] = await pool.query(`${base} SELECT username,display_name,type,plan_name,data_used_bytes,data_limit_bytes,time_used_seconds,time_limit_seconds,data_depleted,time_depleted FROM depleted${filtered} ORDER BY plan_name,username,plan_id LIMIT ? OFFSET ?`, [...params,pageSize,(page-1)*pageSize]);
+        return res.json({ items: rows.map(r => ({ ...r, data_used_bytes: Number(r.data_used_bytes), data_limit_bytes: Number(r.data_limit_bytes), time_used_seconds: Number(r.time_used_seconds), time_limit_seconds: Number(r.time_limit_seconds), data_depleted: Boolean(r.data_depleted), time_depleted: Boolean(r.time_depleted) })), total, page, pageSize, totalPages });
+    } catch (err) { console.error('Depleted allocations report error:', err); return res.status(500).json({ error: 'Could not load depleted allocations' }); }
+});
+
 app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
     const { start_date, end_date } = req.query;
@@ -326,36 +384,56 @@ app.get('/api/reports/user/:username', requireApiAuth('reports', 'read-only'), a
     const dateCondition = (start_date ? ' AND a.acctstarttime >= ?' : '') + (end_date ? ' AND a.acctstarttime <= ?' : '');
     const dateParams = [...(start_date ? [start_date] : []), ...(end_date ? [end_date] : [])];
 
+    const aScope = scope(req.tenantScope, 'a.tenant_id');
+    const pScope = scope(req.tenantScope, 'p.tenant_id');
+    const acctWhere = ` WHERE a.username = ?${aScope.sql}${dateCondition}`;
+    const acctParams = [realUsername, ...aScope.params, ...dateParams];
     const [acct] = await pool.query(
-        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username WHERE a.username = ?' + dateCondition + ' ORDER BY a.acctstarttime DESC',
-        [realUsername, ...dateParams]
+        'SELECT a.*, COALESCE(m.mac_id, a.username) AS username FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address = a.username AND m.tenant_id <=> a.tenant_id' + acctWhere + ' ORDER BY a.acctstarttime DESC', acctParams
     );
     const [auth] = await pool.query(
-        'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.username = ? ORDER BY p.authdate DESC LIMIT 200',
-        [realUsername]
+        'SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username AND m.tenant_id <=> p.tenant_id WHERE p.username = ?' + pScope.sql + ' ORDER BY p.authdate DESC LIMIT 200', [realUsername, ...pScope.params]
     );
     const [stats] = await pool.query(
-        'SELECT COUNT(*) as total_sessions, SUM(acctinputoctets) as total_input, SUM(acctoutputoctets) as total_output, SUM(acctsessiontime) as total_time, MAX(acctstarttime) as last_seen, MIN(acctstarttime) as first_seen, AVG(acctsessiontime) as avg_session_time, MAX(acctsessiontime) as longest_session FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, ''),
-        [realUsername, ...dateParams]
+        'SELECT COUNT(*) as total_sessions, SUM(a.acctinputoctets) as total_input, SUM(a.acctoutputoctets) as total_output, SUM(a.acctsessiontime) as total_time, MAX(a.acctstarttime) as last_seen, MIN(a.acctstarttime) as first_seen, AVG(a.acctsessiontime) as avg_session_time, MAX(a.acctsessiontime) as longest_session FROM radacct a' + acctWhere, acctParams
     );
     const [nasStats] = await pool.query(
-        'SELECT nasipaddress, COUNT(*) as session_count, SUM(acctinputoctets+acctoutputoctets) as total_bytes, AVG(acctsessiontime) as avg_duration FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY nasipaddress ORDER BY session_count DESC',
-        [realUsername, ...dateParams]
+        'SELECT a.nasipaddress, COUNT(*) as session_count, SUM(a.acctinputoctets+a.acctoutputoctets) as total_bytes, AVG(a.acctsessiontime) as avg_duration FROM radacct a' + acctWhere + ' GROUP BY a.nasipaddress ORDER BY session_count DESC', acctParams
     );
     const [daily] = await pool.query(
-        'SELECT DATE(acctstarttime) as day, COUNT(*) as sessions, SUM(acctinputoctets) as upload, SUM(acctoutputoctets) as download, SUM(acctsessiontime) as duration FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY DATE(acctstarttime) ORDER BY day ASC',
-        [realUsername, ...dateParams]
+        'SELECT DATE(a.acctstarttime) as day, COUNT(*) as sessions, SUM(a.acctinputoctets) as upload, SUM(a.acctoutputoctets) as download, SUM(a.acctsessiontime) as duration FROM radacct a' + acctWhere + ' GROUP BY DATE(a.acctstarttime) ORDER BY day ASC', acctParams
     );
     const [hourly] = await pool.query(
-        'SELECT HOUR(acctstarttime) as hour, COUNT(*) as sessions FROM radacct WHERE username = ?' + dateCondition.replace(/a\./g, '') + ' GROUP BY HOUR(acctstarttime) ORDER BY hour ASC',
-        [realUsername, ...dateParams]
+        'SELECT HOUR(a.acctstarttime) as hour, COUNT(*) as sessions FROM radacct a' + acctWhere + ' GROUP BY HOUR(a.acctstarttime) ORDER BY hour ASC', acctParams
     );
     const [authStats] = await pool.query(
-        "SELECT reply, COUNT(*) as count FROM radpostauth WHERE username = ? GROUP BY reply",
-        [realUsername]
+        'SELECT p.reply, COUNT(*) as count FROM radpostauth p WHERE p.username = ?' + pScope.sql + ' GROUP BY p.reply', [realUsername, ...pScope.params]
     );
-
-    res.json({ username, accounting: acct, postauth: auth, stats: stats[0], nasStats, daily, hourly, authStats });
+    const upScope = scope(req.tenantScope, 'up.tenant_id');
+    const [planRows] = await pool.query(`SELECT up.plan_id,p.name AS plan_name,p.reset_period,p.data_limit_mb,p.time_limit_seconds,
+      COALESCE(u.cycle_started_at,up.manual_reset_date) AS cycle_started_at,
+      u.base_input_octets,u.base_output_octets,u.base_session_seconds
+      FROM user_plans up INNER JOIN plans p ON p.id=up.plan_id AND p.tenant_id <=> up.tenant_id
+      LEFT JOIN user_plan_usage u ON u.username=up.username AND u.tenant_id <=> up.tenant_id
+      WHERE up.username=?${upScope.sql} LIMIT 1`, [realUsername, ...upScope.params]);
+    let planUsage = null;
+    if (planRows.length) {
+        const plan = planRows[0];
+        const [[totals]] = await pool.query(`SELECT COALESCE(SUM(a.acctinputoctets),0) AS total_input,
+          COALESCE(SUM(a.acctoutputoctets),0) AS total_output,COALESCE(SUM(a.acctsessiontime),0) AS total_time
+          FROM radacct a WHERE a.username=?${aScope.sql}`, [realUsername, ...aScope.params]);
+        const data_used_bytes = Math.max(0, Number(totals.total_input) + Number(totals.total_output) - Number(plan.base_input_octets || 0) - Number(plan.base_output_octets || 0));
+        const time_used_seconds = Math.max(0, Number(totals.total_time) - Number(plan.base_session_seconds || 0));
+        const data_limit_bytes = Number(plan.data_limit_mb || 0) * 1048576;
+        const time_limit_seconds = Number(plan.time_limit_seconds || 0);
+        planUsage = { plan_name: plan.plan_name, reset_period: plan.reset_period, cycle_started_at: plan.cycle_started_at,
+          data_used_bytes, data_limit_bytes, time_used_seconds, time_limit_seconds,
+          data_remaining_bytes: data_limit_bytes > 0 ? Math.max(0,data_limit_bytes-data_used_bytes) : null,
+          time_remaining_seconds: time_limit_seconds > 0 ? Math.max(0,time_limit_seconds-time_used_seconds) : null,
+          data_depleted: data_limit_bytes > 0 && data_used_bytes >= data_limit_bytes,
+          time_depleted: time_limit_seconds > 0 && time_used_seconds >= time_limit_seconds };
+    }
+    res.json({ username, accounting: acct, postauth: auth, stats: stats[0], nasStats, daily, hourly, authStats, planUsage });
 });
 
 app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
@@ -368,29 +446,38 @@ app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), asyn
 
 app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username } = req.params;
-    const reportRes = await fetch(`http://localhost:3000/api/reports/user/${username}`, {
-        headers: { 'X-API-Key': req.admin.api_key }
+    const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const reportRes = await fetch(`http://localhost:3000/api/reports/user/${encodeURIComponent(username)}`, {
+        headers: { 'X-API-Key': req.admin.api_key, ...(req.tenantScope.enabled ? { 'X-Tenant-ID': String(req.tenantScope.tenantId) } : {}) }
     });
+    if (!reportRes.ok) return res.status(reportRes.status || 502).json({ error: 'Executive report unavailable in selected tenant' });
     const data = await reportRes.json();
+    const allocation = data.planUsage;
+    const allocationHtml = allocation ? `<h2>Current allocation cycle</h2>
+      <p>Plan: ${escapeHtml(allocation.plan_name)}. Cycle usage is independent of the report date range.</p>
+      <table><tr><th>Allowance</th><th>Used</th><th>Limit</th><th>Remaining</th><th>Status</th></tr>
+      <tr><td>Data (bytes)</td><td>${Number(allocation.data_used_bytes) || 0}</td><td>${Number(allocation.data_limit_bytes) > 0 ? Number(allocation.data_limit_bytes) : 'Unlimited'}</td><td>${Number(allocation.data_limit_bytes) > 0 ? Math.max(0, Number(allocation.data_limit_bytes) - Number(allocation.data_used_bytes || 0)) : 'Unlimited'}</td><td>${allocation.data_depleted ? 'Depleted' : 'Available'}</td></tr>
+      <tr><td>Time (seconds)</td><td>${Number(allocation.time_used_seconds) || 0}</td><td>${Number(allocation.time_limit_seconds) > 0 ? Number(allocation.time_limit_seconds) : 'Unlimited'}</td><td>${Number(allocation.time_limit_seconds) > 0 ? Math.max(0, Number(allocation.time_limit_seconds) - Number(allocation.time_used_seconds || 0)) : 'Unlimited'}</td><td>${allocation.time_depleted ? 'Depleted' : 'Available'}</td></tr></table>` : '<h2>Current allocation cycle</h2><p>No billing plan assigned — unlimited access.</p>';
 
     const html = `
         <html><head><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ccc;padding:8px;text-align:left;} th{background:#f4f4f4;} h1,h2{color:#333;}</style></head>
         <body>
-            <h1>Executive Report: ${data.username}</h1>
+            <h1>Executive Report: ${escapeHtml(data.username)}</h1>
             <h2>Summary</h2>
             <table>
                 <tr><th>Total Sessions</th><th>Total Upload (bytes)</th><th>Total Download (bytes)</th><th>Total Time (sec)</th></tr>
-                <tr><td>${data.stats.total_sessions}</td><td>${data.stats.total_input || 0}</td><td>${data.stats.total_output || 0}</td><td>${data.stats.total_time || 0}</td></tr>
+                <tr><td>${Number(data.stats.total_sessions) || 0}</td><td>${Number(data.stats.total_input) || 0}</td><td>${Number(data.stats.total_output) || 0}</td><td>${Number(data.stats.total_time) || 0}</td></tr>
             </table>
+            ${allocationHtml}
             <h2>Recent Accounting</h2>
             <table>
                 <tr><th>Session ID</th><th>NAS IP</th><th>Start</th><th>Stop</th><th>Duration</th></tr>
-                ${data.accounting.slice(0, 20).map(a => `<tr><td>${a.acctsessionid}</td><td>${a.nasipaddress}</td><td>${a.acctstarttime || 'N/A'}</td><td>${a.acctstoptime || 'Active'}</td><td>${a.acctsessiontime || 0}s</td></tr>`).join('')}
+                ${data.accounting.slice(0, 20).map(a => `<tr><td>${escapeHtml(a.acctsessionid)}</td><td>${escapeHtml(a.nasipaddress)}</td><td>${escapeHtml(a.acctstarttime || 'N/A')}</td><td>${escapeHtml(a.acctstoptime || 'Active')}</td><td>${Number(a.acctsessiontime) || 0}s</td></tr>`).join('')}
             </table>
             <h2>Recent Authentications</h2>
             <table>
                 <tr><th>Date</th><th>Reply</th><th>Class</th></tr>
-                ${data.postauth.slice(0, 20).map(p => `<tr><td>${p.authdate}</td><td>${p.reply}</td><td>${p.class}</td></tr>`).join('')}
+                ${data.postauth.slice(0, 20).map(p => `<tr><td>${escapeHtml(p.authdate)}</td><td>${escapeHtml(p.reply)}</td><td>${escapeHtml(p.class)}</td></tr>`).join('')}
             </table>
         </body></html>
     `;
@@ -402,7 +489,7 @@ app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only
     await browser.close();
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Report_${username}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=Report_${username.replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`);
     res.send(pdf);
 });
 
