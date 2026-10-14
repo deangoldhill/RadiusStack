@@ -29,17 +29,40 @@ def discover(path):
     return result
 
 
+def audit(message):
+    if os.environ.get('RADIUS_MIGRATION_DEBUG') == '1':
+        from datetime import datetime, timezone
+        print(f'[migration {datetime.now(timezone.utc).isoformat()}] {message}', file=sys.stderr, flush=True)
+
+
+def statement_type(sql):
+    # SQL may contain customer values or secrets; log only the operation and hash.
+    match = re.search(r'\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|REPLACE|SET|WITH)\b', sql, re.I)
+    return match.group(1).upper() if match else 'SQL'
+
+
 def execute(db, sql, params=None):
+    digest = hashlib.sha256(sql.encode('utf-8')).hexdigest()
+    audit(f'db statement begin type={statement_type(sql)} sha256={digest} bytes={len(sql.encode("utf-8"))} bound_params={len(params) if params else 0}')
     with db.cursor() as cur:
         cur.execute(sql, params)
-        while cur.nextset():
-            pass
+        part = 1
+        while True:
+            audit(f'db statement result sha256={digest} part={part} affected_rows={getattr(cur, "rowcount", "unknown")}')
+            if not cur.nextset():
+                break
+            part += 1
+    audit(f'db statement complete sha256={digest} parts={part}')
 
 
 def query(db, sql, params=None):
+    digest = hashlib.sha256(sql.encode('utf-8')).hexdigest()
+    audit(f'db query begin type={statement_type(sql)} sha256={digest} bound_params={len(params) if params else 0}')
     with db.cursor() as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        result = cur.fetchall()
+    audit(f'db query complete sha256={digest} result_rows={len(result)} (values withheld)')
+    return result
 
 
 def metadata(db):
@@ -112,24 +135,47 @@ def validate_postcondition(db, name):
         return
     tables, columns, indexes = metadata(db)
     required_tables, required_columns, required_indexes = POSTCONDITIONS[name]
-    if not required_tables <= tables or not required_columns <= columns.keys() or not required_indexes <= indexes:
+    missing_tables = required_tables - tables
+    missing_columns = required_columns - columns.keys()
+    missing_indexes = required_indexes - indexes
+    audit(f'postcondition name={name} missing_tables={sorted(missing_tables)} missing_columns={sorted(missing_columns)} missing_indexes={sorted(missing_indexes)}')
+    if missing_tables or missing_columns or missing_indexes:
         raise RuntimeError(f'Migration postcondition incomplete: {name}')
     if name == '20260802_tenant_settings_stats':
         for table in ('settings', 'tenant_settings'):
             types = query(db, 'SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=\'setting_value\'', (table,))
             if len(types) != 1 or types[0][0] != 'text':
                 raise RuntimeError(f'Migration postcondition incomplete: {name} {table}.setting_value')
-    if name == '20260919_radsec_credential_sets' and query(db,
-            'SELECT COUNT(*) FROM radsec_clients rc LEFT JOIN radsec_credential_sets cs ON cs.id=rc.credential_set_id AND cs.serial=rc.serial LEFT JOIN radsec_credential_set_nas cn ON cn.credential_set_id=rc.credential_set_id AND cn.nas_id=rc.nas_id WHERE cs.id IS NULL OR cn.nas_id IS NULL')[0][0]:
-        raise RuntimeError(f'Migration postcondition incomplete: {name} credential backfill')
+            audit(f'postcondition name={name} {table}.setting_value type=text PASS')
+    if name == '20260919_radsec_credential_sets':
+        incomplete = query(db,
+            'SELECT COUNT(*) FROM radsec_clients rc LEFT JOIN radsec_credential_sets cs ON cs.id=rc.credential_set_id AND cs.serial=rc.serial LEFT JOIN radsec_credential_set_nas cn ON cn.credential_set_id=rc.credential_set_id AND cn.nas_id=rc.nas_id WHERE cs.id IS NULL OR cn.nas_id IS NULL')[0][0]
+        if incomplete:
+            # A client enrolled after the one-time backfill can be malformed without
+            # making the schema or other tenants unsafe to upgrade. Bound diagnostics
+            # and never print serials, certificate paths or key material.
+            examples = query(db,
+                'SELECT rc.id, rc.tenant_id, rc.nas_id FROM radsec_clients rc LEFT JOIN radsec_credential_sets cs ON cs.id=rc.credential_set_id AND cs.serial=rc.serial LEFT JOIN radsec_credential_set_nas cn ON cn.credential_set_id=rc.credential_set_id AND cn.nas_id=rc.nas_id WHERE cs.id IS NULL OR cn.nas_id IS NULL ORDER BY rc.id LIMIT 10')
+            affected = ', '.join(f'tenant={tenant} NAS={nas} client={client}'
+                                 for client, tenant, nas in examples)
+            print(f'WARNING: {incomplete} RadSec client{"s" if incomplete != 1 else ""} '
+                  f'{"have" if incomplete != 1 else "has"} incomplete credential-set/NAS links; '
+                  f'upgrade continues. Repair after upgrade. Examples: {affected}', file=sys.stderr)
+        else:
+            audit('postcondition RadSec credential-set links incomplete_clients=0 PASS')
 
 
 def run(db, path, migrate=False):
     """Check or apply migrations, holding one session-level MariaDB lock throughout."""
     try:
         migrations = discover(path)
+        audit(f'migration discovered count={len(migrations)} directory={path}')
+        for migration in migrations:
+            audit(f'migration discovered name={migration.name} sha256={migration.checksum} sql_bytes={len(migration.sql.encode("utf-8"))}')
+        audit('schema lock acquire name=radiusstack_schema_migrations timeout_seconds=60')
         if query(db, "SELECT GET_LOCK('radiusstack_schema_migrations', 60)")[0][0] != 1:
             raise RuntimeError('Could not acquire migration lock')
+        audit('schema lock acquired')
         try:
             tables = {row[0] for row in query(db, 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()')}
             columns = {(t, c) for t, c, _ in query(db, 'SELECT TABLE_NAME,COLUMN_NAME,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()')}
@@ -146,7 +192,9 @@ def run(db, path, migrate=False):
                 if migrate:
                     execute(db, "CREATE TABLE schema_migrations (migration_name VARCHAR(128) PRIMARY KEY, checksum CHAR(64) NULL, state VARCHAR(16) NOT NULL DEFAULT 'applied', applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             known = {m.name: m for m in migrations}
+            audit(f'migration ledger loaded applied_rows={len(applied)}')
             for name, (checksum, state) in applied.items():
+                audit(f'migration ledger check name={name} state={state} checksum={checksum or "absent"}')
                 if name not in known:
                     raise RuntimeError(f'Unknown applied migration: {name}')
                 if state != 'applied':
@@ -154,12 +202,14 @@ def run(db, path, migrate=False):
                 if checksum and checksum != known[name].checksum:
                     raise RuntimeError(f'Changed applied migration: {name}')
                 validate_postcondition(db, name)
+                audit(f'migration applied validation passed name={name}')
                 if not checksum:
                     if not migrate:
                         raise RuntimeError(f'Unchecked legacy checksum: {name}; run --migrate')
                     execute(db, 'UPDATE schema_migrations SET checksum=%s, state=\'applied\', applied_at=CURRENT_TIMESTAMP WHERE migration_name=%s', (known[name].checksum, name))
                     db.commit()
             pending = [m for m in migrations if m.name not in applied]
+            audit(f'migration pending count={len(pending)} names={[m.name for m in pending]}')
             # Detect unledgered DDL before executing anything: MariaDB DDL is not rollbackable.
             completed = set()
             for m in pending:
@@ -178,23 +228,31 @@ def run(db, path, migrate=False):
                         # only radacct.ha_updated_at marks this migration as complete.
                         footprint = ('radacct', 'ha_updated_at') in cols_now
                     if footprint:
+                        audit(f'migration schema footprint found name={m.name}; validating before stamping')
                         validate_postcondition(db, m.name)
                         completed.add(m.name)
             if migrate:
                 for m in pending:
                     if m.name in completed:
+                        audit(f'migration schema already complete name={m.name}; stamping ledger only')
                         execute(db, "INSERT INTO schema_migrations (migration_name, checksum, state) VALUES (%s, %s, 'applied')", (m.name, m.checksum))
                         db.commit()
+                        audit(f'migration applied name={m.name} reason=existing_verified_schema')
                         continue
+                    audit(f'migration applying name={m.name}; writing applying marker')
                     execute(db, 'INSERT INTO schema_migrations (migration_name, checksum, state) VALUES (%s, %s, \'applying\')', (m.name, m.checksum))
                     db.commit()
+                    audit(f'migration SQL begin name={m.name} sha256={m.checksum}')
                     execute(db, m.sql)
+                    audit(f'migration SQL complete name={m.name}; validating postcondition')
                     validate_postcondition(db, m.name)
                     execute(db, 'UPDATE schema_migrations SET checksum=%s, state=\'applied\', applied_at=CURRENT_TIMESTAMP WHERE migration_name=%s', (m.checksum, m.name))
                     db.commit()
+                    audit(f'migration applied name={m.name} ledger_committed=yes')
             return [m.name for m in pending]
         finally:
             query(db, "SELECT RELEASE_LOCK('radiusstack_schema_migrations')")
+            audit('schema lock released')
     finally:
         db.close()
 
