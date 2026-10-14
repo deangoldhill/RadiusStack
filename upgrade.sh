@@ -7,16 +7,29 @@ if [[ $# != 2 || $1 != --to || ! $2 =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   exit 2
 fi
 version=$2
+# Bash reads scripts incrementally. An older updater overwrote its own path and
+# later parsed bytes from the replacement. Always execute a separate private copy.
+if [[ ${RADIUS_UPGRADE_RUNNING_COPY:-} != 1 ]]; then
+  running_copy=$(mktemp)
+  cp -- "${BASH_SOURCE[0]}" "$running_copy"
+  RADIUS_UPGRADE_RUNNING_COPY=1 RADIUS_UPGRADE_COPY_PATH="$running_copy" exec bash "$running_copy" "$@"
+fi
 # Keep the transcript outside release-managed paths; never print .env or SQL row values.
 mkdir -p upgrade-backups
 debug_dir=$(mktemp -d -p upgrade-backups "${version}-debug-XXXXXXXX")
 debug_log="$debug_dir/upgrade-debug.log"
 : > "$debug_log"
 chmod 600 "$debug_log"
-exec > >(tee -a "$debug_log") 2> >(tee -a "$debug_log" >&2)
+# Keep detailed stdout/stderr (including Docker and migration output) in the
+# restricted file. FD 3 is reserved for short, deliberate terminal updates.
+exec 3>&2
+exec >> "$debug_log" 2>&1
+console() { printf '%s\n' "$*" >&3; }
 log() { printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+phase=preflight
+console "[+] Upgrade to $version: preflight. Detailed log: $debug_log"
 log "upgrade preflight target=$version cwd=$PWD log=$debug_log pid=$$"
-trap 'status=$?; if ((status)); then log "FAILED exit=$status before upgrade rollback; inspect $debug_log"; fi' EXIT
+trap 'status=$?; rm -f -- "${RADIUS_UPGRADE_COPY_PATH:-}"; if ((status)); then log "FAILED exit=$status phase=$phase before upgrade rollback; inspect $debug_log"; console "[!] Upgrade FAILED during $phase (exit $status). Detailed log: $debug_log"; fi' EXIT
 log 'check required installation files: docker-compose.yml .env (contents withheld)'
 [[ -f docker-compose.yml && -f .env ]] || { echo 'Run from an installation with docker-compose.yml and .env' >&2; exit 1; }
 if [[ -f .radiusstack-version ]]; then
@@ -49,6 +62,7 @@ compose_run() {
   return "$status"
 }
 work=$(mktemp -d)
+phase=download_and_verify
 log "temporary staging directory: $work"
 backup=''
 changed=0
@@ -84,9 +98,23 @@ cleanup() {
   fi
   log "remove temporary stage=$work; permanent debug log=$debug_log"
   rm -rf -- "$work"
+  if [[ -n ${RADIUS_UPGRADE_COPY_PATH:-} ]]; then
+    rm -f -- "$RADIUS_UPGRADE_COPY_PATH"
+    log 'removed private running script copy'
+  fi
+  if (( status != 0 )); then
+    if (( changed == 1 )); then
+      console "[!] Upgrade FAILED during $phase (exit $status). Old code restored; database NOT rolled back; writers stopped. Detailed log: $debug_log; backup: $backup"
+    else
+      console "[!] Upgrade FAILED during $phase (exit $status), before stopping writers. Detailed log: $debug_log"
+    fi
+  else
+    console "[+] Upgrade v$version complete. Backup: $backup; detailed log: $debug_log"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
+console '[+] Checking release and building images (details in log)'
 log "download release metadata: https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version -> $work/release.json"
 curl -fsSL -o "$work/release.json" "https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version"
 log "downloaded release metadata bytes=$(wc -c < "$work/release.json") sha256=$(sha256sum "$work/release.json" | cut -d' ' -f1)"
@@ -193,6 +221,8 @@ PY
 mkdir -p upgrade-backups
 backup=$(mktemp -d -p upgrade-backups "${version}-XXXXXXXX")
 log "persistent backup directory=$backup separate debug transcript=$debug_log"
+phase=backup
+console '[+] Release verified; backing up code and database'
 mkdir -p "$backup/code"
 for path in VERSION docker-compose.yml api radius web_ui/public db-migrations db-init upgrade.sh; do
   if [[ -e "$path" ]]; then
@@ -210,6 +240,7 @@ log "docker command (capture only): ${compose[*]} ps -q --status running phpmyad
 phpmyadmin_running=$("${compose[@]}" ps -q --status running phpmyadmin)
 log "phpmyadmin previously running=$([[ -n "$phpmyadmin_running" ]] && printf yes || printf no)"
 changed=1
+phase=stop_and_backup_database
 log 'DOWNTIME START: stopping writers'
 compose_run stop radius api web_ui phpmyadmin
 log "docker command: ${compose[*]} exec -T mariadb [credential via container env] mariadb-dump --single-transaction --routines --triggers --events --databases radius -uroot -> $backup/database.sql"
@@ -240,11 +271,15 @@ chmod -R a+rX web_ui/public
 # Compose must be valid with the installed local override before any migration.
 compose_run config -q
 log 'post-overlay Compose configuration valid'
+phase=build_and_migrate
+console '[+] Starting migration checks and service rebuild (details in log)'
 compose_run build db-migrate radius api
 # Explicit one-shot migration; never let `up` implicitly retry a failed migration.
 log 'migration START: detailed SQL operation metadata enabled; SQL literals/parameters withheld'
 compose_run run --rm --no-deps -e RADIUS_MIGRATION_DEBUG=1 db-migrate
 log 'migration SUCCESS'
+phase=start_and_readiness
+console '[+] Migration checks passed; starting and checking services'
 compose_run up -d --no-deps radius api web_ui
 # Compose reports containers started before their listeners are necessarily ready.
 # Retry transient cold-start refusals, but retain the existing rollback on a persistent failure.
@@ -270,6 +305,7 @@ wait_until_ready radius sh -c 'kill -0 1'
 wait_until_ready api node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
 wait_until_ready web_ui wget -q -O /dev/null http://127.0.0.1/
 if [[ -n "$phpmyadmin_running" ]]; then compose_run up -d --no-deps phpmyadmin; else log 'phpmyadmin was not running; no restart'; fi
+phase=finalize
 # Preserve the running script's inode until Bash has finished reading it.
 log "stage new upgrade.sh from $stage/upgrade.sh for atomic replacement"
 cp -a -- "$stage/upgrade.sh" "$work/upgrade.sh.next"

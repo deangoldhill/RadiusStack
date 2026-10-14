@@ -1,10 +1,10 @@
 'use strict';
 const net = require('node:net');
 
-function isPrivateIPv4(ip) {
+function isUsableIPv4(ip) {
   if (net.isIP(ip) !== 4) return false;
   const [a, b] = ip.split('.').map(Number);
-  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return a > 0 && a < 224 && a !== 127 && !(a === 169 && b === 254);
 }
 
 function createHaTransport(env = process.env) {
@@ -16,7 +16,7 @@ function createHaTransport(env = process.env) {
     throw new Error('HA_API_TOKEN must be a unique 32+ character secret');
   }
   const peer = env.HA_PEER_IP || '';
-  if (!isPrivateIPv4(peer)) throw new Error('HA_PEER_IP must be a private IPv4 address');
+  if (!isUsableIPv4(peer)) throw new Error('HA_PEER_IP must be a usable IPv4 address');
   const port = Number(env.API_PORT || 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('API_PORT invalid');
   return Object.freeze({
