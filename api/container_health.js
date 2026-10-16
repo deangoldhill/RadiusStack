@@ -19,12 +19,17 @@ function dockerGet(socketPath, path) {
 
 async function getContainerHealth({ socketPath = '/var/run/docker.sock', now = Date.now } = {}) {
     const name = 'radius_server';
-    const inspect = await dockerGet(socketPath, `/containers/${name}/json`);
+    const containers = await dockerGet(socketPath, '/containers/json?all=1');
+    if (!Array.isArray(containers)) throw new Error('Invalid Docker container list');
+    const expected = ['radius_server', 'radius_api', 'radius_db', 'radius_web_ui', 'radius_phpmyadmin'];
+    const states = new Map(containers.flatMap(container => (container.Names || []).map(containerName => [containerName, container.State])));
+    const stackRunning = expected.every(containerName => states.get(`/${containerName}`) === 'running');
+    const inspect = states.has(`/${name}`) ? await dockerGet(socketPath, `/containers/${name}/json`) : { State: { Running: false } };
     const running = inspect.State?.Running === true;
     const startedAt = Date.parse(inspect.State?.StartedAt);
     const result = {
         source: 'docker-container', container: name, state: running ? 'running' : 'stopped',
-        health: inspect.State?.Health?.Status || 'unknown',
+        health: stackRunning && running ? 'healthy' : 'Degraded',
         uptimeSeconds: running && Number.isFinite(startedAt) ? Math.max(0, Math.floor((now() - startedAt) / 1000)) : null,
         cpuPercent: null, memoryBytes: null, memoryLimitBytes: null
     };

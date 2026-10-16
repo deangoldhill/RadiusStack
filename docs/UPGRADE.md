@@ -1,10 +1,66 @@
 # Customer upgrade (source-release workflow)
 
-The source version is in `VERSION`, currently `5.5.4`. The maintainer manually commits the exact source, creates a matching `5.5.4` Git tag and GitHub Release (no `v`), and attaches the verified `radiusstack-source.tar.gz` from the release folder as a **Release asset**; a tarball committed only to the repository is not an asset. The archive contains `.radiusstack-version`, a ready-to-use `.env` with **public shared defaults**, runtime source, initialization SQL and ordered database migrations; tests, CI files and disposable development artifacts are omitted. The published defaults are not safe credentials for a production-facing service: change all passwords and keys before exposure, keep the changed `.env` private and preserve it across upgrades. Confirm GitHub's release API exposes the asset's `sha256:<64 hex>` digest and that the downloaded asset matches the staged archive before upgrading. Images are built locally, not via GHCR. Until the Release asset and digest are verified, this is not a published upgrade.
+The source version is in `VERSION`, currently `5.5.5`. The maintainer manually commits the exact source, creates a matching `5.5.5` Git tag and GitHub Release (no `v`), and attaches the verified `radiusstack-source.tar.gz` from the release folder as a **Release asset**; a tarball committed only to the repository is not an asset. The archive contains `.radiusstack-version`, a ready-to-use `.env` with **public shared defaults**, runtime source, initialization SQL and ordered database migrations; tests, CI files and disposable development artifacts are omitted. The published defaults are not safe credentials for a production-facing service: change all passwords and keys before exposure, keep the changed `.env` private and preserve it across upgrades. Confirm GitHub's release API exposes the asset's `sha256:<64 hex>` digest and that the downloaded asset matches the staged archive before upgrading. Images are built locally, not via GHCR. Until the Release asset and digest are verified, this is not a published upgrade.
 
 ## Before using on a customer installation
 
 Run from the installation directory as a user with Docker Compose v2 access, Python 3.8 or newer, Bash, and curl. Keep `docker-compose.yml` and `.env` present. Review the release, its migrations, and any customer-specific customizations first; take an independent off-host database backup and schedule downtime. For HA, coordinate peer failover/traffic separately: this script stops only the local Compose writers and does not orchestrate a cluster-wide upgrade. The release archive must contain the expected tree; do not run an unreviewed release. Test with `python3 -m unittest tests.test_upgrade_script -v` using offline mocks.
+
+## Upgrade to 5.5.5 from 5.5.2, 5.5.3 or 5.5.4
+
+Do not use the installed **5.5.2** `./upgrade.sh` for this upgrade: it overwrites the Bash script it is reading. Copying only the new script manually is possible, but a digest-verified bootstrap is safer because it validates the published archive and executes the new script from a temporary location without replacing local files first. Back up the database independently off-host, coordinate any HA peer downtime, and run from the installed **5.5.2** directory:
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import hashlib, json, re, subprocess, tarfile, tempfile
+
+installed = Path.cwd()
+if (installed / '.radiusstack-version').read_text().strip() != '5.5.2' or not (installed / '.env').is_file():
+    raise SystemExit('Expected an installed 5.5.2 directory with its private .env')
+version = '5.5.5'
+api = 'https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/' + version
+url = 'https://github.com/deangoldhill/RadiusStack/releases/download/' + version + '/radiusstack-source.tar.gz'
+with tempfile.TemporaryDirectory(prefix='radiusstack-555-upgrade-') as tmp:
+    work = Path(tmp)
+    response, archive = work / 'release.json', work / 'source.tar.gz'
+    subprocess.run(['curl', '-fsSL', '-o', str(response), api], check=True)
+    release = json.loads(response.read_text())
+    assets = [a for a in release.get('assets', []) if a.get('name') == 'radiusstack-source.tar.gz']
+    if release.get('tag_name') != version or release.get('draft') is True or len(assets) != 1:
+        raise SystemExit('Missing published 5.5.5 source release')
+    asset = assets[0]
+    if asset.get('browser_download_url') != url or not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', asset.get('digest') or ''):
+        raise SystemExit('Missing trusted source asset digest or unexpected URL')
+    subprocess.run(['curl', '-fsSL', '-o', str(archive), url], check=True)
+    digest = hashlib.sha256()
+    with archive.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    if digest.hexdigest() != asset['digest'][7:].lower():
+        raise SystemExit('Release archive SHA-256 mismatch')
+    with tarfile.open(archive, 'r:gz') as tar:
+        root = 'radiusstack-' + version + '/'
+        for marker in ('VERSION', '.radiusstack-version'):
+            members = [m for m in tar.getmembers() if m.name == root + marker]
+            if len(members) != 1 or not members[0].isfile() or tar.extractfile(members[0]).read() != (version + '\n').encode():
+                raise SystemExit('Incorrect release version marker: ' + marker)
+        members = [m for m in tar.getmembers() if m.name == root + 'upgrade.sh']
+        if len(members) != 1 or not members[0].isfile() or not 0 < members[0].size <= 131072:
+            raise SystemExit('Missing or oversized upgrader')
+        upgrader = work / 'upgrade.sh'
+        upgrader.write_bytes(tar.extractfile(members[0]).read())
+    subprocess.run(['bash', str(upgrader), '--to', version], cwd=installed, check=True)
+PY
+```
+
+For an installed **5.5.3** or **5.5.4** directory, the existing script atomically replaces itself only after the upgrade checks complete, so after verifying the exact published 5.5.5 asset and taking an off-host backup, run:
+
+```sh
+./upgrade.sh --to 5.5.5
+```
+
+Version 5.5.5 hides the depleted-allocations widget in Global context and reports aggregate running-state health for the five RadiusStack containers; `healthy` means all are running, not that they have passed application-level checks. A missing or stopped container yields `Degraded`. The 5.5.5 updater writes exhaustive detail to a mode-0600 per-attempt `upgrade-backups/<version>-debug-*/upgrade-debug.log`, while the terminal shows only progress milestones, a success summary, or a failure stage with log and backup paths. Do not paste the full log publicly: captured container diagnostics can contain secrets. Version 5.5.5 adds no SQL migration. Code rollback does not reverse previously committed database migrations. The HA public-peer IPv4 fix only changes validation: HA transport still uses plain HTTP and enabling it between populated or Internet-exposed nodes is unsafe without isolation and a tested data-reconciliation plan.
 
 ## Upgrade to 5.5.4 from 5.5.2 or 5.5.3
 

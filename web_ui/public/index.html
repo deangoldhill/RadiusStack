@@ -95,7 +95,7 @@
         </div>
 
         
-        <section class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-4" aria-label="Depleted allocations">
+        <section id="depletedDashboardWidget" hidden class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-4" aria-label="Depleted allocations">
             <div class="flex justify-between items-center mb-2"><h2 class="font-bold text-gray-700">Depleted allocations — current cycle</h2><a href="reports.html#depleted-allocations" class="text-xs text-blue-600 hover:underline">View details →</a></div>
             <div id="depletedDashboard" class="text-sm text-gray-500">Loading...</div>
         </section>
@@ -471,7 +471,7 @@
                 if (!res.ok) throw new Error('Health unavailable');
                 var h = await res.json();
                 el.innerHTML = statRow('RADIUS container', h.state === 'running' ? 'Running' : 'Stopped') +
-                    statRow('Docker healthcheck', h.health || 'unknown') +
+                    statRow('Container status (all services)', h.health === 'healthy' ? 'healthy' : 'Degraded', h.health === 'healthy' ? 'text-green-600' : 'text-red-600') +
                     statRow('Container uptime', fmtUptime(h.uptimeSeconds)) +
                     statRow('Container CPU', h.cpuPercent == null ? '—' : h.cpuPercent.toFixed(1) + '%') +
                     statRow('Container memory', fmtMiB(h.memoryBytes) + ' / ' + fmtMiB(h.memoryLimitBytes)) +
@@ -498,13 +498,15 @@
             dashboardLoading = true;
             clearTimeout(dashboardRefreshTimer);
             var global = isGlobalTenantContext();
+            document.getElementById('depletedDashboardWidget').hidden = global;
             document.getElementById('containerHealthWidget').hidden = !global;
             document.getElementById('globalDashboardWidgets').hidden = !global;
             const authTrendWidget = document.getElementById('authTrendWidget');
             authTrendWidget.classList.toggle('lg:col-span-3', !global);
             authTrendWidget.classList.toggle('lg:col-span-2', global);
             try {
-                var tasks = [loadOverview(), loadDepletedDashboard()];
+                var tasks = [loadOverview()];
+                if (!global) tasks.push(loadDepletedDashboard());
                 if (global) tasks.push(loadContainers(), loadRadiusStats(), loadServerHealth());
                 await Promise.all(tasks);
             } finally {
