@@ -12,6 +12,7 @@ const puppeteer = require('puppeteer');
 const crypto = require('crypto');
 const { createTotpHelpers } = require('./totp_helpers');
 const { createHaTransport } = require('./ha_transport');
+const { normalizeHaSqlValues } = require('./ha_admin_json');
 const { loadTenantScope } = require('./tenant');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
@@ -385,8 +386,8 @@ app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => 
                 const keys = Object.keys(row).join(', ');
                 const placeholders = Object.keys(row).map(() => '?').join(', ');
                 const updateStmts = Object.keys(row).map(k => `${k}=VALUES(${k})`).join(', ');
-                const values = Object.values(row);
                 const query = `INSERT INTO ${tableName} (${keys}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateStmts}`;
+                const values = normalizeHaSqlValues(query, Object.values(row));
                 await originalPoolQuery.call(pool, "INSERT INTO ha_queue (query, values_json) VALUES (?, ?)", [query, JSON.stringify(values)], { isSync: true });
             }
         }
@@ -417,12 +418,12 @@ app.post('/api/sync/execute', async (req, res) => {
         conn = await originalGetConnection.call(pool);
         const { query, values, insertId } = payload;
 
-        const sanitizedValues = (values || []).map(v => {
+        const sanitizedValues = normalizeHaSqlValues(query, (values || []).map(v => {
             if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(v)) {
                 return v.replace('T', ' ').replace('Z', '');
             }
             return v;
-        });
+        }));
 
         let success = false;
         let retries = 3;

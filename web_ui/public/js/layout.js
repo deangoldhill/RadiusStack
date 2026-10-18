@@ -79,16 +79,78 @@ function showAccessDenied() {
 
 async function loadAppVersion() {
   let label = 'Version unavailable';
+  let installedVersion = null;
   try {
     const response = await fetch('/version.txt', { cache: 'no-store' });
     if (response.ok) {
       const version = (await response.text()).trim();
-      if (/^\d+\.\d+(?:\.\d+)?$/.test(version)) label = `Version ${version}`;
+      if (/^\d+\.\d+(?:\.\d+)?$/.test(version)) {
+        installedVersion = version;
+        label = `Version ${version}`;
+      }
     }
   } catch (error) { console.warn('RadiusStack version unavailable', error); }
   for (const id of ['sidebarVersion', 'profileVersion', 'settingsVersion']) {
     const target = document.getElementById(id);
     if (target) target.textContent = label;
+  }
+  return installedVersion;
+}
+
+const RELEASES_URL = 'https://github.com/deangoldhill/RadiusStack/releases';
+const LATEST_RELEASE_API = 'https://api.github.com/repos/deangoldhill/RadiusStack/releases/latest';
+const RELEASE_CACHE_KEY = 'radiusstack:latest-release';
+const RELEASE_CACHE_MS = 60 * 60 * 1000;
+
+function compareReleaseVersions(installed, latest) {
+  const valid = /^\d+\.\d+(?:\.\d+)?$/;
+  if (!valid.test(installed) || !valid.test(latest)) return null;
+  const current = installed.split('.').map(Number);
+  const published = latest.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((published[i] || 0) !== (current[i] || 0)) return (published[i] || 0) > (current[i] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+async function checkForUpdates(installedVersion) {
+  const link = document.getElementById('sidebarUpdateStatus');
+  if (!link || compareReleaseVersions(installedVersion, installedVersion) === null) return;
+  // The destination is fixed: never trust a URL returned by the GitHub API or cache.
+  link.href = RELEASES_URL;
+  function show(latest) {
+    const comparison = compareReleaseVersions(installedVersion, latest);
+    if (comparison === null) throw new Error('Invalid GitHub release tag');
+    link.textContent = comparison > 0 ? 'Update available' : 'Up to Date';
+    link.style.color = comparison > 0 ? '#fbbf24' : '#86efac';
+    link.hidden = false;
+  }
+  try {
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(RELEASE_CACHE_KEY) || 'null'); } catch (_) { /* storage can be disabled */ }
+    if (cached && typeof cached.checkedAt === 'number' &&
+        Date.now() >= cached.checkedAt && Date.now() - cached.checkedAt < RELEASE_CACHE_MS &&
+        cached.installed === installedVersion && compareReleaseVersions(installedVersion, cached.latest) !== null) {
+      show(cached.latest);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    let latest;
+    try {
+      const response = await fetch(LATEST_RELEASE_API, {
+        headers: { Accept: 'application/vnd.github+json' }, signal: controller.signal
+      });
+      if (!response.ok) throw new Error('GitHub releases unavailable');
+      latest = (await response.json()).tag_name;
+    } finally { clearTimeout(timeout); }
+    show(latest);
+    try { localStorage.setItem(RELEASE_CACHE_KEY, JSON.stringify({ installed: installedVersion, latest, checkedAt: Date.now() })); }
+    catch (_) { /* storage can be disabled */ }
+  } catch (_) {
+    link.textContent = 'Check releases';
+    link.style.color = '#94a3b8';
+    link.hidden = false;
   }
 }
 
@@ -168,6 +230,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           </div>
           <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#475569;font-weight:600;margin-top:1px;">Network Auth</div>
           <p id="sidebarVersion" class="text-xs" style="color:#94a3b8;margin-top:2px;">Version unavailable</p>
+          <a id="sidebarUpdateStatus" href="https://github.com/deangoldhill/RadiusStack/releases" target="_blank" rel="noopener noreferrer" class="text-xs hover:underline" style="margin-top:2px;" hidden></a>
           <p id="sidebarUsername" class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;"></p>
         </div>
       </div>
@@ -270,7 +333,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   `);
 
   document.getElementById('profileUsername').textContent = window.currentAdmin || '';
-  loadAppVersion();
+  loadAppVersion().then(version => { if (version) void checkForUpdates(version); });
   document.getElementById('profileTheme').value = personalTheme || '';
   document.getElementById('profileThemeForm').onsubmit = async (e) => {
     e.preventDefault();
