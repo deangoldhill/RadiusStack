@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const { authenticator } = require('otplib');
 const qrcode = require('qrcode');
 const { v4: uuidv4 } = require('uuid');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const multer = require('multer');
 const fs = require('fs').promises;
 const puppeteer = require('puppeteer');
@@ -13,6 +13,9 @@ const crypto = require('crypto');
 const { createTotpHelpers } = require('./totp_helpers');
 const { createHaTransport } = require('./ha_transport');
 const { normalizeHaSqlValues } = require('./ha_admin_json');
+const { includeHaCertificate } = require('./ha_certificate_bundle');
+const { createCertificateReconciler, needsRadsecCertificateSync, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady } = require('./ha_radsec_sync');
+const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canProduceHaSync} = require('./ha_batch');
 const { loadTenantScope } = require('./tenant');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
@@ -192,53 +195,46 @@ pool.execute = async function() {
     return result;
 };
 
+let haQueueInFlight = false;
 async function processHaQueue() {
-    if (!haTransport.enabled) return;
+    if (!haTransport.enabled || global.haRole !== 'primary' || haQueueInFlight) return;
+    haQueueInFlight = true;
 
     try {
-        const [rows] = await originalPoolQuery.call(pool, "SELECT * FROM ha_queue ORDER BY id ASC LIMIT 50", [], { isSync: true });
-        for (let row of rows) {
-            try {
-                const rawPayload = { 
-                    query: row.query, 
-                    values: JSON.parse(row.values_json || '[]'),
-                    insertId: row.insert_id || null,
-                    _ts: Date.now() // Bound timestamp for replay protection
-                };
-
-                const securePayload = encryptHaPayload(rawPayload);
-
-                const response = await fetch(haTransport.peerURL('/api/sync/execute'), {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(securePayload)
-                });
-
-                if (response.ok) {
-                    await originalPoolQuery.call(pool, "DELETE FROM ha_queue WHERE id = ?", [row.id], { isSync: true });
-                    global.haStats.success++;
-                    global.haStats.lastSync = new Date().toISOString();
-                } else {
-                    const errText = await response.text();
-                    console.error('[HA Sync Peer Error]', errText);
-                    global.haStats.failed++;
-                    break;
-                }
-            } catch (netErr) {
-                console.error('[HA Sync Network Error]', netErr.message);
-                global.haStats.failed++;
-                break;
-            }
+        try { await reconcileHaCertificates(); }
+        catch (error) { console.error('[HA Certificate Reconcile]', error.message); }
+        const deadline=Date.now()+20000;
+        for(let batchNumber=0;batchNumber<20 && Date.now()<deadline;batchNumber++) {
+            const [rows]=await originalPoolQuery.call(pool,
+                `SELECT id, query, values_json, insert_id FROM ha_queue ORDER BY id ASC LIMIT ${MAX_BATCH_ITEMS}`,[],{isSync:true});
+            if(!rows.length)break;
+            const delivered=await deliverHaBatch({
+                rows,
+                post:async batch=>{
+                    if(batch.entries.some(entry=>needsRadsecCertificateSync(entry.query,entry.values)))await reconcileHaCertificates();
+                    const response=await fetch(haTransport.peerURL('/api/sync/batch'),{
+                        method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(60000),
+                        body:JSON.stringify(encryptHaPayload({...batch,_ts:Date.now()}))
+                    });
+                    if(!response.ok)throw new Error(`HA batch peer rejected request (HTTP ${response.status})`);
+                    return response.json();
+                },
+                deleteRows:ids=>originalPoolQuery.call(pool,
+                    `DELETE FROM ha_queue WHERE id IN (${ids.map(()=>'?').join(',')})`,ids,{isSync:true})
+            });
+            global.haStats.success+=delivered.count;
+            global.haStats.lastSync=new Date().toISOString();
         }
     } catch (err) {
-        console.error('[HA Worker Error]', err);
+        console.error('[HA Batch Worker]', err.message);
+        global.haStats.failed++;
+    } finally {
+        haQueueInFlight = false;
     }
 }
 
 async function syncRadiusTables() {
-    if (!haTransport.enabled) return;
+    if (!canProduceHaSync(haTransport.enabled,global.haRole)) return;
     try {
         let hasUpdatedCol = true;
         try { await originalPoolQuery.call(pool, "SELECT ha_updated_at FROM radacct LIMIT 1", [], { isSync: true }); } 
@@ -344,7 +340,8 @@ app.get('/api/ha/status', requireHaAdmin('read-only'), async (req, res) => {
         peer: haTransport.enabled ? haTransport.peer : 'Not configured',
         transport: haTransport.mode,
         queueLength,
-        stats: global.haStats
+        stats: global.haStats,
+        certificateSync: reconcileHaCertificates.status
     });
 });
 
@@ -359,6 +356,7 @@ app.post('/api/ha/demote', requireHaAdmin('read-write'), (req, res) => {
 });
 
 app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
+    if (!canProduceHaSync(haTransport.enabled,global.haRole)) return res.status(403).json({error:'Sync can only be triggered from an enabled primary'});
     await processHaQueue();
     await syncRadiusTables();
     res.json({ success: true, message: 'Manual sync triggered' });
@@ -366,9 +364,56 @@ app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
 
 
 const HA_CERT_ROOTS = ['/certs_radsec', '/certs_shared'];
-async function readHaCertificateBundle() { const files=[]; async function walk(root,dir=root){for(const entry of await fs.readdir(dir,{withFileTypes:true})){const full=`${dir}/${entry.name}`;if(entry.isDirectory())await walk(root,full);else if(entry.isFile()&&/\.(pem|key)$/.test(entry.name)){const data=await fs.readFile(full);if(data.length>1048576)throw new Error('Certificate artifact too large');files.push({path:full.slice(root.length+1),root,data:data.toString('base64')});}}} for(const root of HA_CERT_ROOTS)await walk(root);return {version:Date.now(),files}; }
-app.post('/api/ha/radsec-bundle', requireHaAdmin('read-write'), async (req,res)=>{if(global.haRole!=='primary'||!haTransport.enabled)return res.status(409).json({error:'HA peer is not configured'});try{const bundle=await readHaCertificateBundle();const r=await fetch(haTransport.peerURL('/api/sync/certificates'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(encryptHaPayload({_ts:Date.now(),bundle}))});if(!r.ok)throw new Error('Secondary rejected certificate bundle');res.json({success:true,version:bundle.version,files:bundle.files.length});}catch(e){console.error('[HA Certificate Sync]',e.message);res.status(500).json({error:'Certificate sync failed'});}});
-app.post('/api/sync/certificates', async (req,res)=>{let payload;try{payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}if(global.haRole!=='secondary'||Date.now()-payload._ts>60000||!Array.isArray(payload.bundle?.files))return res.status(401).json({error:'Invalid certificate bundle'});try{for(const f of payload.bundle.files){if(!HA_CERT_ROOTS.includes(f.root)||!/^[A-Za-z0-9_./-]+\.(pem|key)$/.test(f.path))throw new Error('Invalid certificate path');const target=`${f.root}/${f.path}`,data=Buffer.from(f.data,'base64');if(data.length>1048576)throw new Error('Certificate artifact too large');await fs.mkdir(target.slice(0,target.lastIndexOf('/')),{recursive:true,mode:0o700});await fs.writeFile(`${target}.incoming`,data,{mode:f.path.endsWith('.key')?0o600:0o644});await fs.rename(`${target}.incoming`,target);}exec('docker restart radius_server');res.json({success:true,version:payload.bundle.version});}catch(e){console.error('[HA Certificate Install]',e.message);res.status(400).json({error:'Certificate install failed'});}});
+async function readHaCertificateBundle() { const files=[]; async function walk(root,dir=root){for(const entry of await fs.readdir(dir,{withFileTypes:true})){const full=`${dir}/${entry.name}`;if(entry.isDirectory())await walk(root,full);else if(entry.isFile()&&includeHaCertificate(root,full.slice(root.length+1))){const data=await fs.readFile(full);if(data.length>1048576)throw new Error('Certificate artifact too large');files.push({path:full.slice(root.length+1),root,data:data.toString('base64')});}}} for(const root of HA_CERT_ROOTS)await walk(root);return {version:Date.now(),files}; }
+const reconcileHaCertificates = createCertificateReconciler({
+  readBundle: readHaCertificateBundle,
+  enabledTenants: async () => {
+    const [rows] = await originalPoolQuery.call(pool, "SELECT tenant_id FROM tenant_settings WHERE setting_key='radsec_enabled' AND setting_value IN ('true','1') ORDER BY tenant_id", [], {isSync:true});
+    return rows.map(row => Number(row.tenant_id));
+  },
+  send: async bundle => {
+    const response = await fetch(haTransport.peerURL('/api/sync/certificates'), {
+      method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(20000),
+      body:JSON.stringify(encryptHaPayload({_ts:Date.now(),bundle}))
+    });
+    if (!response.ok) throw new Error(`HA certificate peer rejected bundle (HTTP ${response.status})`);
+  }
+});
+async function restartRadiusForHa() {
+  await new Promise((resolve,reject)=>exec('docker restart radius_server', {timeout:60000}, error=>error?reject(error):resolve()));
+}
+app.post('/api/ha/radsec-bundle', requireHaAdmin('read-write'), async (req,res)=>{if(global.haRole!=='primary'||!haTransport.enabled)return res.status(409).json({error:'HA peer is not configured'});try{await reconcileHaCertificates(true);const bundle=await readHaCertificateBundle();res.json({success:true,version:bundle.version,files:bundle.files.length});}catch(e){console.error('[HA Certificate Sync]',e.message);res.status(500).json({error:'Certificate sync failed'});}});
+async function enabledRadsecTenants() {
+  const [rows]=await originalPoolQuery.call(pool,"SELECT tenant_id FROM tenant_settings WHERE setting_key='radsec_enabled' AND setting_value IN ('true','1') ORDER BY tenant_id",[],{isSync:true});
+  return rows.map(row=>Number(row.tenant_id));
+}
+async function isDockerRadiusRunning() {
+  const running=await new Promise((resolve,reject)=>exec('docker inspect --format {{.State.Running}} radius_server',{timeout:5000},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
+  return running==='true';
+}
+async function isSecondaryRadiusReady() {
+  return secondaryRadiusReady({
+    running:isDockerRadiusRunning,
+    identity:()=>new Promise(resolve=>execFile('openssl',['verify','-CAfile','/certs_radsec/listener/server-ca.pem','-verify_hostname',process.env.RADSEC_SERVER_DNS||'radiusstack-radsec','/certs_radsec/listener/server.pem'],{timeout:5000},error=>resolve(!error)))
+  });
+}
+async function verifySyncedRadiusReady() {
+  return (await enabledRadsecTenants()).length ? isSecondaryRadiusReady() : isDockerRadiusRunning();
+}
+const installHaCertificates = createCertificateInstaller({
+  roots:{'/certs_radsec':'/certs_radsec','/certs_shared':'/certs_shared'},
+  enabledTenants:enabledRadsecTenants,
+  restart:restartRadiusForHa,
+  isRadiusRunning:isSecondaryRadiusReady
+});
+app.post('/api/sync/certificates', async (req,res)=>{
+  let payload;
+  try {payload=decryptHaPayload(req.body);} catch {return res.status(401).json({error:'Decryption failed'});}
+  if(global.haRole!=='secondary'||Date.now()-payload._ts>60000||Date.now()-payload._ts < -5000||!Array.isArray(payload.bundle?.files))
+    return res.status(401).json({error:'Invalid certificate bundle'});
+  try {await installHaCertificates(payload.bundle);res.json({success:true,version:payload.bundle.version});}
+  catch(error){console.error('[HA Certificate Install]',error.message);res.status(503).json({error:'Certificate install failed'});}
+});
 
 app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => {
     if (global.haRole !== 'primary') return res.status(403).json({ error: 'Full sync can only be triggered from the primary node.' });
@@ -379,7 +424,7 @@ app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => 
 
         for (let t of tables) {
             const tableName = t[dbName];
-            if (['ha_queue', 'ha_sync_state', 'radius_stats'].includes(tableName)) continue;
+            if (!shouldFullSyncTable(tableName)) continue;
 
             const [rows] = await originalPoolQuery.call(pool, `SELECT * FROM ${tableName}`, [], { isSync: true });
             for (let row of rows) {
@@ -396,6 +441,19 @@ app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => 
         console.error('[HA Full Sync Error]', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+app.post('/api/sync/batch',async(req,res)=>{
+    let payload;
+    try {payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}
+    if(global.haRole!=='secondary')return res.status(403).json({error:'Secondary required'});
+    const age=Date.now()-payload._ts;
+    if(!Number.isFinite(age)||age>60000||age < -5000)return res.status(401).json({error:'Payload expired'});
+    try {
+        const result=await applyHaBatch({entries:payload.entries,sourcePeer:haTransport.peer,
+            getConnection:()=>originalGetConnection.call(pool),restart:restartRadiusForHa,ready:verifySyncedRadiusReady});
+        res.json({success:true,...result});
+    }catch(error){console.error('[HA Batch Replay]',error.message);res.status(503).json({error:'HA batch replay failed'});}
 });
 
 app.post('/api/sync/execute', async (req, res) => {
@@ -431,14 +489,16 @@ app.post('/api/sync/execute', async (req, res) => {
         while (retries > 0 && !success) {
             try {
                 await conn.query("SET FOREIGN_KEY_CHECKS=0", []);
-                if (insertId) {
-                    await conn.query("SET SESSION auto_increment_increment = 1", []);
-                    await conn.query("SET insert_id = ?", [insertId]);
+                try {
+                    if (insertId) {
+                        await conn.query("SET SESSION auto_increment_increment = 1", []);
+                        await conn.query("SET insert_id = ?", [insertId]);
+                    }
+                    await applySyncedWrite({query,values:sanitizedValues,
+                        execute:()=>conn.query(query,sanitizedValues),restart:restartRadiusForHa,ready:verifySyncedRadiusReady});
+                } finally {
+                    await conn.query("SET FOREIGN_KEY_CHECKS=1", []);
                 }
-
-                await conn.query(query, sanitizedValues);
-
-                await conn.query("SET FOREIGN_KEY_CHECKS=1", []);
                 success = true;
             } catch (err) {
                 if (err.code === 'ER_LOCK_DEADLOCK' && retries > 1) {

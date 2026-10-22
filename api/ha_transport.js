@@ -22,7 +22,7 @@ function createHaTransport(env = process.env) {
   return Object.freeze({
     enabled: true, mode: 'http', peer,
     peerURL(path) {
-      if (!['/api/sync/execute', '/api/sync/certificates'].includes(path)) throw new Error('unsupported HA endpoint');
+      if (!['/api/sync/execute', '/api/sync/batch', '/api/sync/certificates'].includes(path)) throw new Error('unsupported HA endpoint');
       return `http://${peer}:${port}${path}`;
     },
     allowIncoming(req) {

@@ -123,6 +123,7 @@ POSTCONDITIONS = {
     '20261010_authlog_called_station': (set(), {('radpostauth', 'calledstationid')}, set()),
     '20261011_admin_last_login': (set(), {('admins', 'last_login_at')}, set()),
     '20261011_syslog_auth_checkpoint': ({'syslog_auth_checkpoint'}, {('syslog_auth_checkpoint', 'last_id')}, set()),
+    '20261020_ha_replay_state': ({'ha_replay_state'}, {('ha_replay_state', 'last_queue_id'), ('ha_replay_state', 'radsec_restart_pending')}, {('ha_replay_state', 'PRIMARY')}),
 }
 
 

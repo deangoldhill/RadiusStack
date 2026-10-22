@@ -90,6 +90,7 @@ services:
     - DB_NAME=radius
     - JWT_SECRET=${JWT_SECRET:?Set required value in .env}
     - RADSEC_PASSPHRASE_ENCRYPTION_KEY=${RADSEC_PASSPHRASE_ENCRYPTION_KEY:?Set required value in .env}
+    - RADSEC_SERVER_DNS=${RADSEC_SERVER_DNS:-radiusstack-radsec}
     - TOTP_ISSUER=${TOTP_ISSUER}
     - HA_ENABLED=${HA_ENABLED:-false}
     - HA_ROLE=${HA_ROLE:-primary}

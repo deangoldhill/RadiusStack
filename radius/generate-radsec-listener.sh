@@ -36,7 +36,7 @@ if [ ! -s "$SERVER_CA_KEY" ] || [ ! -s "$SERVER_CA_PEM" ] || ! openssl x509 -in 
   archive "$SERVER_KEY"; archive "$SERVER_PEM"
 fi
 leaf_is_valid() {
-  [ -s "$SERVER_KEY" ] && [ -s "$SERVER_PEM" ] && openssl verify -CAfile "$SERVER_CA_PEM" "$SERVER_PEM" >/dev/null 2>&1 && [ "$(openssl x509 -in "$SERVER_PEM" -noout -subject)" != "$(openssl x509 -in "$SERVER_PEM" -noout -issuer)" ] && openssl x509 -in "$SERVER_PEM" -text -noout | grep -A1 'Basic Constraints' | grep -q 'CA:FALSE' && openssl x509 -in "$SERVER_PEM" -text -noout | grep -q 'TLS Web Server Authentication'
+  [ -s "$SERVER_KEY" ] && [ -s "$SERVER_PEM" ] && openssl verify -CAfile "$SERVER_CA_PEM" -verify_hostname "$SERVER_DNS" "$SERVER_PEM" >/dev/null 2>&1 && { [ -z "$SERVER_IP" ] || openssl verify -CAfile "$SERVER_CA_PEM" -verify_ip "$SERVER_IP" "$SERVER_PEM" >/dev/null 2>&1; } && [ "$(openssl x509 -in "$SERVER_PEM" -noout -subject)" != "$(openssl x509 -in "$SERVER_PEM" -noout -issuer)" ] && openssl x509 -in "$SERVER_PEM" -text -noout | grep -A1 'Basic Constraints' | grep -q 'CA:FALSE' && openssl x509 -in "$SERVER_PEM" -text -noout | grep -q 'TLS Web Server Authentication'
 }
 if ! leaf_is_valid; then
   archive "$SERVER_KEY"; archive "$SERVER_PEM"

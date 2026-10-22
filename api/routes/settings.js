@@ -18,6 +18,7 @@ const { STANDARD_REPLY_ATTRIBUTES, normalizeCustomReplyAttributes } = require('.
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
   const syslog = require('../utils/syslog');
   const { exec, setApiDebugMode } = dependencies;
+  const ensureTenantRadsecCa = dependencies.ensureTenantRadsecCa || require('../radsec').ensureTenantRadsecCa;
   require('../radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
 
   app.get('/api/settings', requireApiAuth('settings', 'read-only'), async (req, res) => {
@@ -69,6 +70,9 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
       }
 
       if (req.tenantScope.enabled) {
+        if (entries.some(([key,value]) => key === 'radsec_enabled' && truthy(value))) {
+          await ensureTenantRadsecCa(req.tenantScope.tenantId);
+        }
         for (const [key, value] of entries) {
           await pool.query(
             'INSERT INTO tenant_settings (tenant_id, setting_key, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
