@@ -77,6 +77,11 @@
 </head>
 <body>
     <main>
+        <section id="downstreamDashboardLink" hidden class="bg-white border border-blue-100 rounded-xl p-4 shadow-sm mb-5">
+            <h2 class="font-bold text-gray-800">Downstream RADIUS proxy</h2>
+            <p class="text-sm text-gray-600 mt-1">Create a tenant-scoped destination, then choose duplicate or proxy-only routing on a NAS client or profile. Response validation is available in duplicate mode.</p>
+            <div class="flex gap-4 mt-2 text-sm font-bold"><a class="text-blue-700 hover:underline" href="downstream-destinations.html">Manage destinations →</a><a class="text-blue-700 hover:underline" href="nas.html">Configure NAS routes →</a><a id="downstreamProfileLink" class="text-blue-700 hover:underline" href="profiles.html">Configure profile routes →</a></div>
+        </section>
         <div class="flex items-center justify-between mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Dashboard</h1>
             <div class="flex items-center gap-3">
@@ -521,6 +526,11 @@
             loadAll();
         }
         document.addEventListener('radiusstack:tenant-context-ready', function () {
+            const allowed = hasPermission(window.currentPermissions, 'nas');
+            if (window.radiusstackContext && allowed) {
+                document.getElementById('downstreamDashboardLink').hidden = false;
+                if (window.multiTenantEnabled && localStorage.getItem('activeTenantId') === 'global') document.getElementById('downstreamProfileLink').remove();
+            }
             if (dashboardStarted) loadAll(); else startDashboard();
         });
         window.addEventListener('load', startDashboard);

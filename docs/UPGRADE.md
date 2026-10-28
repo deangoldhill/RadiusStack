@@ -1,19 +1,43 @@
-# Customer upgrade (source-release workflow)
+# RadiusStack 6.0.1 source release and upgrade
 
-The source version is in `VERSION`, currently `5.4`. **Commit before tagging** that exact commit `5.4` (no `v`), then push the tag. `.github/workflows/release.yml` tests and builds from the tag, packages a deployment-only `radiusstack-source.tar.gz`, and creates the GitHub Release with that asset. Do not also manually create the Release: a pre-existing Release makes the workflow's create step fail. The archive contains `.radiusstack-version`, a grouped ready-to-use `.env` with **public shared defaults**, runtime source, initialization SQL and ordered database migrations; tests, CI files and disposable development artifacts are omitted. The published defaults let `docker compose up -d --build` run without a setup script, but they are not safe credentials for a production-facing service: change all passwords and keys before exposure, keep the changed `.env` private and preserve it across upgrades. GitHub's release API must expose the asset's `sha256:<64 hex>` digest; the command rejects missing digests or a different URL. Images are built locally, not via GHCR. Until the tag workflow succeeds and its asset is verified, this is not a published upgrade.
+This is a source release. The prepared folder and `radiusstack-source.tar.gz` are **not** a published GitHub Release. Dean commits, tags `6.0.1` (without `v`), creates the Release and uploads the exact verified archive manually. The CI tag workflow validates the source and retains an artifact; it does **not** publish a Release.
 
-## Before using on a customer installation
+## What's included
 
-Run from the installation directory as a user with Docker Compose v2 access, Python 3 (tarfile `filter='data'`, Python >=3.12), Bash, and curl. Keep `docker-compose.yml` and `.env` present. Review the release, its migrations, and any customer-specific customizations first; take an independent off-host database backup and schedule downtime. For HA, coordinate peer failover/traffic separately: this script stops only the local Compose writers and does not orchestrate a cluster-wide upgrade. The release archive must contain the expected tree; do not run an unreviewed release. Test with `python3 -m unittest tests.test_upgrade_script -v` using offline mocks.
+- HA accounting/authentication scan cursor repair: `20261026_ha_sync_state_seed.sql` inserts missing `radacct` and `radpostauth` cursor rows without resetting existing progress. The API prevents overlapping scans and fails instead of repeatedly enqueueing when a cursor is missing or fails to advance.
+- Additive `20261027_downstream_radius.sql` schema for tenant-owned downstream destinations and NAS/profile routes. Native FreeRADIUS policy selects a known user's profile route before the packet-source NAS route. Proxy-only and duplicate modes, optional validated duplicate responses, destination activation, and the destination/NAS/profile UI are included.
+- Proxy-only accounting validates the downstream Accounting-Response before the main RADIUS container performs local SQL accounting. Future accounting packets contribute to local plan usage; past packets absent from the local accounting table are **not** backfilled. Proxy-only authentication still uses the downstream decision. NAS edits preserve the shared secret when the password field is blank; a nonempty value explicitly replaces it. NAS list responses do not disclose stored secrets.
+- HA replay batching and other unreleased source changes accumulated since the 5.5.7 package are part of this complete source snapshot. Review the source diff and migrations before using it on another installation.
+
+## Fresh installation
+
+The extracted `radiusstack-6.0.1` directory contains `.env` with intentionally **public, insecure defaults**, copied byte-for-byte from `.env.example`. Change passwords and encryption keys and set a reachable `RADSEC_SERVER_DNS` before exposing a production service. Never copy the development server's private `.env`. Ensure the published ports are free, then run from the extracted directory:
 
 ```sh
-./upgrade.sh --to 5.5
+docker compose config -q
+docker compose up -d --build
 ```
 
-The script verifies the exact release tag, expected archive URL and GitHub-published SHA-256, validates and stages the archive before stopping writers, saves old code under `upgrade-backups/5.5-*/code`, stops local `radius`, `api`, `web_ui` and (if present) `phpmyadmin`, then dumps MariaDB to the backup directory using the existing container's `MYSQL_ROOT_PASSWORD` environment variable (not a CLI password argument or log). It overlays release-managed source, runs `docker compose run --rm --no-deps db-migrate` once, rebuilds and starts the three application services, and checks container responsiveness. Preserve `upgrade-backups/` securely: the SQL contains customer data. Back up these local backups off host. No registry or production DB is touched by the offline tests.
+Fresh initialization and the ordered migrations must succeed before authenticating clients. Confirm all services are running, the web page renders and FreeRADIUS logs `Ready to process requests`. Test PAP and Accounting-Start from a configured NAS before putting it into service.
 
-For a new 5.4 machine, install **from the published 5.4 asset**, not a later working tree. The asset contains `.radiusstack-version` and a grouped `.env` with working public defaults. From the extracted directory, `docker compose up -d --build` starts the stack without another initialization command, provided the host ports are available. The default `RADSEC_SERVER_DNS=radius-stack.example.com` is an example hostname: set it to a resolvable hostname clients use before enabling RadSec. `RADSEC_SERVER_IP` is commented out and defaults to `127.0.0.1`. **Every copy shares the published default passwords and encryption key until changed.** Do not expose the default web, API, database, or phpMyAdmin ports to untrusted networks; change secrets and review ports before production use. If copying a Git checkout rather than extracting the asset, copy `.env.example` to `.env` first; never replace the primary server's configured `.env`. A Git checkout has no `.radiusstack-version` unless it came from the published archive. Keep the same `COMPOSE_FILE` value for future upgrades if using an override.
+## Upgrade from a published 5.5.7 installation
 
-The script does not overwrite `.env`, `compose.production.yaml`, `web_ui/nginx.conf`, `radius/generated`, named Docker volumes, or unrelated custom files. It uses **only `docker-compose.yml` by default**, matching the ordinary install; if your deployment uses `COMPOSE_FILE`, export the exact same value for the upgrade. A merely present `compose.production.yaml` is not automatically activated. It **does** overlay files under `api`, `radius` (except `radius/generated`), `web_ui/public`, `db-migrations`, `db-init`, and `docker-compose.yml`; move customer edits to other paths or merge them deliberately before upgrading. Old files removed by a release may remain after overlay; review the source diff/compatibility.
+**Do not run this command until the 6.0.1 GitHub Release asset is published, its API metadata exposes a `sha256:` digest, and the source has been reviewed.** Take an independent off-host database backup first; schedule downtime. If HA is enabled, upgrade and validate the **secondary first**, then the primary; coordinate failover and traffic separately. Do not clear the HA queue or manually reset cursor rows.
 
-If backup, migration, build, or health checking fails after writers stop, the script stops app services and restores old managed code from the backup. **It never automatically rolls back database changes or restarts old applications**: DDL may be nontransactional and old code may not work against a partially migrated schema. Investigate the migration and verify database compatibility before manually restarting. If a database restore is required, do it only after an operator has reviewed the SQL snapshot and consequences of discarding newer data. The smoke checks are process/API/web responsiveness, not full RADIUS authentication or workload checks; perform operational validation before reopening traffic.
+From the existing installation directory, preserve its customized `.env` and Compose overrides and use its *installed* updater:
+
+```sh
+./upgrade.sh --to 6.0.1
+```
+
+The updater verifies the exact tag, asset URL and published digest, rejects unsafe archive members, builds new images before downtime, then stops local writers, backs up code and MariaDB, overlays managed source, applies tracked migrations and checks service readiness. It leaves `.env`, generated RADIUS material, Compose overrides and named volumes unchanged. It retains a restricted detailed log and backup under `upgrade-backups/`. The SQL dump and logs may contain customer data or credentials; protect and copy them off-host. The script does not orchestrate a cluster-wide HA upgrade.
+
+After the secondary returns healthy, verify its HA and RADIUS state before upgrading the primary. After both nodes are updated, confirm the HA queue drains rather than growing from repeat scans, and test tenant-scoped proxy auth/accounting with a real NAS. Verify that a new accounting update increases local plan usage and a NAS edit with a blank shared-secret field leaves the client working. These are operational checks, not claims made by packaging tests.
+
+For versions older than 5.5.7, use the verified historical upgrade/bootstrap path to 5.5.7 first or rehearse a direct upgrade on a disposable copy of that exact version and data. The oldest installed updater may have a self-overwrite/readiness bug; the new archive cannot fix an old updater before it downloads the new code. Do not guess a direct path.
+
+If an upgrade fails after writers stop, the updater restores old managed **code** but **does not roll back database DDL or restart old writers**. Inspect its backup and detailed log, assess schema compatibility, and restore the database only after explicitly deciding what newer data would be lost.
+
+## Publishing boundary
+
+The Git tag must point to the exact reviewed source containing `VERSION=6.0.1`. Upload the prepared `radiusstack-source.tar.gz` asset to the manually created Release under tag `6.0.1`, then independently compare the published asset SHA-256 with the local digest. Do not tag a different tree or replace the asset without rebuilding and re-verifying its digest and upgrade path.

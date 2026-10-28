@@ -1,0 +1,25 @@
+services:
+  mariadb:
+    ports: !reset []
+
+  radius:
+    # Production must preserve classic RADIUS UDP plus optional RadSec TCP.
+    ports: !override
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+      - "2083:2083/tcp"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_NAME: radius
+
+  api:
+    ports: !reset []
+
+  web_ui:
+    ports: !override
+      - "8109:80"
+    labels: !reset []
+
+  phpmyadmin:
+    profiles: ["admin-tools"]
+    ports: !reset []

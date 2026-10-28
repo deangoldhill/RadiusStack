@@ -1,0 +1,7 @@
+python3 native_downstream_validate_acct {
+    python_path = "/opt/native-radius:/opt/native-radius-venv/lib/python3.12/site-packages"
+    python_path_mode = append
+    module = rlm_python_bridge
+    mod_preacct = ${.module}
+    func_preacct = preacct
+}

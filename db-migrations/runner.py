@@ -124,6 +124,15 @@ POSTCONDITIONS = {
     '20261011_admin_last_login': (set(), {('admins', 'last_login_at')}, set()),
     '20261011_syslog_auth_checkpoint': ({'syslog_auth_checkpoint'}, {('syslog_auth_checkpoint', 'last_id')}, set()),
     '20261020_ha_replay_state': ({'ha_replay_state'}, {('ha_replay_state', 'last_queue_id'), ('ha_replay_state', 'radsec_restart_pending')}, {('ha_replay_state', 'PRIMARY')}),
+    '20261027_downstream_radius': (
+        {'downstream_radius_destinations', 'profile_downstream_routes'},
+        {('nas', field) for field in ('downstream_destination_id', 'downstream_mode', 'downstream_validate_response')}
+        | {('downstream_radius_destinations', field) for field in ('id', 'tenant_id', 'name', 'ipv4', 'auth_port', 'accounting_port', 'shared_secret')}
+        | {('profile_downstream_routes', field) for field in ('id', 'tenant_id', 'profile_name', 'destination_id', 'mode', 'validate_response')},
+        {('downstream_radius_destinations', 'uq_downstream_tenant_id'), ('downstream_radius_destinations', 'idx_downstream_tenant_name'),
+         ('profile_downstream_routes', 'idx_profile_downstream_tenant_name'), ('profile_downstream_routes', 'idx_profile_downstream_tenant_destination')}),
+    # Data-only migration: empty schema footprint forces the seed SQL to run.
+    '20261026_ha_sync_state_seed': (set(), set(), set()),
 }
 
 
@@ -142,6 +151,10 @@ def validate_postcondition(db, name):
     audit(f'postcondition name={name} missing_tables={sorted(missing_tables)} missing_columns={sorted(missing_columns)} missing_indexes={sorted(missing_indexes)}')
     if missing_tables or missing_columns or missing_indexes:
         raise RuntimeError(f'Migration postcondition incomplete: {name}')
+    if name == '20261026_ha_sync_state_seed':
+        rows = query(db, "SELECT table_name FROM ha_sync_state WHERE table_name IN ('radacct', 'radpostauth')")
+        if {row[0] for row in rows} != {'radacct', 'radpostauth'}:
+            raise RuntimeError(f'Migration postcondition incomplete: {name} accounting cursors missing')
     if name == '20260802_tenant_settings_stats':
         for table in ('settings', 'tenant_settings'):
             types = query(db, 'SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=\'setting_value\'', (table,))

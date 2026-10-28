@@ -6,16 +6,18 @@ RUN printf "[client]\nskip-ssl = true\n[freeradius]\nskip-ssl = true\n" > /etc/m
 
 RUN ln -s /opt/etc/raddb/mods-available/sql /opt/etc/raddb/mods-enabled/sql
 
+ENV DB_HOST=mariadb DB_NAME=radius
+
 # Completely overwrite the SQL module file to prevent any ghost variables or TLS requirements
 RUN <<'EOF' cat > /opt/etc/raddb/mods-available/sql
 sql {
     driver = "rlm_sql_mysql"
     dialect = "mysql"
-    server = "mariadb"
+    server = "$ENV{DB_HOST}"
     port = 3306
     login = "$ENV{DB_USER}"
     password = "$ENV{DB_PASSWORD}"
-    radius_db = "radius"
+    radius_db = "$ENV{DB_NAME}"
     read_clients = yes
     read_groups = yes
     read_profiles = yes
@@ -40,6 +42,9 @@ EOF
 # FreeRADIUS 3.2-supported extension point: replace the MySQL queries.conf file.
 # This is deliberately query-only; no custom uninvoked policy is added.
 COPY queries.conf /opt/etc/raddb/mods-config/sql/main/mysql/queries.conf
+
+# Router-only private source stamp, with RadSec peers continuing to use their
+# actual Packet-Src-IP-Address. Only the loopback backend may consume stamps.
 
 # The project-owned queries.conf includes the post-auth Called-Station-Id insert.
 # Do not patch vendor queries here; the copied file is the single source of truth.
@@ -187,3 +192,30 @@ RUN chmod 0755 /usr/local/sbin/generate-radsec-listener /usr/local/sbin/radsec-v
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+# Native FreeRADIUS proxy; default site's public UDP listeners and RadSec remain intact.
+RUN apk add --no-cache python3 && { [ -e /opt/etc/raddb/mods-enabled/replicate ] || ln -s /opt/etc/raddb/mods-available/replicate /opt/etc/raddb/mods-enabled/replicate; }
+COPY native_proxy.py /usr/local/sbin/generate-downstream
+COPY native-proxy-policy /opt/etc/raddb/policy.d/native-proxy
+RUN chmod 0755 /usr/local/sbin/generate-downstream
+RUN python3 - <<'PYCONFIG'
+import importlib.machinery
+from pathlib import Path
+module = importlib.machinery.SourceFileLoader('native_proxy', '/usr/local/sbin/generate-downstream').load_module()
+p = Path('/opt/etc/raddb/sites-available/default')
+p.write_text(module.install_site(p.read_text()))
+proxy = Path('/opt/etc/raddb/proxy.conf')
+proxy.write_text(proxy.read_text() + '\n$INCLUDE ${confdir}/native-downstream-proxy.conf\n')
+Path('/opt/etc/raddb/native-downstream-proxy.conf').write_text('# generated at startup\n')
+PYCONFIG
+
+# The existing FreeRADIUS process loads the synchronous verifier in-process.
+RUN apk add --no-cache py3-pip && python3 -m venv /opt/native-radius-venv && \
+    /opt/native-radius-venv/bin/pip install --no-cache-dir 'pyrad==2.6.0' 'PyMySQL==1.2.3'
+ENV PYTHONPATH=/opt/native-radius:/opt/native-radius-venv/lib/python3.12/site-packages
+RUN mkdir -p /opt/native-radius
+COPY downstream_helper.py /opt/native-radius/downstream_helper.py
+COPY rlm_python_bridge.py /opt/native-radius/rlm_python_bridge.py
+COPY native-python-module /opt/etc/raddb/mods-available/native_downstream_validate
+COPY native-python-module-acct /opt/etc/raddb/mods-available/native_downstream_validate_acct
+RUN ln -s /opt/etc/raddb/mods-available/native_downstream_validate /opt/etc/raddb/mods-enabled/native_downstream_validate && \
+    ln -s /opt/etc/raddb/mods-available/native_downstream_validate_acct /opt/etc/raddb/mods-enabled/native_downstream_validate_acct

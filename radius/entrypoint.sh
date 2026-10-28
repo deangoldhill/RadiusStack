@@ -32,6 +32,10 @@ done
 /usr/local/sbin/generate-vsa-dictionary
 /usr/local/sbin/generate-radsec-listener
 
+# SQL migrations must already be applied by the deployment's migrator.
+# Fail closed on missing schema, invalid tenant routes or unsafe destinations.
+/usr/local/sbin/generate-downstream
+
 DEBUG_MODE=$(mysql --skip-ssl -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" -D "${DB_NAME}" -N -B \
     -e "SELECT setting_value FROM settings WHERE setting_key='radius_debug';" 2>/dev/null)
 
@@ -57,7 +61,8 @@ fi
 
 if [ "$DEBUG_MODE" = "true" ]; then
     echo "Starting FreeRADIUS ($RAD_CMD) with threaded foreground logging; RadSec TLS requires worker threads..."
+    exec "$RAD_CMD" -f -l stdout -xx
 else
     echo "Starting FreeRADIUS ($RAD_CMD) in normal threaded foreground mode..."
+    exec "$RAD_CMD" -f -l stdout
 fi
-exec "$RAD_CMD" -fxx -l stdout

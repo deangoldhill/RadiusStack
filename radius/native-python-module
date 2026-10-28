@@ -1,0 +1,7 @@
+python3 native_downstream_validate {
+    python_path = "/opt/native-radius:/opt/native-radius-venv/lib/python3.12/site-packages"
+    python_path_mode = append
+    module = rlm_python_bridge
+    mod_authorize = ${.module}
+    func_authorize = authorize
+}

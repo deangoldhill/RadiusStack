@@ -139,6 +139,7 @@
                     </div>
                 </div>
 
+                <fieldset id="profileRouteControls" hidden class="border rounded-lg p-3 space-y-2"><legend class="font-bold text-sm">Downstream RADIUS route</legend><p id="profileRouteHelp" class="text-xs text-gray-600">Loading destinations…</p><a href="downstream-destinations.html" class="text-sm text-blue-700 underline">Manage destinations</a><label class="block text-sm font-bold">Destination<select id="profileDestination" onchange="DownstreamRouteControls.update('profile')" class="w-full border p-2 rounded-lg" disabled><option value="">Local only</option></select></label><label class="block text-sm font-bold">Route mode<select id="profileMode" onchange="DownstreamRouteControls.update('profile')" class="w-full border p-2 rounded-lg" disabled><option value="">Choose mode</option><option value="duplicate">Duplicate — local auth and forward copy</option><option value="proxy-only">Proxy-only — forward to destination</option></select></label><label class="flex gap-2 text-sm"><input id="profileValidate" type="checkbox" disabled> Validate downstream response (duplicate only)</label></fieldset>
                 <div class="flex justify-end space-x-3 pt-4 border-t">
                     <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save Profile</button>
@@ -147,7 +148,7 @@
         </div>
     </div>
 
-    <script src="/js/layout.js"></script>
+    <script src="/js/layout.js"></script><script src="/js/downstream-route-controls.js"></script>
     <script src="/js/profile-table.js"></script>
     <script>
 
@@ -701,6 +702,7 @@
             document.getElementById('nasIpList').innerHTML = '';
             document.getElementById('nasAllowAll').checked = false;
             toggleNasRestriction();
+            DownstreamRouteControls.populate('profile', name ? (allProfileData.downstreamRoutes || []).find(route => route.profile_name === name) : null);
 
             if (name) {
                 document.getElementById('modalTitle').textContent = `Edit Profile: ${name}`;
@@ -782,10 +784,11 @@
                 value: row.querySelector('.attr-v').value
             }));
 
+            let route; try { route = DownstreamRouteControls.payload('profile'); } catch(error) { alert(error.message); return; }
             const res = await apiFetch(`/api/profiles/${encodeURIComponent(name)}`, {
-                method: 'POST', body: JSON.stringify({ nas_ips, vlan_id, reply_attributes })
+                method: 'POST', body: JSON.stringify({ nas_ips, vlan_id, reply_attributes, ...route })
             });
-            if (res.ok) { closeModal(); loadProfiles(); }
+            if (res.ok) { closeModal(); await loadProfiles(); alert('Profile route saved. RADIUS configuration will apply on the next authentication request.'); }
             else { const err = await res.json(); alert('Error: ' + err.error); }
         };
 
@@ -796,6 +799,9 @@
             else { const err = await res.json(); alert('Error: ' + err.error); }
         }
 
+        let profileRouteBooted = false;
+        function bootstrapProfileRoutes() { if (profileRouteBooted || !window.radiusstackContext || !hasPermission(window.currentPermissions, 'users')) return; profileRouteBooted = true; if (window.multiTenantEnabled && localStorage.getItem('activeTenantId') === 'global') return; document.getElementById('profileRouteControls').hidden = false; DownstreamRouteControls.load('profile'); }
+        document.addEventListener('radiusstack:tenant-context-ready', bootstrapProfileRoutes); window.addEventListener('load', bootstrapProfileRoutes);
         init();
     </script>
 

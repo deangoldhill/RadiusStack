@@ -52,14 +52,14 @@ const GLOBAL_CONTEXT_BLOCKED_PAGES = new Set(['users.html', 'profiles.html', 'pl
 
 const PAGE_PERMISSIONS = {
   'index.html': null, 'users.html': 'users', 'mac-auth.html': 'users',
-  'profiles.html': 'users', 'plans.html': 'plans', 'nas.html': 'nas',
+  'profiles.html': 'users', 'plans.html': 'plans', 'nas.html': 'nas', 'downstream-destinations.html': 'nas',
   'authlogs.html': 'reports', 'accounting.html': 'reports', 'reports.html': 'reports',
   'audit.html': 'admins', 'admins.html': 'admins', 'settings.html': 'settings', 'api-docs.html': null,
 };
 
 const NAV_MODULES = {
   'users.html': 'users', 'mac-auth.html': 'users', 'profiles.html': 'users',
-  'plans.html': 'plans', 'nas.html': 'nas',
+  'plans.html': 'plans', 'nas.html': 'nas', 'downstream-destinations.html': 'nas',
   'authlogs.html': 'reports', 'accounting.html': 'reports', 'reports.html': 'reports',
   'audit.html': 'admins', 'admins.html': 'admins', 'settings.html': 'settings',
 };
@@ -169,6 +169,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const [me, context] = await Promise.all([meRes.json(), contextRes.json()]);
     try { perms = typeof me.permissions === 'string' ? JSON.parse(me.permissions) : (me.permissions || {}); }
     catch(e) { perms = {}; }
+    window.currentPermissions = perms;
     window.radiusstackContext = context;
     window.currentAdmin = me.username || '';
     window.currentAdminSuper = Number(me.is_super_admin) === 1;
@@ -244,6 +245,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         <a href="plans.html"      class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4CB;</span> Plans</a>
         <a href="profiles.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F6E1;&#xFE0F;</span> Profiles</a>
         <a href="nas.html"        class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4E1;</span> NAS Clients</a>
+        <a href="downstream-destinations.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F500;</span> Downstream RADIUS</a>
         <a href="authlogs.html"   class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F511;</span> Auth Logs</a>
         <a href="accounting.html" class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x23F1;&#xFE0F;</span> Accounting</a>
         <a href="reports.html"    class="nav-link flex items-center py-3 px-4 rounded-xl transition-all duration-200 hover:bg-gray-800 text-gray-400 hover:text-white group"><span class="mr-3 text-lg opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-transform">&#x1F4C8;</span> Reports</a>
