@@ -1,5 +1,6 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
+    const { routing, verifyDestination } = require('./downstream_proxy');
     const { STANDARD_REPLY_ATTRIBUTES, normalizeCustomReplyAttributes } = require('../custom_attributes');
     const tenant = req => req.tenantScope || { enabled: false, tenantId: null };
     const selectedTenantId = req => tenant(req).enabled ? tenant(req).tenantId : null;
@@ -12,8 +13,9 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             SELECT groupname FROM radgroupcheck WHERE groupname = ?${scoped.sql}
             UNION SELECT groupname FROM radgroupreply WHERE groupname = ?${scoped.sql}
             UNION SELECT groupname FROM radusergroup WHERE groupname = ?${scoped.sql}
+            UNION SELECT profile_name AS groupname FROM profile_downstream_routes WHERE profile_name = ?${scoped.sql}
         ) profiles LIMIT 1`;
-        const params = [name, ...scoped.params, name, ...scoped.params, name, ...scoped.params];
+        const params = [name, ...scoped.params, name, ...scoped.params, name, ...scoped.params, name, ...scoped.params];
         const [rows] = await db.query(sql, params);
         return rows.length > 0;
     }
@@ -40,8 +42,9 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             SELECT groupname FROM radgroupreply WHERE groupname != ''${scoped.sql}
             UNION SELECT groupname FROM radgroupcheck WHERE groupname != ''${scoped.sql}
             UNION SELECT groupname FROM radusergroup WHERE groupname != ''${scoped.sql}
+            UNION SELECT profile_name AS groupname FROM profile_downstream_routes WHERE profile_name != ''${scoped.sql}
         ) AS profiles ORDER BY groupname${limit ? ' LIMIT ?' : ''}`;
-        const params = [...scoped.params, ...scoped.params, ...scoped.params];
+        const params = [...scoped.params, ...scoped.params, ...scoped.params, ...scoped.params];
         const [rows] = await pool.query(sql, limit ? [...params, limit] : params);
         res.json(rows.map(r => r.groupname));
     });
@@ -82,7 +85,8 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const [checks] = await pool.query('SELECT * FROM radgroupcheck WHERE 1=1' + scoped.sql, scoped.params);
         const [replies] = await pool.query('SELECT * FROM radgroupreply WHERE 1=1' + scoped.sql, scoped.params);
         const [userCounts] = await pool.query('SELECT groupname, COUNT(*) AS users FROM radusergroup WHERE 1=1' + scoped.sql + ' GROUP BY groupname', scoped.params);
-        res.json({ checks, replies, userCounts });
+        const [downstreamRoutes] = await pool.query('SELECT profile_name, destination_id AS downstream_destination_id, mode AS downstream_mode, validate_response AS downstream_validate_response FROM profile_downstream_routes WHERE 1=1' + scoped.sql, scoped.params);
+        res.json({ checks, replies, userCounts, downstreamRoutes });
     });
 
     app.post('/api/profiles/:name', requireApiAuth('users', 'read-write'), async (req, res) => {
@@ -92,15 +96,19 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         nas_ips = Array.isArray(nas_ips) ? nas_ips.filter(ip => typeof ip === 'string' && ip.trim() !== '') : [];
         vlan_id = typeof vlan_id === 'string' ? vlan_id.trim() : '';
         reply_attributes = Array.isArray(reply_attributes) ? reply_attributes : [];
+        let downstream; try { downstream=routing(req.body); } catch (err) { return res.status(400).json({error:err.message}); }
         const conn = await pool.getConnection();
         const scoped = profileScope(req);
         try {
             await conn.beginTransaction();
+            await verifyDestination(conn, req, downstream.id);
             // Tenant and Global are separate ownership domains: equal names are valid.
             // Delete/replace only the selected scope below; never inspect Global for a collision.
             await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
             await conn.query('DELETE FROM radgroupreply WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
+            await conn.query('DELETE FROM profile_downstream_routes WHERE profile_name=?'+scoped.sql,[name,...scoped.params]);
             const tenantId = selectedTenantId(req);
+            if(downstream.id !== null) await conn.query('INSERT INTO profile_downstream_routes (tenant_id,profile_name,destination_id,mode,validate_response) VALUES (?,?,?,?,?)',[tenantId,name,downstream.id,downstream.mode,downstream.validate ? 1 : 0]);
             for (const ip of nas_ips) await conn.query(`INSERT INTO radgroupcheck (groupname, attribute, op, value, tenant_id) VALUES (?, 'NAS-IP-Address', '+=', ?, ?)`, [name, ip, tenantId]);
             if (vlan_id !== '') await conn.query(`INSERT INTO radgroupreply (groupname, attribute, op, value, tenant_id) VALUES
                 (?, 'Tunnel-Type', '=', 'VLAN', ?), (?, 'Tunnel-Medium-Type', '=', 'IEEE-802', ?), (?, 'Tunnel-Private-Group-ID', '=', ?, ?)`, [name, tenantId, name, tenantId, name, vlan_id, tenantId]);
@@ -114,7 +122,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             await auditLog(req.admin.username, req.origin, `Saved profile: ${name}`, 'success', `NAS: ${nas_ips.length}, VLAN: ${vlan_id || 'none'}, Attributes: ${validReplyAttributes.length + (addedDefaultReply ? 1 : 0)}`, req.ip, req.tenantScope);
             res.json({ success: true });
         } catch (err) {
-            await conn.rollback(); console.error('Profile save error:', err); res.status(500).json({ error: err.message || 'Failed to save profile' });
+            await conn.rollback(); console.error('Profile save error:', err); res.status(err.status||500).json({ error: err.message || 'Failed to save profile' });
         } finally { conn.release(); }
     });
 
@@ -150,6 +158,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             await conn.query('DELETE FROM radgroupcheck WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
             await conn.query('DELETE FROM radgroupreply WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
             await conn.query('DELETE FROM radusergroup WHERE groupname = ?' + scoped.sql, [name, ...scoped.params]);
+            await conn.query('DELETE FROM profile_downstream_routes WHERE profile_name = ?' + scoped.sql, [name, ...scoped.params]);
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Deleted profile: ${name}`, 'success', '', req.ip, req.tenantScope); res.json({ success: true });
         } catch (err) { await conn.rollback(); console.error('Delete Profile Error:', err); res.status(500).json({ error: 'Failed to delete profile' }); } finally { conn.release(); }
     });

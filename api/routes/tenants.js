@@ -48,7 +48,9 @@ module.exports = function(app, pool, requireApiAuth, auditLog) {
       await conn.query('DELETE FROM tenant_settings WHERE tenant_id=?', [tenantId]);
       await conn.query('DELETE FROM admin_tenants WHERE tenant_id=?', [tenantId]);
       await conn.query('DELETE FROM admin_audit_log WHERE tenant_id=?', [tenantId]);
+      await conn.query('DELETE FROM profile_downstream_routes WHERE tenant_id=?', [tenantId]);
       await conn.query('DELETE FROM nas WHERE tenant_id=?', [tenantId]);
+      await conn.query('DELETE FROM downstream_radius_destinations WHERE tenant_id=?', [tenantId]);
       const [result] = await conn.query('DELETE FROM tenants WHERE id=?', [tenantId]);
       if (!result.affectedRows) throw new Error('Tenant disappeared during deletion');
       await conn.commit();

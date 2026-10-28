@@ -17,6 +17,7 @@ const { includeHaCertificate } = require('./ha_certificate_bundle');
 const { createCertificateReconciler, needsRadsecCertificateSync, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady } = require('./ha_radsec_sync');
 const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canProduceHaSync} = require('./ha_batch');
 const { loadTenantScope } = require('./tenant');
+const { summarizeRequest } = require('./debug_request');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
 require('./workers/radiusStatsWorker');
@@ -88,7 +89,7 @@ function apiDebugLog(msg) {
 
 app.use((req, res, next) => {
     if (apiDebugEnabled && !req.originalUrl.includes('/api/ha/status')) { // exclude noise
-        apiDebugLog(`${req.method} ${req.originalUrl} - IP: ${req.ip} - Body: ${JSON.stringify(req.body || {}).substring(0, 200)}`);
+        apiDebugLog(summarizeRequest(req));
     }
     next();
 });
@@ -233,8 +234,10 @@ async function processHaQueue() {
     }
 }
 
+let haAccountingInFlight = false;
 async function syncRadiusTables() {
-    if (!canProduceHaSync(haTransport.enabled,global.haRole)) return;
+    if (!canProduceHaSync(haTransport.enabled,global.haRole) || haAccountingInFlight) return;
+    haAccountingInFlight = true;
     try {
         let hasUpdatedCol = true;
         try { await originalPoolQuery.call(pool, "SELECT ha_updated_at FROM radacct LIMIT 1", [], { isSync: true }); } 
@@ -247,8 +250,11 @@ async function syncRadiusTables() {
 
         for (let table of tables) {
             const [stateRows] = await originalPoolQuery.call(pool, "SELECT last_time, last_id FROM ha_sync_state WHERE table_name = ?", [table.name], { isSync: true });
-            let lastId = stateRows[0] ? stateRows[0].last_id : 0;
-            let lastTimeStr = stateRows[0] && stateRows[0].last_time ? stateRows[0].last_time : '1970-01-01 00:00:00.000000';
+            // An upgraded primary may have the table but not its seed rows. Never
+            // enqueue from the epoch unless there is a durable cursor to advance.
+            if (stateRows.length !== 1) throw new Error(`Missing ha_sync_state cursor for ${table.name}; apply database migrations`);
+            let lastId = stateRows[0].last_id;
+            let lastTimeStr = stateRows[0].last_time || '1970-01-01 00:00:00.000000';
 
             if (lastTimeStr instanceof Date) lastTimeStr = lastTimeStr.toISOString().replace('T', ' ').replace('Z', '');
 
@@ -302,11 +308,14 @@ async function syncRadiusTables() {
                     }
                 }
 
-                await originalPoolQuery.call(pool, "UPDATE ha_sync_state SET last_time = ?, last_id = ? WHERE table_name = ?", [maxTimeProcessed, maxIdProcessed, table.name], { isSync: true });
+                const [updated] = await originalPoolQuery.call(pool, "UPDATE ha_sync_state SET last_time = ?, last_id = ? WHERE table_name = ?", [maxTimeProcessed, maxIdProcessed, table.name], { isSync: true });
+                if (updated.affectedRows !== 1) throw new Error(`HA cursor update failed for ${table.name}`);
             }
         }
     } catch (err) {
         console.error('[HA RADIUS Sync Error]', err);
+    } finally {
+        haAccountingInFlight = false;
     }
 }
 
@@ -757,6 +766,7 @@ const routeDependencies = {
 };
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
 require('./routes/tenants')(app, pool, requireApiAuth, auditLog, routeDependencies);
+require('./routes/downstream_proxy')(app, pool, requireApiAuth, auditLog, routeDependencies);
 require('./radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
 
 async function calculateRadiusStats(pool, statType, startDate, endDate) {

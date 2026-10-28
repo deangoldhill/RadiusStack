@@ -16,6 +16,8 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
         const tenant_settings = await safeQuery('SELECT * FROM tenant_settings');
         const user_totp = await safeQuery('SELECT * FROM user_totp');
         const nas = await safeQuery('SELECT * FROM nas');
+        const downstream_radius_destinations = await safeQuery('SELECT * FROM downstream_radius_destinations');
+        const profile_downstream_routes = await safeQuery('SELECT * FROM profile_downstream_routes');
         const plans = await safeQuery('SELECT * FROM plans');
         const radcheck = await safeQuery('SELECT * FROM radcheck');
         const radreply = await safeQuery('SELECT * FROM radreply');
@@ -39,7 +41,9 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
                 admin_tenants,
                 tenant_settings,
                 user_totp,
+                downstream_radius_destinations,
                 nas,
+                profile_downstream_routes,
                 plans,
                 mac_auth_devices,
                 radcheck_users,
@@ -129,7 +133,7 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
 
         // Old archives contain tenant IDs on objects but not the tenant identities.
         // Guessing their names or attaching them to a different tenant is unsafe.
-        const tenantScopedTables = ['nas', 'plans', 'mac_auth_devices', 'radcheck_users', 'radcheck_mac', 'radcheck', 'radreply', 'radgroupcheck', 'radgroupreply', 'radusergroup', 'user_plans', 'user_plan_usage', 'user_totp', 'radacct', 'radpostauth'];
+        const tenantScopedTables = ['nas', 'downstream_radius_destinations', 'profile_downstream_routes', 'plans', 'mac_auth_devices', 'radcheck_users', 'radcheck_mac', 'radcheck', 'radreply', 'radgroupcheck', 'radgroupreply', 'radusergroup', 'user_plans', 'user_plan_usage', 'user_totp', 'radacct', 'radpostauth'];
         const referencedIds = new Set(tenantScopedTables.flatMap(table =>
             (data[table] || []).map(row => row.tenant_id).filter(id => id !== null && id !== undefined)
         ));
@@ -165,6 +169,14 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             }
         }
         if (Array.isArray(data.tenants)) results.tenants = backupTenants.length;
+
+        if (Array.isArray(data.downstream_radius_destinations)) {
+            // Delete dependent routes first; NAS references become NULL via its FK.
+            await conn.query('DELETE FROM profile_downstream_routes');
+            await conn.query('DELETE FROM downstream_radius_destinations');
+            await chunkInsert(conn, 'downstream_radius_destinations', data.downstream_radius_destinations);
+            results.downstream_radius_destinations = data.downstream_radius_destinations.length;
+        }
 
         if (data.nas?.length) {
             await conn.query('DELETE FROM nas');
@@ -242,6 +254,12 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
             await conn.query('DELETE FROM radusergroup');
             await chunkInsert(conn, 'radusergroup', data.radusergroup);
             results.radusergroup = data.radusergroup.length;
+        }
+
+        if (Array.isArray(data.profile_downstream_routes)) {
+            await conn.query('DELETE FROM profile_downstream_routes');
+            await chunkInsert(conn, 'profile_downstream_routes', data.profile_downstream_routes);
+            results.profile_downstream_routes = data.profile_downstream_routes.length;
         }
 
         if (data.settings?.length) {
