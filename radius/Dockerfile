@@ -210,8 +210,8 @@ PYCONFIG
 
 # The existing FreeRADIUS process loads the synchronous verifier in-process.
 RUN apk add --no-cache py3-pip && python3 -m venv /opt/native-radius-venv && \
-    /opt/native-radius-venv/bin/pip install --no-cache-dir 'pyrad==2.6.0' 'PyMySQL==1.2.3'
-ENV PYTHONPATH=/opt/native-radius:/opt/native-radius-venv/lib/python3.12/site-packages
+    /opt/native-radius-venv/bin/pip install --no-cache-dir --target /opt/native-radius-deps 'pyrad==2.6.0' 'PyMySQL==1.2.3'
+ENV PYTHONPATH=/opt/native-radius:/opt/native-radius-deps
 RUN mkdir -p /opt/native-radius
 COPY downstream_helper.py /opt/native-radius/downstream_helper.py
 COPY rlm_python_bridge.py /opt/native-radius/rlm_python_bridge.py
