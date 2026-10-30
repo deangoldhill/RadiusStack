@@ -1,8 +1,8 @@
 'use strict';
 const MAX_BATCH_ITEMS=200;
 const MAX_BATCH_BYTES=1024*1024;
-const EXCLUDED_FULL_SYNC_TABLES=new Set(['ha_queue','ha_sync_state','ha_replay_state','radius_stats','schema_migrations','syslog_auth_checkpoint']);
-function shouldFullSyncTable(name){return !EXCLUDED_FULL_SYNC_TABLES.has(name)}
+const EXCLUDED_FULL_SYNC_TABLES=new Set(['ha_queue','ha_sync_state','ha_replay_state','ha_control_state','ha_log_reconcile_state','radius_stats','schema_migrations','syslog_auth_checkpoint']);
+function shouldFullSyncTable(name){return !EXCLUDED_FULL_SYNC_TABLES.has(name) && !name.startsWith('ha_backup_') && !name.startsWith('ha_stage_')}
 function canProduceHaSync(enabled,role){return enabled===true && role==='primary'}
 function buildHaBatch(rows) {
   const entries=[];

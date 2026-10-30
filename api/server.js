@@ -16,6 +16,9 @@ const { normalizeHaSqlValues } = require('./ha_admin_json');
 const { includeHaCertificate } = require('./ha_certificate_bundle');
 const { createCertificateReconciler, needsRadsecCertificateSync, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady } = require('./ha_radsec_sync');
 const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canProduceHaSync} = require('./ha_batch');
+const {createHaPauseControl} = require('./ha_pause');
+const {createHaLogReconciler} = require('./ha_log_reconcile');
+const {createPrimaryHaLogReconciler} = require('./ha_log_reconcile_primary');
 const { loadTenantScope } = require('./tenant');
 const { summarizeRequest } = require('./debug_request');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
@@ -196,8 +199,15 @@ pool.execute = async function() {
     return result;
 };
 
+const haPause = createHaPauseControl({
+    query: (sql, values, options) => originalPoolQuery.call(pool, sql, values, options),
+    role: () => global.haRole
+});
 let haQueueInFlight = false;
 async function processHaQueue() {
+    return haPause.runDelivery(processHaQueueUnpaused);
+}
+async function processHaQueueUnpaused() {
     if (!haTransport.enabled || global.haRole !== 'primary' || haQueueInFlight) return;
     haQueueInFlight = true;
 
@@ -229,6 +239,7 @@ async function processHaQueue() {
     } catch (err) {
         console.error('[HA Batch Worker]', err.message);
         global.haStats.failed++;
+        throw err;
     } finally {
         haQueueInFlight = false;
     }
@@ -320,7 +331,7 @@ async function syncRadiusTables() {
 }
 
 if (haTransport.enabled) {
-    setInterval(processHaQueue, 2000);
+    setInterval(() => processHaQueue().catch(error => console.error('[HA Delivery]',error.message)), 2000);
     setInterval(syncRadiusTables, 5000);
 }
 
@@ -338,21 +349,94 @@ function requireHaAdmin(level) {
 }
 
 app.get('/api/ha/status', requireHaAdmin('read-only'), async (req, res) => {
-    let queueLength = 0;
     try {
-        const [q] = await originalPoolQuery.call(pool, "SELECT COUNT(*) as c FROM ha_queue", [], { isSync: true });
-        queueLength = q[0].c;
-    } catch(e) {}
+    const pause = haTransport.enabled && global.haRole === 'primary' ? await haPause.status() : null;
+    const [q] = await originalPoolQuery.call(pool, "SELECT COUNT(*) as c FROM ha_queue", [], { isSync: true });
+    const queueLength = Number(q[0].c);
+    const [jobs] = await originalPoolQuery.call(pool, 'SELECT run_id, status, detail, error, updated_at FROM ha_log_reconcile_state WHERE id=1', [], {isSync:true});
+    const reconcile = jobs.length ? {runId:jobs[0].run_id,phase:jobs[0].status,detail:jobs[0].detail,error:jobs[0].error,updatedAt:jobs[0].updated_at} : null;
     res.json({
         enabled: process.env.HA_ENABLED === 'true',
         role: global.haRole,
         peer: haTransport.enabled ? haTransport.peer : 'Not configured',
         transport: haTransport.mode,
         queueLength,
+        pause,
+        reconcile,
         stats: global.haStats,
         certificateSync: reconcileHaCertificates.status
     });
+    } catch(error) { console.error('[HA Status]',error.message);res.status(503).json({error:'HA state unavailable'}); }
 });
+
+app.post('/api/ha/pause', requireHaAdmin('read-write'), async (req, res) => {
+    if (!haTransport.enabled || global.haRole !== 'primary' || req.header('X-Tenant-ID') !== 'global')
+        return res.status(403).json({error:'Enabled primary and Global super-admin context required'});
+    try { res.json({success:true,pause:await haPause.pause('Secondary maintenance')}); }
+    catch(error) { console.error('[HA Pause]',error.message);res.status(503).json({error:'Unable to persist HA pause state'}); }
+});
+app.post('/api/ha/resume', requireHaAdmin('read-write'), async (req, res) => {
+    if (!haTransport.enabled || global.haRole !== 'primary' || req.header('X-Tenant-ID') !== 'global')
+        return res.status(403).json({error:'Enabled primary and Global super-admin context required'});
+    try {
+        const [jobs] = await originalPoolQuery.call(pool, 'SELECT status FROM ha_log_reconcile_state WHERE id=1', [], {isSync:true});
+        if (!jobs.length || !['idle','completed','partial'].includes(jobs[0].status))
+            return res.status(409).json({error:'Review or finish log reconciliation before resuming HA delivery'});
+        res.json({success:true,pause:await haPause.resume()});
+    }
+    catch(error) { console.error('[HA Resume]',error.message);res.status(503).json({error:'Unable to persist HA resume state'}); }
+});
+
+async function postHaReconcile(path, payload) {
+    const response=await fetch(haTransport.peerURL(path),{
+        method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(300000),
+        body:JSON.stringify(encryptHaPayload({...payload,_ts:Date.now()}))
+    });
+    if (!response.ok) throw new Error(`HA reconciliation peer returned HTTP ${response.status}`);
+    return response.json();
+}
+const secondaryLogReconciler=createHaLogReconciler({
+    getConnection:()=>originalGetConnection.call(pool),role:()=>global.haRole
+});
+const haPrimaryReconciler=createPrimaryHaLogReconciler({
+    post:postHaReconcile,
+    getConnection:()=>originalGetConnection.call(pool),
+    pauseStatus:()=>haPause.status(),
+    queueDrainable:async()=>haTransport.enabled && global.haRole==='primary',
+    drainQueue:async()=>{
+        for (let pass=0;pass<20;pass++) {
+            const [rows]=await originalPoolQuery.call(pool,'SELECT COUNT(*) AS n FROM ha_queue',[],{isSync:true});
+            if (Number(rows[0].n)===0) return {drained:true};
+            await processHaQueueUnpaused(); // Internal catch-up is allowed only inside reconciliation.
+        }
+        return {drained:false};
+    },
+    onProgress:async value=>{
+        const detail=value.status==='partial'
+            ? `Preserved ${Object.values(value.secondary?.preserved||{}).reduce((a,b)=>a+b,0)} secondary-only rows; ${Object.values(value.secondary?.conflicts||{}).reduce((a,b)=>a+b,0)} content conflicts. Review before promotion.`
+            : [value.table||'',Number.isSafeInteger(value.sent)?`${value.sent}/${value.expected}`:''].filter(Boolean).join(' ');
+        const [result]=await originalPoolQuery.call(pool,
+            'UPDATE ha_log_reconcile_state SET run_id=?, status=?, detail=?, error=? WHERE id=1 AND (run_id=? OR status=?)',
+            [value.runId,value.status,detail,value.status==='failed'?'Reconciliation failed; inspect restricted API logs':null,value.runId,'starting'],{isSync:true});
+        if (result.affectedRows!==1) throw new Error('Reconciliation progress state changed');
+    }
+});
+app.post('/api/ha/log-reconcile', requireHaAdmin('read-write'), async (req,res)=>{
+    if (!haTransport.enabled || global.haRole!=='primary' || req.header('X-Tenant-ID')!=='global')
+        return res.status(403).json({error:'Enabled primary and Global super-admin context required'});
+    if (req.body?.confirm !== 'RECONCILE_LOG_DATA') return res.status(400).json({error:'Explicit reconciliation confirmation required'});
+    try {
+        const pauseState=await haPause.status();
+        if (!pauseState.paused) return res.status(409).json({error:'Pause HA delivery first'});
+        if (pauseState.queueDepth!==0) return res.status(409).json({error:'Drain the HA queue before pausing and reconciling; existing queued log writes could undo the snapshot'});
+        const [result]=await originalPoolQuery.call(pool,
+            "UPDATE ha_log_reconcile_state SET status='starting',run_id=NULL,detail=NULL,error=NULL WHERE id=1 AND status IN ('idle','completed','partial')",[],{isSync:true});
+        if (result.affectedRows!==1) return res.status(409).json({error:'A reconciliation is already in progress or state requires review'});
+        haPrimaryReconciler.run().catch(error=>console.error('[HA Log Reconciliation]',error.message));
+        res.status(202).json({success:true,message:'Online log reconciliation started; monitor HA status'});
+    } catch(error) { console.error('[HA Reconciliation Start]',error.message);res.status(503).json({error:'Unable to start reconciliation'}); }
+});
+
 
 app.post('/api/ha/promote', requireHaAdmin('read-write'), (req, res) => {
     global.haRole = 'primary';
@@ -366,9 +450,12 @@ app.post('/api/ha/demote', requireHaAdmin('read-write'), (req, res) => {
 
 app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
     if (!canProduceHaSync(haTransport.enabled,global.haRole)) return res.status(403).json({error:'Sync can only be triggered from an enabled primary'});
-    await processHaQueue();
-    await syncRadiusTables();
-    res.json({ success: true, message: 'Manual sync triggered' });
+    try {
+        if ((await haPause.status()).paused) return res.status(409).json({error:'HA delivery is paused'});
+        await syncRadiusTables();
+        if (!(await processHaQueue())) return res.status(409).json({error:'HA delivery is paused or busy'});
+        res.json({ success: true, message: 'Manual sync completed' });
+    } catch(error) { console.error('[HA Manual Sync]',error.message);res.status(503).json({error:'HA manual sync failed'}); }
 });
 
 
@@ -426,6 +513,8 @@ app.post('/api/sync/certificates', async (req,res)=>{
 
 app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => {
     if (global.haRole !== 'primary') return res.status(403).json({ error: 'Full sync can only be triggered from the primary node.' });
+    try { if ((await haPause.status()).paused) return res.status(409).json({error:'HA delivery is paused'}); }
+    catch(error) { return res.status(503).json({error:'HA state unavailable'}); }
 
     try {
         const [tables] = await originalPoolQuery.call(pool, "SHOW TABLES", [], { isSync: true });
@@ -452,6 +541,27 @@ app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => 
     }
 });
 
+app.post('/api/sync/log-reconcile', async (req,res)=>{
+    let payload;
+    try { payload=decryptHaPayload(req.body); } catch { return res.status(401).json({error:'Decryption failed'}); }
+    if (!haTransport.enabled || global.haRole!=='secondary') return res.status(403).json({error:'Enabled secondary required'});
+    const age=Date.now()-payload._ts;
+    if (!Number.isFinite(age) || age>60000 || age < -5000) return res.status(401).json({error:'Payload expired'});
+    const methods={prepare:'prepare',stage:'stageChunk',seal:'sealTable',finalizeStep:'finalizeStep',finalize:'finalize',verify:'verify'};
+    if (!Object.hasOwn(methods,payload.action)) return res.status(400).json({error:'Unsupported reconciliation action'});
+    try {
+        if (payload.action==='prepare') {
+            if (!/^[0-9a-f]{32}$/.test(payload.runId)) return res.status(400).json({error:'Invalid run ID'});
+            const [started]=await originalPoolQuery.call(pool,
+                "UPDATE ha_log_reconcile_state SET run_id=?, status='new', detail=NULL,error=NULL,expected_radacct=NULL,expected_radpostauth=NULL,expected_admin_audit_log=NULL WHERE id=1 AND status IN ('idle','finalized')",
+                [payload.runId],{isSync:true});
+            if (started.affectedRows!==1) return res.status(409).json({error:'Secondary reconciliation requires operator review'});
+        }
+        const output=await secondaryLogReconciler[methods[payload.action]](payload);
+        res.json({success:true,...output});
+    } catch(error) { console.error('[HA Secondary Reconciliation]',error.message);res.status(409).json({error:'Reconciliation step failed; backup retained, review job status'}); }
+});
+
 app.post('/api/sync/batch',async(req,res)=>{
     let payload;
     try {payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}
@@ -459,6 +569,9 @@ app.post('/api/sync/batch',async(req,res)=>{
     const age=Date.now()-payload._ts;
     if(!Number.isFinite(age)||age>60000||age < -5000)return res.status(401).json({error:'Payload expired'});
     try {
+        const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
+        if(!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
+            return res.status(409).json({error:'HA log reconciliation staging is in progress'});
         const result=await applyHaBatch({entries:payload.entries,sourcePeer:haTransport.peer,
             getConnection:()=>originalGetConnection.call(pool),restart:restartRadiusForHa,ready:verifySyncedRadiusReady});
         res.json({success:true,...result});
@@ -479,6 +592,11 @@ app.post('/api/sync/execute', async (req, res) => {
         console.warn('[HA Sync] Rejected expired or replayed payload');
         return res.status(401).json({ error: 'Payload expired' });
     }
+    try {
+        const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
+        if (!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
+            return res.status(409).json({error:'HA log reconciliation staging is in progress'});
+    } catch(error) { return res.status(503).json({error:'HA reconciliation state unavailable'}); }
 
     let conn;
     try {

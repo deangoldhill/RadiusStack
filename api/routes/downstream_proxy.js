@@ -29,11 +29,12 @@ async function verifyDestination(db, req, id) {
 }
 module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = require('../radius_activation')) {
     const endpoint = '/api/downstream-destinations';
-    const fields = 'SELECT id, tenant_id, name, ipv4, auth_port, accounting_port FROM downstream_radius_destinations WHERE 1=1';
+    const fields = 'SELECT id, tenant_id, name, ipv4, auth_port, accounting_port, proxy_traffic FROM downstream_radius_destinations WHERE 1=1';
     const validate = (body, create) => {
         if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 100 || !safeEndpointIPv4(body.ipv4) || !validPort(body.auth_port) || !validPort(body.accounting_port)) throw new Error('Name, canonical IPv4 and ports 1–65535 are required');
         if (create && (typeof body.shared_secret !== 'string' || !body.shared_secret.length)) throw new Error('Shared secret is required');
         if (body.shared_secret !== undefined && (typeof body.shared_secret !== 'string' || !body.shared_secret.length || body.shared_secret.length > 253)) throw new Error('Invalid shared secret');
+        if (body.proxy_traffic !== undefined && !['auth','accounting','both'].includes(body.proxy_traffic)) throw new Error('Select Auth, Accounting or Both traffic');
     };
     const activate = async () => {
         try { await activateRadius(); }
@@ -50,18 +51,20 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
     app.post(endpoint, requireApiAuth('nas','read-write'), handle(async (req,res) => {
         try { validate(req.body,true); } catch (err) { return res.status(400).json({error:err.message}); }
         const {name,ipv4,auth_port,accounting_port,shared_secret}=req.body;
-        const [result]=await pool.query('INSERT INTO downstream_radius_destinations (tenant_id,name,ipv4,auth_port,accounting_port,shared_secret) VALUES (?,?,?,?,?,?)',[selected(req),name.trim(),ipv4,Number(auth_port),Number(accounting_port),shared_secret]);
+        const proxy_traffic=req.body.proxy_traffic ?? 'both';
+        const [result]=await pool.query('INSERT INTO downstream_radius_destinations (tenant_id,name,ipv4,auth_port,accounting_port,shared_secret,proxy_traffic) VALUES (?,?,?,?,?,?,?)',[selected(req),name.trim(),ipv4,Number(auth_port),Number(accounting_port),shared_secret,proxy_traffic]);
         await activate();
         await auditLog(req.admin.username,req.origin,'Created downstream destination','success',name.trim(),req.ip,req.tenantScope);
-        res.status(201).json({id:result.insertId,tenant_id:selected(req),name:name.trim(),ipv4,auth_port:Number(auth_port),accounting_port:Number(accounting_port),radius_reloaded:true});
+        res.status(201).json({id:result.insertId,tenant_id:selected(req),name:name.trim(),ipv4,auth_port:Number(auth_port),accounting_port:Number(accounting_port),proxy_traffic,radius_reloaded:true});
     }));
     app.put(endpoint+'/:id', requireApiAuth('nas','read-write'), handle(async (req,res) => {
         try { validate(req.body,false); } catch (err) { return res.status(400).json({error:err.message}); }
         const {name,ipv4,auth_port,accounting_port,shared_secret}=req.body;
         const s=scoped(req);
         const hasSecret=shared_secret !== undefined;
-        const sql='UPDATE downstream_radius_destinations SET name=?,ipv4=?,auth_port=?,accounting_port=?'+(hasSecret?',shared_secret=?':'')+' WHERE id=?'+s.sql;
-        const [result]=await pool.query(sql,[name.trim(),ipv4,Number(auth_port),Number(accounting_port),...(hasSecret?[shared_secret]:[]),req.params.id,...s.params]);
+        const hasTraffic=req.body.proxy_traffic !== undefined;
+        const sql='UPDATE downstream_radius_destinations SET name=?,ipv4=?,auth_port=?,accounting_port=?'+(hasSecret?',shared_secret=?':'')+(hasTraffic?',proxy_traffic=?':'')+' WHERE id=?'+s.sql;
+        const [result]=await pool.query(sql,[name.trim(),ipv4,Number(auth_port),Number(accounting_port),...(hasSecret?[shared_secret]:[]),...(hasTraffic?[req.body.proxy_traffic]:[]),req.params.id,...s.params]);
         if (!result.affectedRows) return res.status(404).json({error:'Destination not found'});
         await activate();
         await auditLog(req.admin.username,req.origin,'Updated downstream destination','success',name.trim(),req.ip,req.tenantScope);
