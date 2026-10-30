@@ -133,6 +133,16 @@ POSTCONDITIONS = {
          ('profile_downstream_routes', 'idx_profile_downstream_tenant_name'), ('profile_downstream_routes', 'idx_profile_downstream_tenant_destination')}),
     # Data-only migration: empty schema footprint forces the seed SQL to run.
     '20261026_ha_sync_state_seed': (set(), set(), set()),
+    '20261028_ha_control': (
+        {'ha_control_state', 'ha_log_reconcile_state'},
+        {('ha_control_state', 'paused'), ('ha_control_state', 'paused_at'),
+         ('ha_log_reconcile_state', 'run_id'), ('ha_log_reconcile_state', 'status'),
+         ('ha_log_reconcile_state', 'expected_radacct'), ('ha_log_reconcile_state', 'expected_radpostauth'),
+         ('ha_log_reconcile_state', 'expected_admin_audit_log')},
+        {('ha_control_state', 'PRIMARY'), ('ha_log_reconcile_state', 'PRIMARY')}),
+    '20261029_downstream_proxy_traffic': (
+        {'downstream_radius_destinations'},
+        {('downstream_radius_destinations', 'proxy_traffic')}, set()),
 }
 
 
@@ -155,6 +165,10 @@ def validate_postcondition(db, name):
         rows = query(db, "SELECT table_name FROM ha_sync_state WHERE table_name IN ('radacct', 'radpostauth')")
         if {row[0] for row in rows} != {'radacct', 'radpostauth'}:
             raise RuntimeError(f'Migration postcondition incomplete: {name} accounting cursors missing')
+    if name == '20261028_ha_control':
+        for table in ('ha_control_state', 'ha_log_reconcile_state'):
+            if query(db, f'SELECT COUNT(*) FROM `{table}` WHERE id=1')[0][0] != 1:
+                raise RuntimeError(f'Migration postcondition incomplete: {name} {table} singleton missing')
     if name == '20260802_tenant_settings_stats':
         for table in ('settings', 'tenant_settings'):
             types = query(db, 'SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=\'setting_value\'', (table,))

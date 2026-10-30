@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS downstream_radius_destinations (
   ipv4 VARCHAR(15) NOT NULL,
   auth_port SMALLINT UNSIGNED NOT NULL DEFAULT 1812,
   accounting_port SMALLINT UNSIGNED NOT NULL DEFAULT 1813,
+  proxy_traffic ENUM('auth','accounting','both') NOT NULL DEFAULT 'both',
   shared_secret VARCHAR(253) NOT NULL,
   UNIQUE KEY uq_downstream_tenant_id (tenant_id,id),
   KEY idx_downstream_tenant_name (tenant_id,name),

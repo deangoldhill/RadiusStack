@@ -4,12 +4,22 @@
 # The known-user profile route has priority; otherwise the NAS route applies.
 native_proxy_select {
     update control {
-        &Tmp-String-7 := "%{sql:SELECT CASE WHEN (SELECT COUNT(*) FROM nas WHERE nasname = '%{Packet-Src-IP-Address}') != 1 THEN 'X' ELSE COALESCE((SELECT CONCAT(CASE WHEN r.mode = 'proxy-only' THEN 'P' WHEN r.validate_response = 1 THEN 'V' ELSE 'D' END, ':', r.destination_id) FROM nas n JOIN radcheck c ON c.username = UNHEX('%{hex:&User-Name}') AND c.tenant_id <=> n.tenant_id JOIN radusergroup g ON g.username = c.username AND g.tenant_id <=> n.tenant_id JOIN profile_downstream_routes r ON r.profile_name = g.groupname AND r.tenant_id <=> n.tenant_id JOIN downstream_radius_destinations d ON d.id = r.destination_id AND d.tenant_id <=> n.tenant_id WHERE n.nasname = '%{Packet-Src-IP-Address}' ORDER BY g.priority, g.id LIMIT 1), (SELECT CONCAT(CASE WHEN n.downstream_mode = 'proxy-only' THEN 'P' WHEN n.downstream_validate_response = 1 THEN 'V' ELSE 'D' END, ':', n.downstream_destination_id) FROM nas n JOIN downstream_radius_destinations d ON d.id = n.downstream_destination_id AND d.tenant_id <=> n.tenant_id WHERE n.nasname = '%{Packet-Src-IP-Address}' LIMIT 1), 'N') END}"
+        &Tmp-String-7 := "%{sql:SELECT CASE WHEN (SELECT COUNT(*) FROM nas WHERE nasname = '%{Packet-Src-IP-Address}') != 1 THEN 'X' ELSE COALESCE((SELECT CASE WHEN d.proxy_traffic IN ('both', '%{control:Tmp-String-6}') THEN CONCAT(CASE WHEN r.mode = 'proxy-only' THEN 'P' WHEN r.validate_response = 1 THEN 'V' ELSE 'D' END, ':', r.destination_id) ELSE 'N' END FROM nas n JOIN radcheck c ON c.username = UNHEX('%{hex:&User-Name}') AND c.tenant_id <=> n.tenant_id JOIN radusergroup g ON g.username = c.username AND g.tenant_id <=> n.tenant_id JOIN profile_downstream_routes r ON r.profile_name = g.groupname AND r.tenant_id <=> n.tenant_id JOIN downstream_radius_destinations d ON d.id = r.destination_id AND d.tenant_id <=> n.tenant_id WHERE n.nasname = '%{Packet-Src-IP-Address}' ORDER BY g.priority, g.id LIMIT 1), (SELECT CASE WHEN d.proxy_traffic IN ('both', '%{control:Tmp-String-6}') THEN CONCAT(CASE WHEN n.downstream_mode = 'proxy-only' THEN 'P' WHEN n.downstream_validate_response = 1 THEN 'V' ELSE 'D' END, ':', n.downstream_destination_id) ELSE 'N' END FROM nas n JOIN downstream_radius_destinations d ON d.id = n.downstream_destination_id AND d.tenant_id <=> n.tenant_id WHERE n.nasname = '%{Packet-Src-IP-Address}' LIMIT 1), 'N') END}"
     }
 }
 
-native_proxy_auth {
+native_proxy_select_auth {
+    update control { &Tmp-String-6 := "auth" }
     native_proxy_select
+}
+
+native_proxy_select_acct {
+    update control { &Tmp-String-6 := "accounting" }
+    native_proxy_select
+}
+
+native_proxy_auth {
+    native_proxy_select_auth
     if (fail || reject) {
         reject
     }
@@ -40,7 +50,7 @@ native_proxy_auth {
 }
 
 native_proxy_acct {
-    native_proxy_select
+    native_proxy_select_acct
     if (fail || reject) {
         reject
     }

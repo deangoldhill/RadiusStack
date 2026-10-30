@@ -535,8 +535,16 @@
                 <button id="btnDemote" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 hidden">Demote to Secondary</button>
                 <button id="btnSyncNow" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Force Sync Now</button>
                 <button id="btnFullSync" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 hidden">Perform Full Sync</button>
+                <button id="btnHaPause" type="button" class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 hidden">Pause HA Sync</button>
+                <button id="btnHaResume" type="button" class="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800 hidden">Resume HA Sync</button>
             </div>
-            <p id="haActionMsg" class="mt-2 text-sm font-semibold text-green-600"></p>
+            <p id="haPausedStatus" role="status" class="mt-3 text-sm font-semibold"></p>
+            <div id="haReconcilePanel" class="mt-4 border-t pt-4 hidden">
+                <button id="btnHaReconcile" type="button" class="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800">Reconcile Log Data</button>
+                <p class="text-sm text-red-800 mt-2">Online reconciliation backs up secondary logs and reconciles audit, authentication and accounting rows from a consistent primary snapshot without stopping secondary RADIUS. Secondary rows written or changed during the copy, including open sessions, are preserved and reported; this may not yield an exact mirror. Drain the HA queue to zero before pausing and starting, or old queued writes could undo the result. Backups are retained.</p>
+                <p id="haReconcileStatus" role="status" class="text-sm mt-2 font-semibold"></p>
+            </div>
+            <p id="haActionMsg" role="status" class="mt-2 text-sm font-semibold"></p>
         </div>
 
         <script>
@@ -550,6 +558,10 @@
                         const promoteBtn = document.getElementById('btnPromote');
                         const demoteBtn = document.getElementById('btnDemote');
                         const fullSyncBtn = document.getElementById('btnFullSync');
+                        const pauseBtn = document.getElementById('btnHaPause');
+                        const resumeBtn = document.getElementById('btnHaResume');
+                        const reconcilePanel = document.getElementById('haReconcilePanel');
+                        if (!res.ok) throw new Error(data.error || `HA status returned HTTP ${res.status}`);
 
                         if (!data.enabled) {
                             container.innerHTML = '<p class="text-gray-500 italic">High Availability is disabled in the environment variables.</p>';
@@ -581,6 +593,22 @@
                             demoteBtn.classList.remove('hidden');
                             fullSyncBtn.classList.remove('hidden');
                         }
+                        const primary = data.role === 'primary';
+                        const paused = data.pause?.paused === true;
+                        pauseBtn.classList.toggle('hidden', !primary || paused);
+                        resumeBtn.classList.toggle('hidden', !primary || !paused);
+                        reconcilePanel.classList.toggle('hidden', !primary);
+                        document.getElementById('btnSyncNow').disabled = paused;
+                        fullSyncBtn.disabled = paused;
+                        document.getElementById('haPausedStatus').textContent = primary
+                            ? (paused ? `HA delivery PAUSED since ${data.pause.since ? new Date(data.pause.since).toLocaleString() : 'unknown'}; ${data.pause.queueDepth} queued${data.pause.oldestQueuedAt ? ` (oldest ${new Date(data.pause.oldestQueuedAt).toLocaleString()})` : ''}. ${data.pause.queueWarning || ''}`
+                                : `HA delivery active; ${data.pause?.queueDepth ?? data.queueLength} queued. ${data.pause?.queueWarning || ''}`)
+                            : 'Pause and reconciliation controls are available on the primary only.';
+                        const job = data.reconcile;
+                        document.getElementById('haReconcileStatus').textContent = job?.phase
+                            ? `Reconciliation: ${job.phase}; ${job.detail || ''}${job.error ? `; ERROR: ${job.error}` : ''}`
+                            : 'No reconciliation running.';
+                        document.getElementById('btnHaReconcile').disabled = !paused || (data.pause?.queueDepth ?? 1) !== 0 || (job?.phase && !['idle','completed','partial'].includes(job.phase));
                     } catch (e) {
                         console.error('Failed to load HA stats', e);
                         document.getElementById('haLoadingText').textContent = 'Failed to load HA stats. Check console.';
@@ -590,11 +618,33 @@
                 await fetchHaStatus();
                 setInterval(fetchHaStatus, 5000);
 
-                const displayMsg = (msg) => {
+                const displayMsg = (msg, isError = false) => {
                     const el = document.getElementById('haActionMsg');
                     el.textContent = msg;
-                    setTimeout(() => el.textContent = '', 4000);
+                    el.className = `mt-2 text-sm font-semibold ${isError ? 'text-red-700' : 'text-green-700'}`;
                 };
+                const haAction = async (path, body) => {
+                    const res = await apiFetch(path, { method: 'POST', headers: { 'X-Tenant-ID': 'global' }, body: JSON.stringify(body || {}) });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                    await fetchHaStatus();
+                    return data;
+                };
+                document.getElementById('btnHaPause').addEventListener('click', async () => {
+                    if (!confirm('Pause HA delivery? The primary will continue collecting queued changes until you resume.')) return;
+                    try { await haAction('/api/ha/pause', { reason: 'Secondary maintenance' }); displayMsg('HA delivery paused and saved.'); }
+                    catch (error) { displayMsg(`Pause failed: ${error.message}`, true); }
+                });
+                document.getElementById('btnHaResume').addEventListener('click', async () => {
+                    if (!confirm('Resume HA delivery and drain the queued changes?')) return;
+                    try { await haAction('/api/ha/resume'); displayMsg('HA delivery resumed; queued changes will drain.'); }
+                    catch (error) { displayMsg(`Resume failed: ${error.message}`, true); }
+                });
+                document.getElementById('btnHaReconcile').addEventListener('click', async () => {
+                    if (!confirm('Run online log reconciliation? Existing secondary logs are backed up; rows written during the operation are preserved and any conflicts reported. Secondary RADIUS keeps serving.')) return;
+                    try { await haAction('/api/ha/log-reconcile', { confirm: 'RECONCILE_LOG_DATA' }); displayMsg('Log reconciliation started. Monitor the status here; do not resume HA until it completes.'); }
+                    catch (error) { displayMsg(`Reconciliation failed: ${error.message}`, true); }
+                });
 
                 document.getElementById('btnPromote').addEventListener('click', async () => {
                     if (!confirm('Are you sure you want to promote this node to Primary? It will begin accepting writes and syncing to its peer.')) return;
@@ -609,16 +659,14 @@
                 });
 
                 document.getElementById('btnSyncNow').addEventListener('click', async () => {
-                    await apiFetch('/api/ha/sync-now', { method: 'POST' });
-                    displayMsg('Manual sync triggered!');
-                    fetchHaStatus();
+                    try { await haAction('/api/ha/sync-now'); displayMsg('Manual sync completed.'); }
+                    catch (error) { displayMsg(`Manual sync failed: ${error.message}`, true); }
                 });
 
                 document.getElementById('btnFullSync').addEventListener('click', async () => {
                     if (!confirm('WARNING: A Full Sync will push ALL configuration, user, and accounting data from this node to the peer. Proceed?')) return;
-                    await apiFetch('/api/ha/full-sync', { method: 'POST' });
-                    displayMsg('Full sync initiated! The queue is now populated and will process automatically.');
-                    fetchHaStatus();
+                    try { await haAction('/api/ha/full-sync'); displayMsg('Full sync queued. Monitor queue status.'); }
+                    catch (error) { displayMsg(`Full sync failed: ${error.message}`, true); }
                 });
             });
         </script>

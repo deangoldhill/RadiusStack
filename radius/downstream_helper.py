@@ -4,7 +4,6 @@ from functools import lru_cache
 import io
 import ipaddress
 import json
-import os
 from pathlib import Path
 import socket
 import sys
@@ -78,18 +77,17 @@ def resolve_route(db, source_ip, username, kind='auth'):
                                    nas['downstream_validate_response'])
     if not dest_id:
         return None
-    dest = db.query('SELECT ipv4, auth_port, accounting_port, shared_secret '
+    dest = db.query('SELECT ipv4, auth_port, accounting_port, shared_secret, proxy_traffic '
                     'FROM downstream_radius_destinations WHERE tenant_id <=> %s AND id = %s', (tenant, dest_id))
     permitted = (mode == 'duplicate' and bool(validate)) or (kind == 'acct' and mode == 'proxy-only' and not validate)
     if not dest or not permitted:
+        raise ValueError('unusable route')
+    if dest['proxy_traffic'] not in ('both', 'accounting' if kind == 'acct' else 'auth'):
         raise ValueError('unusable route')
     target = ipaddress.IPv4Address(dest['ipv4'])
     if not (target.is_private or target.is_global):
         raise ValueError('unsafe destination')
     if target.is_loopback or target.is_link_local or str(target) == source_ip or target.is_multicast or target.is_unspecified:
-        raise ValueError('unsafe destination')
-    blocked = {ip.strip() for ip in os.environ.get('DOWNSTREAM_DENY_IPS', '').split(',') if ip.strip()}
-    if str(target) in blocked:
         raise ValueError('unsafe destination')
     secret = dest['shared_secret']
     if not secret:

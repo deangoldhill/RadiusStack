@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 CONF = Path('/opt/etc/raddb')
-DEST_SQL = ('SELECT id, tenant_id, ipv4, auth_port, accounting_port, shared_secret '
+DEST_SQL = ('SELECT id, tenant_id, ipv4, auth_port, accounting_port, shared_secret, proxy_traffic '
             'FROM downstream_radius_destinations ORDER BY id')
 ROUTE_SQL = ("SELECT 'nas', downstream_destination_id, tenant_id, downstream_mode, "
              "downstream_validate_response FROM nas WHERE downstream_destination_id IS NOT NULL "
@@ -27,12 +27,12 @@ def _integer(value, low, high):
 
 def local_ipv4_addresses(rows):
     addresses = {'127.0.0.1'}
-    addresses.update(s.strip() for s in os.environ.get('DOWNSTREAM_DENY_IPS', '').split(',') if s.strip())
+
     try:
         addresses.update(socket.gethostbyname_ex(socket.gethostname())[2])
     except OSError:
         pass
-    for _, _, host, port, _, _ in rows:
+    for _, _, host, port, *_ in rows:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
                 probe.connect((host, int(port)))  # No packet is transmitted.
@@ -46,7 +46,7 @@ def validate_rows(rows, routes, local_ips=None):
         local_ips = local_ipv4_addresses(rows)
     owners = {}
     for row in rows:
-        ident, tenant, host, auth, acct, secret = row
+        ident, tenant, host, auth, acct, secret, traffic = row
         ident = _integer(ident, 1, 2147483647)
         if ident in owners:
             raise ValueError('Duplicate downstream destination id')
@@ -60,6 +60,8 @@ def validate_rows(rows, routes, local_ips=None):
             raise ValueError('Unsafe downstream endpoint')
         _integer(auth, 1, 65535)
         _integer(acct, 1, 65535)
+        if traffic not in ('auth', 'accounting', 'both'):
+            raise ValueError('Invalid downstream proxy traffic selection')
         if not secret or len(secret) > 253 or any(c in secret for c in '\r\n"\\') or any(ord(c) < 32 for c in secret):
             raise ValueError('Unsafe downstream shared secret syntax')
     for owner, dest, tenant, mode, validated in routes:
@@ -73,7 +75,7 @@ def validate_rows(rows, routes, local_ips=None):
 def render(rows):
     validate_rows(rows, [])
     blocks = []
-    for ident, tenant, host, auth, acct, secret in rows:
+    for ident, tenant, host, auth, acct, secret, traffic in rows:
         for kind, port in (('auth', auth), ('acct', acct)):
             blocks.append(f'home_server downstream_{ident}_{kind} {{\n'
                           f' type = {kind}\n ipaddr = {host}\n port = {port}\n'
@@ -105,7 +107,7 @@ def install_site(source):
 
 def query(sql):
     # defaults-extra-file is owner-private and avoids database passwords in argv.
-    result = subprocess.run(['mysql', '--defaults-extra-file=/run/radiusstack-radsec-db.cnf',
+    result = subprocess.run(['mariadb', '--defaults-extra-file=/run/radiusstack-radsec-db.cnf',
                              '--skip-ssl', '--batch', '--raw', '--skip-column-names', '-e', sql],
                             check=True, capture_output=True, text=True)
     return [tuple(None if value == 'NULL' else value for value in line.split('\t'))
