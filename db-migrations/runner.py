@@ -255,6 +255,10 @@ def run(db, path, migrate=False):
                         # Two HA fields were present in both fresh and legacy init SQL;
                         # only radacct.ha_updated_at marks this migration as complete.
                         footprint = ('radacct', 'ha_updated_at') in cols_now
+                    if m.name == '20261029_downstream_proxy_traffic':
+                        # The destination table belongs to 6.0.2. Only the new column
+                        # indicates this migration has run outside the ledger.
+                        footprint = ('downstream_radius_destinations', 'proxy_traffic') in cols_now
                     if footprint:
                         audit(f'migration schema footprint found name={m.name}; validating before stamping')
                         validate_postcondition(db, m.name)
