@@ -7,6 +7,12 @@ const {includeHaCertificate} = require('./ha_certificate_bundle');
 function isRadsecSettingWrite(query, values=[]) {
   return /\btenant_settings\b/i.test(query) && (/\bradsec_enabled\b/i.test(query) || values.some(value => value === 'radsec_enabled'));
 }
+function isDownstreamDestinationWrite(query) {
+  return /^\s*(?:INSERT(?:\s+IGNORE)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+`?downstream_radius_destinations`?(?:\s|\(|$)/i.test(query);
+}
+function needsRadiusRestart(query, values=[]) {
+  return isRadsecSettingWrite(query, values) || isDownstreamDestinationWrite(query);
+}
 function needsRadsecCertificateSync(query, values=[]) {
   return isRadsecSettingWrite(query, values) || /\b(radsec_clients|radsec_credential_sets|radsec_credential_set_nas|radsec_nas_passphrases|radsec_proxy_enrollments)\b/i.test(query);
 }
@@ -56,7 +62,7 @@ async function waitForRadiusReady(ready,sleep) {
 }
 async function applySyncedWrite({query, values=[], execute, restart, ready=async()=>true, sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
   await execute();
-  if (isRadsecSettingWrite(query,values)) {
+  if (needsRadiusRestart(query,values)) {
     await restart();
     await waitForRadiusReady(ready,sleep);
   }
@@ -102,4 +108,4 @@ function createCertificateInstaller({roots,enabledTenants,restart,isRadiusRunnin
 async function secondaryRadiusReady({running,identity}) {
   return Boolean(await running() && await identity());
 }
-module.exports = { createCertificateReconciler, needsRadsecCertificateSync, isRadsecSettingWrite, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady };
+module.exports = { createCertificateReconciler, needsRadsecCertificateSync, isRadsecSettingWrite, isDownstreamDestinationWrite, needsRadiusRestart, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady };

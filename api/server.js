@@ -19,6 +19,7 @@ const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canPr
 const {createHaPauseControl} = require('./ha_pause');
 const {createHaLogReconciler} = require('./ha_log_reconcile');
 const {createPrimaryHaLogReconciler} = require('./ha_log_reconcile_primary');
+const {validateReverseLogBatch,checkReverseLogOwnership} = require('./ha_reverse_logs');
 const { loadTenantScope } = require('./tenant');
 const { summarizeRequest } = require('./debug_request');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
@@ -205,25 +206,28 @@ const haPause = createHaPauseControl({
 });
 let haQueueInFlight = false;
 async function processHaQueue() {
+    if(global.haRole==='secondary')return processHaQueueUnpaused();
     return haPause.runDelivery(processHaQueueUnpaused);
 }
 async function processHaQueueUnpaused() {
-    if (!haTransport.enabled || global.haRole !== 'primary' || haQueueInFlight) return;
+    if (!haTransport.enabled || !['primary','secondary'].includes(global.haRole) || haQueueInFlight) return;
     haQueueInFlight = true;
 
     try {
-        try { await reconcileHaCertificates(); }
-        catch (error) { console.error('[HA Certificate Reconcile]', error.message); }
+        if(global.haRole==='primary'){
+            try { await reconcileHaCertificates(); }
+            catch (error) { console.error('[HA Certificate Reconcile]', error.message); }
+        }
         const deadline=Date.now()+20000;
         for(let batchNumber=0;batchNumber<20 && Date.now()<deadline;batchNumber++) {
             const [rows]=await originalPoolQuery.call(pool,
-                `SELECT id, query, values_json, insert_id FROM ha_queue ORDER BY id ASC LIMIT ${MAX_BATCH_ITEMS}`,[],{isSync:true});
+                `SELECT id, query, values_json, insert_id FROM ha_queue ${global.haRole==='secondary' ? "WHERE query LIKE 'INSERT INTO radacct (%' OR query LIKE 'INSERT INTO radpostauth (%' " : ''}ORDER BY id ASC LIMIT ${MAX_BATCH_ITEMS}`,[],{isSync:true});
             if(!rows.length)break;
             const delivered=await deliverHaBatch({
                 rows,
                 post:async batch=>{
-                    if(batch.entries.some(entry=>needsRadsecCertificateSync(entry.query,entry.values)))await reconcileHaCertificates();
-                    const response=await fetch(haTransport.peerURL('/api/sync/batch'),{
+                    if(global.haRole==='primary' && batch.entries.some(entry=>needsRadsecCertificateSync(entry.query,entry.values)))await reconcileHaCertificates();
+                    const response=await fetch(haTransport.peerURL(global.haRole==='secondary'?'/api/sync/logs':'/api/sync/batch'),{
                         method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(60000),
                         body:JSON.stringify(encryptHaPayload({...batch,_ts:Date.now()}))
                     });
@@ -247,7 +251,7 @@ async function processHaQueueUnpaused() {
 
 let haAccountingInFlight = false;
 async function syncRadiusTables() {
-    if (!canProduceHaSync(haTransport.enabled,global.haRole) || haAccountingInFlight) return;
+    if (!haTransport.enabled || !['primary','secondary'].includes(global.haRole) || haAccountingInFlight) return;
     haAccountingInFlight = true;
     try {
         let hasUpdatedCol = true;
@@ -560,6 +564,31 @@ app.post('/api/sync/log-reconcile', async (req,res)=>{
         const output=await secondaryLogReconciler[methods[payload.action]](payload);
         res.json({success:true,...output});
     } catch(error) { console.error('[HA Secondary Reconciliation]',error.message);res.status(409).json({error:'Reconciliation step failed; backup retained, review job status'}); }
+});
+
+app.post('/api/sync/logs',async(req,res)=>{
+    let payload;
+    try {payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}
+    if(!haTransport.enabled || global.haRole!=='primary')return res.status(403).json({error:'Enabled primary required'});
+    const age=Date.now()-payload._ts;
+    if(!Number.isFinite(age)||age>60000||age < -5000)return res.status(401).json({error:'Payload expired'});
+    try {
+        let replayResult;
+        const delivered=await haPause.runDelivery(async()=>{
+            const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
+            if(!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
+                throw new Error('HA log reconciliation in progress');
+            const [offsetRows]=await originalPoolQuery.call(pool,"SHOW VARIABLES LIKE 'auto_increment_offset'",[],{isSync:true});
+            const localOffset=Number(offsetRows[0]?.Value);
+            if(localOffset!==1 && localOffset!==2)throw new Error('Invalid local HA database offset');
+            validateReverseLogBatch(payload.entries,3-localOffset);
+            replayResult=await applyHaBatch({entries:payload.entries,sourcePeer:haTransport.peer,
+                getConnection:()=>originalGetConnection.call(pool),restart:restartRadiusForHa,
+                beforeEntry:checkReverseLogOwnership});
+        });
+        if(!delivered)return res.status(409).json({error:'HA delivery paused or busy'});
+        res.json({success:true,...replayResult});
+    }catch(error){console.error('[HA Reverse Log Replay]',error.message);res.status(503).json({error:'HA reverse log replay failed'});}
 });
 
 app.post('/api/sync/batch',async(req,res)=>{
@@ -884,7 +913,7 @@ const routeDependencies = {
 };
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
 require('./routes/tenants')(app, pool, requireApiAuth, auditLog, routeDependencies);
-require('./routes/downstream_proxy')(app, pool, requireApiAuth, auditLog, routeDependencies);
+require('./routes/downstream_proxy')(app, pool, requireApiAuth, auditLog, require('./radius_activation'));
 require('./radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
 
 async function calculateRadiusStats(pool, statType, startDate, endDate) {

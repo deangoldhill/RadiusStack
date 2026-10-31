@@ -19,7 +19,7 @@ function buildHaBatch(rows) {
   }
   return {entries};
 }
-async function applyHaBatch({entries,sourcePeer,getConnection,restart,ready}) {
+async function applyHaBatch({entries,sourcePeer,getConnection,restart,ready,beforeEntry}) {
   if (!Array.isArray(entries)||!entries.length||entries.length>MAX_BATCH_ITEMS||
       Buffer.byteLength(JSON.stringify({entries}))>MAX_BATCH_BYTES||!sourcePeer) throw new Error('Invalid HA batch bounds');
   let previous=0;
@@ -36,15 +36,17 @@ async function applyHaBatch({entries,sourcePeer,getConnection,restart,ready}) {
     await conn.query('INSERT IGNORE INTO ha_replay_state (source_peer) VALUES (?)',[sourcePeer]);
     const [stateRows]=await conn.query('SELECT last_queue_id,radsec_restart_pending FROM ha_replay_state WHERE source_peer=? FOR UPDATE',[sourcePeer]);
     const cursor=Number(stateRows[0].last_queue_id);
+    // Legacy column name: the durable bit now covers both RadSec and downstream destination restarts.
     restartPending=Number(stateRows[0].radsec_restart_pending);
     const {normalizeHaSqlValues}=require('./ha_admin_json');
-    const {isRadsecSettingWrite}=require('./ha_radsec_sync');
+    const {needsRadiusRestart}=require('./ha_radsec_sync');
     for(const entry of entries){
       if(entry.id<=cursor)continue;
       const values=normalizeHaSqlValues(entry.query,entry.values.map(value=>
         typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(value)?value.replace('T',' ').replace('Z',''):value));
       await conn.query('SAVEPOINT ha_row');
       try {
+        if(beforeEntry)await beforeEntry(conn,entry,values);
         if(entry.insertId){await conn.query('SET SESSION auto_increment_increment = 1');await conn.query('SET insert_id = ?',[entry.insertId]);}
         await conn.query(entry.query,values);
         applied++;
@@ -53,7 +55,7 @@ async function applyHaBatch({entries,sourcePeer,getConnection,restart,ready}) {
         await conn.query('ROLLBACK TO SAVEPOINT ha_row');
         ignored++;
       }
-      if(isRadsecSettingWrite(entry.query,values))restartPending=1;
+      if(needsRadiusRestart(entry.query,values))restartPending=1;
     }
     await conn.query('UPDATE ha_replay_state SET last_queue_id=?,radsec_restart_pending=? WHERE source_peer=?',[Math.max(cursor,ackId),restartPending,sourcePeer]);
     await conn.commit();committed=true;
