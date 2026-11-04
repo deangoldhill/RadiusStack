@@ -11,8 +11,15 @@ RadiusStack is a self-hosted RADIUS platform for Wi-Fi, VPN, and network access.
 
 ## Install
 
-1. Download and extract the [latest source release](https://github.com/deangoldhill/RadiusStack/releases) on a host with Docker and Docker Compose v2.
-2. In the extracted directory, use the included `.env` (or copy `.env.example` to `.env` if needed). **Change `DB_ROOT_PASSWORD`, `DB_PASSWORD`, `JWT_SECRET`, and `RADSEC_PASSPHRASE_ENCRYPTION_KEY`** from their public defaults. Set `RADSEC_SERVER_DNS` to the hostname your RadSec clients will use. Change the published port values if they conflict with other services; leave `HA_ENABLED=false` for a single server.
+1. On a host with Git, Docker, and Docker Compose v2, clone the repository:
+
+   ```sh
+   git clone https://github.com/deangoldhill/RadiusStack.git
+   cd RadiusStack
+   cp .env.example .env
+   ```
+
+2. Edit `.env`: **change `DB_ROOT_PASSWORD`, `DB_PASSWORD`, `JWT_SECRET`, and `RADSEC_PASSPHRASE_ENCRYPTION_KEY`** from their public defaults. Set `RADSEC_SERVER_DNS` to the hostname your RadSec clients will use. Change published ports if they conflict with other services; leave `HA_ENABLED=false` for a single server.
 3. Start the stack:
 
    ```sh
