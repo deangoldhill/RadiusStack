@@ -30,13 +30,27 @@ Open `http://<your-server>:<WEB_UI_PORT>` (port 80 by default). Keep your custom
 
 ## Upgrade
 
-Download the target release from [Releases](https://github.com/deangoldhill/RadiusStack/releases), then run the **installed** updater from your existing installation directory, replacing `X.Y.Z` with that release number:
+From your existing installation directory, make the updater executable and run it with the version you want (replace `X.Y.Z`):
 
 ```sh
+chmod +x upgrade.sh
 ./upgrade.sh --to X.Y.Z
 ```
 
-The updater keeps your installation settings and data. For older installations or multi-server HA upgrades, check the release's [upgrade notes](docs/UPGRADE.md) first.
+The script downloads and verifies the release automatically and keeps your `.env` and data. For older installations, check the [upgrade notes](docs/UPGRADE.md).
+
+## Running in HA
+
+Install RadiusStack on two separate servers. In each server's `.env`, set:
+
+- `HA_ENABLED=true` on both.
+- `HA_ROLE=primary` on one and `HA_ROLE=secondary` on the other.
+- `HA_DB_OFFSET=1` on the first server and `HA_DB_OFFSET=2` on the second; keep each offset with its server even if roles change.
+- `HA_PEER_IP` to the **other** server's reachable IPv4 address on each node.
+- `HA_API_TOKEN` to the same unique value of at least 32 characters on both nodes.
+- Keep `API_PORT=3000` on both and allow the servers to reach each other on that port.
+
+Start both stacks with `docker compose up -d --build`, then check **Settings → High Availability Status** in Global. Configuration syncs from primary to secondary; use the HA controls to review sync and manage roles. For upgrades, follow the HA ordering in the [upgrade notes](docs/UPGRADE.md).
 
 ## Help and support
 
