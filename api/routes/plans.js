@@ -15,16 +15,13 @@ module.exports = function(app, pool, requireApiAuth, auditLog) {
             const plan = await findPlan(pool, req, req.params.id);
             if (!plan) return planNotFound(res);
             const assignmentScope = planScope(req, 'up.tenant_id');
-            const usageJoin = req.tenantScope.enabled ? ' AND pu.tenant_id = ?' : '';
-            const macJoin = req.tenantScope.enabled ? ' AND m.tenant_id = ?' : '';
-            const joinParams = req.tenantScope.enabled ? [req.tenantScope.tenantId, req.tenantScope.tenantId] : [];
             const [users] = await pool.query(`SELECT COALESCE(m.mac_id, up.username) AS username,
-                COALESCE((SELECT SUM(acctinputoctets) + SUM(acctoutputoctets) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_input_octets, 0) - COALESCE(pu.base_output_octets, 0) AS total_bytes,
-                COALESCE((SELECT SUM(acctsessiontime) FROM radacct WHERE username = up.username), 0) - COALESCE(pu.base_session_seconds, 0) AS total_seconds
+                COALESCE((SELECT SUM(acctinputoctets) + SUM(acctoutputoctets) FROM radacct WHERE username = up.username AND tenant_id <=> up.tenant_id), 0) - COALESCE(pu.base_input_octets, 0) - COALESCE(pu.base_output_octets, 0) AS total_bytes,
+                COALESCE((SELECT SUM(acctsessiontime) FROM radacct WHERE username = up.username AND tenant_id <=> up.tenant_id), 0) - COALESCE(pu.base_session_seconds, 0) AS total_seconds
                 FROM user_plans up
-                LEFT JOIN user_plan_usage pu ON pu.username = up.username${usageJoin}
-                LEFT JOIN mac_auth_devices m ON m.mac_address = up.username${macJoin}
-                WHERE up.plan_id = ?${assignmentScope.sql}`, [...joinParams, req.params.id, ...assignmentScope.params]);
+                LEFT JOIN user_plan_usage pu ON pu.username = up.username AND pu.tenant_id <=> up.tenant_id
+                LEFT JOIN mac_auth_devices m ON m.mac_address = up.username AND m.tenant_id <=> up.tenant_id
+                WHERE up.plan_id = ?${assignmentScope.sql}`, [req.params.id, ...assignmentScope.params]);
             let depletedCount = 0; let total_bytes_all = 0; let total_seconds_all = 0;
             const topUsers = users.map(u => {
                 const total_mb = Math.max(0, u.total_bytes / (1024 * 1024)); const total_sec = Math.max(0, u.total_seconds);
@@ -41,11 +38,37 @@ module.exports = function(app, pool, requireApiAuth, auditLog) {
     });
 
     app.get('/api/plans', requireApiAuth('plans', 'read-only'), async (req, res) => {
-        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 0, 0), 1000);
-        const scoped = planScope(req);
-        const sql = 'SELECT * FROM plans WHERE 1=1' + scoped.sql + ' ORDER BY id DESC' + (limit ? ' LIMIT ?' : '');
-        const [rows] = await pool.query(sql, limit ? [...scoped.params, limit] : scoped.params);
-        res.json(rows);
+        try {
+            const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 0, 0), 1000);
+            const scoped = planScope(req);
+            const sql = 'SELECT * FROM plans WHERE 1=1' + scoped.sql + ' ORDER BY id DESC' + (limit ? ' LIMIT ?' : '');
+            const [rows] = await pool.query(sql, limit ? [...scoped.params, limit] : scoped.params);
+            if (!rows.length) return res.json(rows);
+
+            // Match the depleted-allocation report: all-time, tenant-owned accounting minus
+            // the user's reset baseline. Unlimited (zero) limits never deplete.
+            const accountingScope = planScope(req);
+            const assignmentScope = planScope(req, 'up.tenant_id');
+            const [counts] = await pool.query(`SELECT up.plan_id, COUNT(*) AS depleted_users
+                FROM user_plans up
+                INNER JOIN plans p ON p.id = up.plan_id AND p.tenant_id <=> up.tenant_id
+                LEFT JOIN user_plan_usage u ON u.username = up.username AND u.tenant_id <=> up.tenant_id
+                LEFT JOIN (SELECT username, tenant_id, SUM(acctinputoctets) AS total_input,
+                    SUM(acctoutputoctets) AS total_output, SUM(acctsessiontime) AS total_time
+                    FROM radacct WHERE 1=1${accountingScope.sql} GROUP BY username, tenant_id) a
+                    ON a.username = up.username AND a.tenant_id <=> up.tenant_id
+                WHERE 1=1${assignmentScope.sql} AND (
+                    (p.data_limit_mb > 0 AND GREATEST(0, COALESCE(a.total_input,0) + COALESCE(a.total_output,0)
+                        - COALESCE(u.base_input_octets,0) - COALESCE(u.base_output_octets,0)) >= p.data_limit_mb * 1048576)
+                    OR (p.time_limit_seconds > 0 AND GREATEST(0, COALESCE(a.total_time,0)
+                        - COALESCE(u.base_session_seconds,0)) >= p.time_limit_seconds)
+                ) GROUP BY up.plan_id`, [...accountingScope.params, ...assignmentScope.params]);
+            const byPlan = new Map(counts.map(row => [Number(row.plan_id), Number(row.depleted_users)]));
+            res.json(rows.map(row => ({ ...row, depleted_users: byPlan.get(Number(row.id)) || 0 })));
+        } catch (err) {
+            console.error('Plans list error', err);
+            res.status(500).json({ error: 'Could not load plans' });
+        }
     });
 
     app.post('/api/plans', requireApiAuth('plans', 'read-write'), async (req, res) => {

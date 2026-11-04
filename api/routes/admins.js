@@ -179,11 +179,15 @@ app.post('/api/tenants/:id/enforce-2fa', requireApiAuth('admins', 'read-write'),
     const tenantId = Number(req.params.id);
     if (!Number.isSafeInteger(tenantId) || tenantId < 1) return res.status(400).json({ error: 'Invalid tenant' });
     try {
+        if (req.tenantScope.enabled) {
+            if (Number(req.tenantScope.tenantId) !== tenantId) {
+                return res.status(403).json({ error: 'Selected tenant does not match request' });
+            }
+        } else if (!req.tenantScope.superAdmin) {
+            return res.status(403).json({ error: 'A selected tenant or super administrator is required' });
+        }
         const [tenants] = await pool.query('SELECT id FROM tenants WHERE id = ? LIMIT 1', [tenantId]);
         if (!tenants.length) return res.status(404).json({ error: 'Tenant not found' });
-        if (req.tenantScope.enabled && Number(req.tenantScope.tenantId) !== tenantId) {
-            return res.status(403).json({ error: 'Selected tenant does not match request' });
-        }
         await pool.query("INSERT INTO tenant_settings (tenant_id, setting_key, setting_value) VALUES (?, 'enforce_2fa', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'", [tenantId]);
         await auditLog(req.admin.username, req.origin, `Enabled tenant administrator MFA for tenant ${tenantId}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true });

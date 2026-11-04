@@ -876,14 +876,17 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     }
 
     req.admin = admin;
-    if (req.path.startsWith('/api/tenants')) {
+    // Tenant MFA enforcement has a tenant-owned target; unlike tenant-list management,
+    // it must resolve the selected tenant and the caller's memberships.
+    const tenantMfaPath = /^\/api\/tenants\/[^/]+\/enforce-2fa\/?$/.test(req.path);
+    if (req.path.startsWith('/api/tenants') && !tenantMfaPath) {
         req.tenantScope = { enabled: false, tenantId: null, superAdmin: Number(admin.is_super_admin) === 1 };
     } else {
         try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); } catch (err) { return res.status(403).json({ error: err.message }); }
         const platformControls = ['/api/admins', '/api/settings', '/api/radius/stats', '/api/auth/self', '/api/system', '/api/certs'];
         const globalOperationalGetRoutes = new Set(['/api/reports/dashboard-overview', '/api/reports/live-stats', '/api/reports/dashboard-stats', '/api/reports/failed-auth', '/api/logs/auth', '/api/accounting', '/api/audit']);
         const isOperationalPath = ['/api/reports', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions'].some(prefix => req.path.startsWith(prefix));
-        if (req.tenantScope.globalContext && ((!isOperationalPath && !platformControls.some(prefix => req.path.startsWith(prefix))) || (isOperationalPath && (req.method !== 'GET' || !globalOperationalGetRoutes.has(req.path))))) {
+        if (req.tenantScope.globalContext && !tenantMfaPath && ((!isOperationalPath && !platformControls.some(prefix => req.path.startsWith(prefix))) || (isOperationalPath && (req.method !== 'GET' || !globalOperationalGetRoutes.has(req.path))))) {
             return res.status(403).json({ error: 'Global context is limited to platform controls; select a tenant for operational data' });
         }
     }
