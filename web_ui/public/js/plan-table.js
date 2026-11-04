@@ -4,7 +4,7 @@
   root.PlanTableCore = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   function sortValue(plan, field) {
-    if (field === 'data_limit_mb' || field === 'time_limit_seconds') return Number(plan[field] || 0);
+    if (field === 'data_limit_mb' || field === 'time_limit_seconds' || field === 'depleted_users') return Number(plan[field] || 0);
     return String(plan[field] || '');
   }
 

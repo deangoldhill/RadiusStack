@@ -143,6 +143,7 @@ POSTCONDITIONS = {
     '20261029_downstream_proxy_traffic': (
         {'downstream_radius_destinations'},
         {('downstream_radius_destinations', 'proxy_traffic')}, set()),
+    '20261103_authlog_origin_node': (set(), {('radpostauth', 'origin_node')}, set()),
 }
 
 

@@ -1,38 +1,38 @@
-# RadiusStack 6.0.5 source release candidate
+# RadiusStack 6.0.6 source release
 
-This folder and `radiusstack-source.tar.gz` are a prepared **source candidate**, not a published GitHub tag or Release. Dean reviews, commits and publishes releases manually. The archive contains public `.env.example` defaults as a mode-0600 `.env` solely for a **fresh installation**; on upgrades the existing private `.env` must be preserved and never copied into the release.
+This archive contains the complete application source, the public `.env.example`, and an identical mode-0600 `.env` for **fresh installations only**. It does not contain the dev server's private environment. Existing installations must preserve their own `.env`, Compose overrides, database volumes, and operational backup files.
 
-## Changes since the prepared 6.0.4 source candidate
+## Changes since published 6.0.5
 
-- Downstream destination saves activate the primary Radius container using the corrected API dependency wiring. The feature-specific dashboard widget was removed; destination configuration remains in its own navigation page.
-- On an HA secondary, replayed downstream-destination changes commit before one coalesced Radius restart. NAS/profile routing changes do not require that restart.
-- Secondary-generated `radacct` and `radpostauth` records are scanned, queued and delivered back to a primary-only encrypted HA endpoint. Acknowledgment and transactional cursor replay make network retries idempotent. Only the peer's HA-owned row IDs and exact parameterized accounting/auth-log upserts are accepted. Reverse replay respects HA pause and log reconciliation.
-- If an accounting session's unique key conflicts with a different row ID, reverse replay fails closed and retains the batch rather than changing a primary row's identity. Resolve the conflict through reviewed reconciliation; later queued rows remain pending behind it.
-- The 6.0.4 migration-runner correction for upgrades from a populated 6.0.2 database remains included. No new SQL migration is introduced by 6.0.5.
+- **Auth Logs processing server:** newly written `radpostauth` rows record `origin_node` from the processing member's database auto-increment offset (1 or 2). The new Server column displays Server 1/2, unchanged through HA replay. Existing rows remain NULL/Unknown; neither HA role nor ID parity is used to guess their origin. A fresh-install schema update and idempotent `20261103_authlog_origin_node` migration provide the column.
+- **Plans:** tenant-scoped Depleted Users counts with numeric sorting, and corrected selected-tenant plan-detail statistics. Global and tenant contexts remain distinct.
+- **Documentation:** expanded operator documentation and API catalogue, including Global versus selected-tenant routes, downstream destination examples, and internal HA peer-route descriptions without interactive tester calls.
+- **Tenant 2FA authorization:** enforce-2FA by tenant ID now checks a tenant administrator's authorized membership and selected/assigned tenant before loading the target; a Global super-admin retains the ability to target by ID. This is an authorization fix, not merely a documentation change.
+- All functionality in the published 6.0.5 source release remains included, including HA reverse authentication/accounting replay and secondary destination activation.
 
 ## Fresh installation
 
-Review `.env.example` and configure unique secrets, host/port and HA node identity as appropriate. The prepared `.env` is an exact copy of the public defaults, **not** the dev instance's private runtime file. From the extracted `radiusstack-6.0.5` folder:
+Review `.env.example`; replace public default secrets with unique credentials and set host ports, DNS and HA member values for your installation. Do not use the template credentials on a reachable service. From `radiusstack-6.0.6`:
 
 ```sh
 docker compose -f docker-compose.yml config -q
 docker compose -f docker-compose.yml up -d --build
 ```
 
-Confirm migration completion, API/web listeners and `Ready to process requests` in Radius logs. HA requires distinct `HA_DB_OFFSET` values (1 and 2), the same strong `HA_API_TOKEN`, each node's actual `HA_PEER_IP`, and the appropriate `HA_ROLE`. Test auth/accounting on both nodes and verify counts and representative IDs on both databases before treating failover as validated.
+Verify migration completion, the API and web listener, and Radius readiness. For HA, set distinct `HA_DB_OFFSET` values (1 and 2), appropriate `HA_ROLE` and actual peer addresses. Test both members before relying on replication or failover.
 
-## Upgrade from 6.0.4
+## Upgrade from published 6.0.5
 
-**Do not run `./upgrade.sh --to 6.0.5` until the exact archive is uploaded to the 6.0.5 GitHub Release and GitHub API metadata exposes its `sha256:` digest.** The installed updater downloads and verifies that published asset; this local candidate is not sufficient. Take an independent off-host database backup and rehearse on a copy of the actual installation before production. Run the installed updater from the existing installation directory, preserving its private `.env` and Compose overrides:
+**Do not run this command until the 6.0.6 GitHub Release asset is actually published and its metadata exposes the correct `sha256:` digest.** Back up the database independently and rehearse the upgrade on a copy of the real installation. From the existing installation directory, use the **installed** updater so its rollback, private `.env`, and Compose override behavior apply:
 
 ```sh
-./upgrade.sh --to 6.0.5
+./upgrade.sh --to 6.0.6
 ```
 
-For an HA pair, upgrade the receiving primary before enabling reverse delivery from the secondary. Then upgrade the secondary; both nodes need 6.0.5 code. Allow the queue to drain and verify secondary-generated auth and accounting rows appear on the primary without overwriting primary-owned rows. If a conflict is reported, stop and reconcile instead of deleting queued messages.
+The upgrade adds nullable `radpostauth.origin_node`; it does not backfill old logs. The migration is repeatable. On an HA pair, migrate the receiving primary before upgrading the secondary writer to emit new-origin rows, then upgrade the secondary; both peers must have the new schema before such rows replicate. Verify each writer records its own offset and replay preserves it. Pause or control HA replay during a staggered upgrade if needed. This dev release was checked on a single member; **a live two-member transfer/failover was not demonstrated**.
 
-For older installations, rehearse the exact source version and populated schema. The published 6.0.3 archive had a migration-runner defect on an existing 6.0.2 downstream-destination table; do not retry the unchanged 6.0.3 asset. A failed upgrade restores managed code but **does not roll back database DDL**. Inspect the restricted backup/debug log and database compatibility before restarting old writers.
+For older installations, rehearse the exact source version and populated schema before production. A failed upgrade can restore managed source files but **cannot roll back database DDL**. Inspect the restricted upgrade log and database compatibility before restarting an older writer.
 
-## Publication boundary
+## Release identity and verification
 
-Tag **`6.0.5`** (without `v`) on the exact reviewed source represented by this candidate, create the Release, and upload `radiusstack-source.tar.gz` unchanged. Independently compare the published asset SHA-256 with the locally verified digest before telling customers the upgrade command is usable. This candidate does not claim a live HA pair/failover test or an upgrade of any production instance.
+Git tag: `6.0.6` (no `v`). Asset: `radiusstack-source.tar.gz`, rooted at `radiusstack-6.0.6/`. Verify the downloaded asset digest against GitHub Release metadata and its extracted version markers before upgrading a customer system. Production deployment is separate from this release.

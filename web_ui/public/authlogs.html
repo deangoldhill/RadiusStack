@@ -93,6 +93,7 @@
         </div>
 
         <div id="resultCount" class="text-sm text-gray-500 mb-2"></div>
+        <p class="text-xs text-gray-500 mb-2">Server 1/2 correspond to HA_DB_OFFSET 1/2 on the member that handled the request; they do not change when Primary/Secondary roles change. Unknown means the log predates origin tracking.</p>
         <div class="bg-white p-4 rounded shadow overflow-x-auto">
             <table class="w-full text-left text-sm" id="logsTable">
                 <thead>
@@ -100,6 +101,7 @@
                         <th class="p-2">Tenant</th>
                         <th class="p-2">Username</th>
                         <th class="p-2">Reply</th>
+                        <th class="p-2" title="Stable processing member; does not change on HA role promotion">Server</th>
                         <th class="p-2">NAS IP</th>
                         <th class="p-2">Calling Station ID</th>
                         <th class="p-2">Called Station ID</th>
@@ -193,7 +195,7 @@
             if (res.ok) {
                 const payload = await res.json(); const data=payload.items; totalPages=payload.totalPages; totalRecords=payload.total; const size=Number(document.getElementById('pageSize').value),start=totalRecords?(currentPage-1)*size+1:0; document.getElementById('resultCount').textContent=totalRecords?`Showing ${start.toLocaleString()}-${Math.min(currentPage*size,totalRecords).toLocaleString()} of ${totalRecords.toLocaleString()} records`:''; document.getElementById('pageSummary').textContent=`Page ${currentPage} of ${totalPages}`;document.getElementById('prevPage').disabled=currentPage<=1;document.getElementById('nextPage').disabled=currentPage>=totalPages;
                 document.querySelector('#logsTable tbody').innerHTML = data.length === 0
-                    ? '<tr><td colspan="8" class="p-4 text-center text-gray-400">No results found</td></tr>'
+                    ? '<tr><td colspan="9" class="p-4 text-center text-gray-400">No results found</td></tr>'
                     : data.map(l => {
                         const badge = l.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
                         const username = escHtml(l.username);
@@ -205,6 +207,9 @@
                         const authdateLocal = toDatetimeLocal(l.authdate);
 
                         const tenant = escHtml(l.tenant_name || 'Global');
+                        const originNode = Number(l.origin_node);
+                        const server = l.origin_node != null && (originNode === 1 || originNode === 2)
+                            ? `Server ${originNode}` : 'Unknown';
                         return `<tr class="hover:bg-gray-50 transition-colors">
                     <td class="p-2 border-b text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${tenant}</span></td>
                     <td class="p-2 border-b font-bold">
@@ -213,6 +218,7 @@
                     <td class="p-2 border-b">
                       <span class="px-2 py-1 text-xs rounded text-white ${badge}">${escHtml(l.reply)}</span>
                     </td>
+                    <td class="p-2 border-b text-xs font-medium text-gray-700">${server}</td>
                     <td class="p-2 border-b text-xs text-gray-600">
                       ${nasip ? `<span class="filterable" title="Filter by this NAS IP" onclick="setFilter('nasipFilter', '${nasip}')">${nasip}</span>` : ''}
                     </td>
