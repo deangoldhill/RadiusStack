@@ -1,0 +1,195 @@
+/* RadiusStack appearance presets. Scope under the authenticated app's theme
+   attribute; blue intentionally keeps the familiar Tailwind presentation. */
+html[data-rs-theme] {
+  --rs-canvas: #f3f4f6; --rs-surface: #ffffff; --rs-raised: #f8fafc;
+  --rs-ink: #1f2937; --rs-muted: #64748b; --rs-border: #e2e8f0;
+  --rs-accent: #2563eb; --rs-link: #1d4ed8; --rs-sidebar: #111827;
+  --rs-sidebar-ink: #cbd5e1; --rs-sidebar-hover: #273449;
+  --rs-brand-bg: linear-gradient(135deg,#1e2736,#1a2234);
+  --rs-card-radius: 1rem; --rs-control-radius: .65rem;
+  --rs-card-shadow: 0 9px 24px rgba(15,23,42,.07);
+  --rs-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --rs-heading-font: var(--rs-font);
+  --rs-active-ink: #ffffff;
+}
+html[data-rs-theme="gray"] {
+  color-scheme: dark;
+  --rs-canvas:#0d1117; --rs-surface:#19232f; --rs-raised:#222f3d;
+  --rs-ink:#ecf4ff; --rs-muted:#b1bfd0; --rs-border:#35465a;
+  --rs-accent:#276aab; --rs-link:#91caff; --rs-sidebar:#0a0f16;
+  --rs-sidebar-ink:#c0d2e5; --rs-sidebar-hover:#1b3043;
+  --rs-brand-bg:linear-gradient(135deg,#102438,#182b42);
+  --rs-card-radius:.75rem; --rs-control-radius:.5rem;
+  --rs-card-shadow:0 12px 30px rgba(0,0,0,.22);
+}
+html[data-rs-theme="terminal"] {
+  color-scheme: dark;
+  --rs-canvas:#07140b; --rs-surface:#102418; --rs-raised:#18301e;
+  --rs-ink:#d7f9d4; --rs-muted:#a5d6a6; --rs-border:#345b38;
+  --rs-accent:#1b7134; --rs-link:#a3f79c; --rs-sidebar:#051008;
+  --rs-sidebar-ink:#b2edb1; --rs-sidebar-hover:#183b1d;
+  --rs-brand-bg:#102819; --rs-card-radius:0; --rs-control-radius:0;
+  --rs-card-shadow:inset 0 0 0 1px rgba(123,255,130,.06);
+  --rs-font:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --rs-heading-font:var(--rs-font);
+}
+html[data-rs-theme="purple"] {
+  color-scheme: dark;
+  --rs-canvas:#141023; --rs-surface:#251c38; --rs-raised:#322746;
+  --rs-ink:#f2ebff; --rs-muted:#c6b7dc; --rs-border:#4c3e67;
+  --rs-accent:#7048af; --rs-link:#dbc6ff; --rs-sidebar:#100c1d;
+  --rs-sidebar-ink:#e2d4f4; --rs-sidebar-hover:#342650;
+  --rs-brand-bg:linear-gradient(135deg,#312147,#1d1833);
+  --rs-card-radius:1.45rem; --rs-control-radius:.9rem;
+  --rs-card-shadow:0 16px 40px rgba(9,4,23,.3), 0 0 28px rgba(129,82,207,.08);
+}
+html[data-rs-theme="paper"] {
+  --rs-canvas:#f5f0e5; --rs-surface:#fffdf7; --rs-raised:#eee7d9;
+  --rs-ink:#29251d; --rs-muted:#625849; --rs-border:#cfc1a9;
+  --rs-accent:#754a28; --rs-link:#70401d; --rs-sidebar:#e9dfcd;
+  --rs-sidebar-ink:#433728; --rs-sidebar-hover:#d9cbb4;
+  --rs-brand-bg:#f6efdf; --rs-card-radius:.15rem; --rs-control-radius:.15rem;
+  --rs-card-shadow:2px 3px 0 rgba(96,74,47,.13);
+  --rs-heading-font:Georgia, 'Times New Roman', serif;
+  --rs-active-ink:#fffaf0;
+}
+html[data-rs-theme="ocean"] {
+  --rs-canvas:#eaf6f8; --rs-surface:#ffffff; --rs-raised:#e1f2f4;
+  --rs-ink:#113648; --rs-muted:#476879; --rs-border:#bcdce2;
+  --rs-accent:#036b7a; --rs-link:#07596b; --rs-sidebar:#052f42;
+  --rs-sidebar-ink:#cce9ed; --rs-sidebar-hover:#165064;
+  --rs-brand-bg:linear-gradient(140deg,#10556a,#08394c);
+  --rs-card-radius:1.5rem; --rs-control-radius:1rem;
+  --rs-card-shadow:0 14px 30px rgba(5,85,105,.1);
+}
+html[data-rs-theme="green"] {
+  --rs-canvas:#eef5eb; --rs-surface:#ffffff; --rs-raised:#e2efe0;
+  --rs-ink:#1d392d; --rs-muted:#4d6b57; --rs-border:#c6dec9;
+  --rs-accent:#276c4d; --rs-link:#245d42; --rs-sidebar:#153c31;
+  --rs-sidebar-ink:#d3ead5; --rs-sidebar-hover:#2e614c;
+  --rs-brand-bg:linear-gradient(135deg,#24543e,#194231);
+  --rs-card-radius:1.6rem; --rs-control-radius:.9rem;
+  --rs-card-shadow:0 12px 28px rgba(32,84,54,.09);
+}
+html[data-rs-theme="red"] {
+  --rs-canvas:#fff6f1; --rs-surface:#ffffff; --rs-raised:#fce9de;
+  --rs-ink:#3d2822; --rs-muted:#72554c; --rs-border:#ebcfc2;
+  --rs-accent:#ad4034; --rs-link:#93372d; --rs-sidebar:#371e1a;
+  --rs-sidebar-ink:#f5dcd2; --rs-sidebar-hover:#63332a;
+  --rs-brand-bg:linear-gradient(135deg,#5b2d25,#3c211f);
+  --rs-card-radius:.4rem; --rs-control-radius:.35rem;
+  --rs-card-shadow:0 8px 0 rgba(156,72,50,.07);
+}
+
+/* Keep the old blue preset exactly as it was; other presets skin real surfaces. */
+html[data-rs-theme]:not([data-rs-theme="blue"]) body {
+  background:var(--rs-canvas); color:var(--rs-ink); font-family:var(--rs-font);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main { color:var(--rs-ink); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body [class~="bg-white"] {
+  background:var(--rs-surface); color:var(--rs-ink);
+  border-color:var(--rs-border); border-radius:var(--rs-card-radius);
+  box-shadow:var(--rs-card-shadow);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main [class~="bg-gray-50"],
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main [class~="bg-gray-100"],
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal [class~="bg-gray-50"] {
+  background:var(--rs-raised); color:var(--rs-ink);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main [class~="border-gray-50"],
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main [class~="border-gray-100"],
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main [class~="border-gray-200"],
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal [class~="border-gray-100"] { border-color:var(--rs-border); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is([class~="text-gray-900"],[class~="text-gray-800"],[class~="text-gray-700"],[class~="text-slate-900"],[class~="text-slate-800"],[class~="text-slate-700"]),
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal :is([class~="text-gray-900"],[class~="text-gray-800"],[class~="text-gray-700"]) { color:var(--rs-ink); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is([class~="text-gray-600"],[class~="text-gray-500"],[class~="text-gray-400"],[class~="text-slate-600"],[class~="text-slate-500"]),
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal :is([class~="text-gray-600"],[class~="text-gray-500"]) { color:var(--rs-muted); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is([class~="text-blue-600"],[class~="text-blue-700"],[class~="text-indigo-600"]) { color:var(--rs-link); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is([class~="bg-blue-600"],[class~="bg-blue-700"]) ,
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal :is([class~="bg-blue-600"],[class~="bg-blue-700"]) { background:var(--rs-accent); color:#fff; }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is(h1,h2,h3),
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal :is(h2,h3) { font-family:var(--rs-heading-font); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main :is(table,th,td) { border-color:var(--rs-border); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main thead { background:var(--rs-raised); color:var(--rs-ink); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body main tbody tr:hover { background:var(--rs-raised); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea) {
+  color:var(--rs-ink); background:var(--rs-raised); border:1px solid var(--rs-border);
+  border-radius:var(--rs-control-radius); accent-color:var(--rs-accent);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) body :is(input,select,textarea)::placeholder { color:var(--rs-muted); opacity:.85; }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body :is(button,[role="button"]):not(.nav-link) { border-radius:var(--rs-control-radius); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) body :is(input[type="checkbox"],input[type="radio"]) { accent-color:var(--rs-accent); }
+html[data-rs-theme] body :is(button,a,input,select,textarea):focus-visible {
+  outline:3px solid var(--rs-link); outline-offset:2px;
+}
+html[data-rs-theme] [hidden] { display:none !important; }
+
+/* Sidebar is a separate visual surface; never recolor status labels in main. */
+html[data-rs-theme]:not([data-rs-theme="blue"]) #appSidebar {
+  background:var(--rs-sidebar); color:var(--rs-sidebar-ink);
+  border-color:var(--rs-border); border-radius:0;
+  box-shadow:4px 0 20px rgba(0,0,0,.12);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) #sidebarBrand {
+  background:var(--rs-brand-bg) !important; border-color:var(--rs-border) !important;
+  border-radius:var(--rs-card-radius);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) #appSidebar .nav-link {
+  color:var(--rs-sidebar-ink); border-radius:var(--rs-control-radius);
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) #appSidebar .nav-link:hover,
+html[data-rs-theme]:not([data-rs-theme="blue"]) #appSidebar :is(button,select):hover { background:var(--rs-sidebar-hover); }
+html[data-rs-theme] #appSidebar .nav-link.rs-active {
+  background:var(--rs-accent); color:var(--rs-active-ink); font-weight:700;
+}
+html[data-rs-theme]:not([data-rs-theme="blue"]) #appSidebar :is(button,select) {
+  background:var(--rs-sidebar-hover); color:var(--rs-sidebar-ink);
+  border-color:var(--rs-border); border-radius:var(--rs-control-radius);
+}
+html[data-rs-theme="paper"] #appSidebar #sidebarBrand [data-brand-first],
+html[data-rs-theme="paper"] #appSidebar #sidebarBrand [data-brand-second] { color:#332517 !important; }
+html[data-rs-theme="paper"] #appSidebar #sidebarBrand [data-brand-caption] { color:#66513c !important; }
+html[data-rs-theme="paper"] #appSidebar :is(#sidebarVersion,#sidebarUsername,#sidebarUpdateStatus) { color:#544333 !important; }
+html[data-rs-theme="paper"] #appSidebar { border-right:2px solid #bb9c72; }
+html[data-rs-theme="terminal"] body {
+  background-image:linear-gradient(rgba(106,211,115,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(106,211,115,.045) 1px,transparent 1px);
+  background-size:28px 28px;
+}
+html[data-rs-theme="terminal"] body main :is(h1,h2,h3) { text-transform:uppercase; letter-spacing:.045em; }
+html[data-rs-theme="terminal"] #appSidebar .nav-link.rs-active { box-shadow:inset 3px 0 0 #b4ff9f; }
+html[data-rs-theme="purple"] body {
+  background-image:radial-gradient(circle at 92% 8%,rgba(125,70,184,.17),transparent 35%);
+}
+html[data-rs-theme="ocean"] body {
+  background-image:radial-gradient(circle at 85% 5%,rgba(28,164,185,.14),transparent 38%);
+}
+
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content :is(h1,h2,h3) { color:var(--rs-ink); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content h2 { border-color:var(--rs-border); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) :is(.wiki-content a,.toc-link) { color:var(--rs-link); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content blockquote { background:var(--rs-raised); border-color:var(--rs-accent); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content code { background:var(--rs-raised); color:var(--rs-ink); }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content pre code { background:transparent; color:inherit; }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content pre.mermaid { background:#fff; color:#0f172a; }
+html[data-rs-theme]:not([data-rs-theme="blue"]) .wiki-content hr { border-color:var(--rs-border); }
+
+/* Modal chrome and preview cards share the same palette as the page. */
+html[data-rs-theme]:not([data-rs-theme="blue"]) #adminPasswordModal > div {
+  background:var(--rs-surface); color:var(--rs-ink);
+  border-color:var(--rs-border); border-radius:var(--rs-card-radius);
+}
+.theme-preview {
+  display:flex; align-items:center; gap:1rem; min-height:4.8rem; padding:.8rem;
+  margin:.65rem 0; border:1px solid var(--rs-border); border-radius:var(--rs-card-radius);
+  background:var(--rs-raised); color:var(--rs-ink);
+}
+.theme-preview-palette { display:flex; width:5.5rem; min-width:5.5rem; height:3rem; overflow:hidden; border-radius:.45rem; border:1px solid var(--rs-border); }
+.theme-preview-palette span { flex:1; }
+.theme-preview strong, .theme-preview small { display:block; }
+.theme-preview small { color:var(--rs-muted); line-height:1.3; }
+html[data-rs-theme="terminal"] .theme-preview-palette { border-radius:0; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-rs-theme] *, html[data-rs-theme] *::before, html[data-rs-theme] *::after {
+    animation-duration:.01ms !important; transition-duration:.01ms !important;
+  }
+}

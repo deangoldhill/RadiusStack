@@ -91,7 +91,6 @@
                     Clear All Stale Sessions
                 </button>
 
-                <button id="clearAllStaleBtn" onclick="clearAllStaleSessions()" class="hidden px-3 py-1.5 bg-orange-100 text-orange-700 rounded-md border border-orange-300 hover:bg-orange-200 text-sm font-medium transition-colors shadow-sm">Clear All Stale</button>
                 <button id="clearSessionsBtn" onclick="clearSelectedSessions()" class="hidden px-3 py-1.5 bg-red-100 text-red-700 rounded-md border border-red-300 hover:bg-red-200 text-sm font-medium transition-colors">
                     Clear Selected
                 </button>
@@ -135,8 +134,9 @@
             <table class="w-full text-left text-sm whitespace-nowrap" id="sessTable">
                 <thead>
                     <tr class="bg-gray-50 text-gray-600 text-xs font-bold uppercase border-b">
-                        <th class="p-3 w-10 text-center"><input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll(this)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"></th>
+                        <th id="selectionColumn" class="p-3 w-10 text-center"><input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll(this)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4"></th>
                         <th onclick="sortTable(\'username\')" class="cursor-pointer hover:bg-gray-100 p-3">Username</th>
+                        <th id="tenantColumn" hidden class="p-3">Tenant</th>
                         <th onclick="sortTable('framedipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">Framed IP</th>
                         <th onclick="sortTable('nasipaddress')" class="cursor-pointer hover:bg-gray-100 p-3">NAS IP</th>
                         <th onclick="sortTable('callingstationid')" class="cursor-pointer hover:bg-gray-100 p-3">Calling Station</th>
@@ -144,7 +144,7 @@
                         <th onclick="sortTable('duration')" class="cursor-pointer hover:bg-gray-100 p-3">Duration</th>
                         <th onclick="sortTable('acctinputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Upload</th>
                         <th onclick="sortTable('acctoutputoctets')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Download</th>
-                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th><th class="p-3 text-center">Actions</th>
+                        <th onclick="sortTable('total')" class="cursor-pointer hover:bg-gray-100 p-3 text-right">Total</th><th class="p-3 text-center" id="actionsColumn">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="sessBody">
@@ -236,6 +236,8 @@
         var allSessions = [];
         var autoRefresh = true;
         var refreshTimer = null; var currentPage=1, totalPages=1, totalRecords=0;
+        var globalSessionsReadOnly = false;
+        function escapeSessionText(value) { const node=document.createElement('span'); node.textContent=String(value ?? ''); return node.innerHTML; }
 
         function fmtGB(b) { return ((b || 0) / 1073741824).toFixed(3) + ' GB'; }
         function fmtHrs(s) { return ((s || 0) / 3600).toFixed(2) + ' hrs'; }
@@ -246,8 +248,20 @@
         }
 
         async function init() {
-            var nRes = await apiFetch('/api/nas');
-            if (nRes.ok) { var nas = await nRes.json(); document.getElementById('fNas').innerHTML += nas.map(function (n) { return '<option value="' + n.nasname + '">' + n.shortname + ' (' + n.nasname + ')</option>'; }).join(''); }
+            globalSessionsReadOnly = window.radiusstackContext?.multiTenantEnabled === true && window.currentAdminSuper === true && localStorage.getItem('activeTenantId') === 'global';
+            document.getElementById('tenantColumn').hidden = !globalSessionsReadOnly;
+            document.getElementById('selectionColumn').hidden = globalSessionsReadOnly;
+            document.getElementById('actionsColumn').hidden = globalSessionsReadOnly;
+            document.getElementById('modalClearBtn').hidden = globalSessionsReadOnly;
+            document.getElementById('modalUserLink').hidden = globalSessionsReadOnly;
+            try {
+                const nRes = await apiFetch('/api/sessions/nas-options');
+                if (nRes.ok) {
+                    const names = await nRes.json();
+                    const select = document.getElementById('fNas');
+                    names.forEach(name => { const option=document.createElement('option'); option.value=name; option.textContent=name; select.appendChild(option); });
+                }
+            } catch (error) { console.warn('Session NAS filter unavailable', error); }
 
             ['fUser', 'fCalling', 'fFramed'].forEach(function(id) {
                 var el = document.getElementById(id);
@@ -272,6 +286,7 @@
         let currentModalSessionId = null;
 
         async function clearModalSession() {
+            if (globalSessionsReadOnly) return;
             if(!currentModalSessionId) return;
             if(!confirm(`Are you sure you want to clear this session?`)) return;
             try {
@@ -290,6 +305,7 @@
         }
 
         async function clearAllStaleSessions() {
+            if (globalSessionsReadOnly) return;
             if(!allSessions || !allSessions.length) return alert('No stale sessions to clear.');
             if(!confirm(`Are you sure you want to clear ALL ${allSessions.length} stale session(s)?`)) return;
 
@@ -322,8 +338,8 @@
                 btn.classList.add('ring-2', 'ring-yellow-400', 'bg-yellow-200');
                 btn.textContent = 'View All Sessions';
                 if (title) title.textContent = 'Stale Sessions';
-                if (subtitle) subtitle.textContent = 'View and clear stale RADIUS sessions';
-                if (clearAllBtn) clearAllBtn.classList.remove('hidden');
+                if (subtitle) subtitle.textContent = globalSessionsReadOnly ? 'Read-only stale sessions across all tenants' : 'View and clear stale RADIUS sessions';
+                if (clearAllBtn && !globalSessionsReadOnly) clearAllBtn.classList.remove('hidden');
             } else {
                 btn.classList.remove('ring-2', 'ring-yellow-400', 'bg-yellow-200');
                 btn.textContent = 'Stale Sessions';
@@ -354,6 +370,7 @@
         }
 
         async function clearSelectedSessions() {
+            if (globalSessionsReadOnly) return;
             const selected = Array.from(document.querySelectorAll('.session-checkbox:checked')).map(cb => cb.value);
             if (!selected.length) return;
 
@@ -808,16 +825,36 @@
 
 
         async function loadSessions() {
-            var icon = document.getElementById('refreshIcon');
+            const icon = document.getElementById('refreshIcon');
             icon.classList.add('spinning');
             try {
-                var q=new URLSearchParams({page:currentPage,page_size:document.getElementById('pageSize').value});[['username','fUser'],['nasip','fNas'],['callingstationid','fCalling'],['framedip','fFramed']].forEach(function(x){var v=document.getElementById(x[1]).value;if(v)q.set(x[0],v);}); var res = await apiFetch(showingStale ? '/api/sessions/stale' : '/api/sessions/active?'+q); if (!res.ok) { icon.classList.remove('spinning'); return; } var payload=await res.json(); if(showingStale){allSessions=payload;totalRecords=payload.length;totalPages=1;}else{allSessions=payload.items;totalRecords=payload.total;totalPages=payload.totalPages;} updatePagination(); renderTable();
-            } catch (e) { console.error(e); }
-            icon.classList.remove('spinning');
-            scheduleRefresh();
+                const q = new URLSearchParams({page: currentPage, page_size: document.getElementById('pageSize').value});
+                [['username','fUser'],['nasip','fNas'],['callingstationid','fCalling'],['framedip','fFramed']].forEach(([key,id]) => {
+                    const value=document.getElementById(id).value;
+                    if (value) q.set(key,value);
+                });
+                const res = await apiFetch(showingStale ? '/api/sessions/stale' : '/api/sessions/active?' + q);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const payload = await res.json();
+                if (showingStale) {
+                    allSessions=payload; totalRecords=payload.length; totalPages=1;
+                } else {
+                    allSessions=payload.items; totalRecords=payload.total; totalPages=payload.totalPages; currentPage=payload.page;
+                }
+                updatePagination();
+                renderTable();
+            } catch (error) {
+                console.error('Failed to load sessions',error);
+                document.getElementById('sessBody').innerHTML = '<tr><td colspan="12" class="p-8 text-center text-red-700">Failed to load sessions. Check access and try Refresh.</td></tr>';
+                document.getElementById('pageSummary').textContent = 'Sessions unavailable';
+            } finally {
+                icon.classList.remove('spinning');
+                scheduleRefresh();
+            }
         }
 
         async function sendDynamicAuth(sessionId, kind) {
+            if (globalSessionsReadOnly) return;
             const label = kind === 'coa' ? 'Reauthorize this session with its current profile, VLAN, and supported reply attributes?' : 'Disconnect this session from the NAS?';
             if (!confirm(label)) return;
             try {
@@ -852,7 +889,7 @@
             if (countEl) countEl.textContent = showingStale ? filtered.length : totalRecords;
 
             if (!filtered.length) {
-                tbody.innerHTML = '<tr><td colspan="11" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="12" class="p-8 text-center text-gray-400 text-sm">No active sessions found</td></tr>';
                 return;
             }
 
@@ -860,8 +897,9 @@
             tbody.innerHTML = filtered.map(function (s) {
                 var idx = allSessions.indexOf(s);
                 return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + idx + ')">' +
-                    '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="session-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="' + s.radacctid + '" onchange="updateClearButton()"></td>' +
-                    '<td class="p-3 font-bold text-gray-800">' + s.username + '</td>' +
+                    (globalSessionsReadOnly ? '' : '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="session-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="' + s.radacctid + '" onchange="updateClearButton()"></td>') +
+                    '<td class="p-3 font-bold text-gray-800">' + escapeSessionText(s.username) + '</td>' +
+                    (globalSessionsReadOnly ? '<td class="p-3 text-xs text-gray-700">' + escapeSessionText(s.tenant_name || 'Unassigned') + '</td>' : '') +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.framedipaddress || '—') + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-600">' + (s.nasipaddress || '—') + '</td>' +
                     '<td class="p-3 font-mono text-xs text-gray-500 max-w-[140px] truncate">' + (s.callingstationid || '—') + '</td>' +
@@ -870,7 +908,7 @@
                     '<td class="p-3 text-xs text-right font-mono text-green-600">' + fmtGB(s.acctinputoctets) + '</td>' +
                     '<td class="p-3 text-xs text-right font-mono text-blue-600">' + fmtGB(s.acctoutputoctets) + '</td>' +
                     '<td class="p-3 text-xs text-right font-mono font-bold text-gray-700">' + fmtGB((Number(s.acctinputoctets) || 0) + (Number(s.acctoutputoctets) || 0)) + '</td>' +
-                    '<td class="p-3 text-center whitespace-nowrap" onclick="event.stopPropagation()"><button type="button" class="mr-1 px-2 py-1 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50" title="Reauthorize this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'coa\')">CoA</button><button type="button" class="px-2 py-1 text-xs rounded border border-red-300 text-red-700 hover:bg-red-50" title="Disconnect this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'pod\')">PoD</button></td>' +
+                    (globalSessionsReadOnly ? '' : '<td class="p-3 text-center whitespace-nowrap" onclick="event.stopPropagation()"><button type="button" class="mr-1 px-2 py-1 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50" title="Reauthorize this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'coa\')">CoA</button><button type="button" class="px-2 py-1 text-xs rounded border border-red-300 text-red-700 hover:bg-red-50" title="Disconnect this session" onclick="sendDynamicAuth(' + Number(s.radacctid) + ', \'pod\')">PoD</button></td>') +
                     '</tr>';
             }).join('');
         }

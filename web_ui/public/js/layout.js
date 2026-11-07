@@ -1,3 +1,20 @@
+// Theme assets are local and shared by every authenticated page using layout.js.
+const themeStyles = document.createElement('link');
+themeStyles.rel = 'stylesheet';
+themeStyles.href = '/css/themes.css';
+const themeStylesReady = new Promise(resolve => {
+  themeStyles.onload = resolve;
+  themeStyles.onerror = () => { console.warn('Theme stylesheet unavailable'); resolve(); };
+  document.head.appendChild(themeStyles);
+});
+const themeReady = Promise.all([themeStylesReady, new Promise(resolve => {
+  const script = document.createElement('script');
+  script.src = '/js/theme-system.js';
+  script.onload = () => resolve(window.RSTheme);
+  script.onerror = () => { console.warn('Theme catalogue unavailable; using Classic'); resolve(null); };
+  document.head.appendChild(script);
+})]).then(([, system]) => system);
+
 function getApiKey() {
   const key = localStorage.getItem('apiKey');
   if (!key && !window.location.pathname.endsWith('login.html')) window.location.href = 'login.html';
@@ -48,7 +65,7 @@ document.head.insertAdjacentHTML('beforeend', `<style>
   #accessDeniedBanner .banner-box button:hover { background: #4b5563; }
 </style>`);
 
-const GLOBAL_CONTEXT_BLOCKED_PAGES = new Set(['users.html', 'profiles.html', 'plans.html', 'mac-auth.html']);
+const GLOBAL_CONTEXT_BLOCKED_PAGES = new Set(['users.html', 'profiles.html', 'plans.html', 'mac-auth.html', 'nas.html', 'downstream-destinations.html']);
 
 const PAGE_PERMISSIONS = {
   'index.html': null, 'users.html': 'users', 'mac-auth.html': 'users',
@@ -157,6 +174,7 @@ async function checkForUpdates(installedVersion) {
 document.addEventListener("DOMContentLoaded", async () => {
   if (window.location.pathname.endsWith('login.html')) return;
   getApiKey();
+  const RSTheme = await themeReady;
 
   let themeColor = 'blue';
   let personalTheme = null;
@@ -188,24 +206,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     const themeRes = await apiFetch('/api/admins/me/theme', { withoutTenantContext: true });
     if (themeRes.ok) {
       const profile = await themeRes.json();
-      if (['blue', 'red', 'green', 'purple', 'gray'].includes(profile.platform_ui_theme)) platformTheme = profile.platform_ui_theme;
-      if (['blue', 'red', 'green', 'purple', 'gray'].includes(profile.ui_theme)) personalTheme = profile.ui_theme;
-      themeColor = personalTheme || platformTheme;
+      if (RSTheme?.valid(profile.platform_ui_theme)) platformTheme = profile.platform_ui_theme;
+      if (RSTheme?.valid(profile.ui_theme)) personalTheme = profile.ui_theme;
+      themeColor = RSTheme ? RSTheme.resolve(personalTheme, platformTheme) : 'blue';
     }
   } catch(e) { console.warn('RadiusStack layout: permission/context fetch failed', e); }
 
-  const colors = {
-    blue:   { bg: 'bg-blue-600',   text: 'text-blue-400',   shadow: 'shadow-blue-500/40' },
-    red:    { bg: 'bg-red-600',    text: 'text-red-400',    shadow: 'shadow-red-500/40' },
-    green:  { bg: 'bg-green-600',  text: 'text-green-400',  shadow: 'shadow-green-500/40' },
-    purple: { bg: 'bg-purple-600', text: 'text-purple-400', shadow: 'shadow-purple-500/40' },
-    gray:   { bg: 'bg-gray-800',   text: 'text-gray-400',   shadow: 'shadow-gray-500/40' },
-  };
-  const theme = colors[themeColor] || colors.blue;
+  RSTheme?.apply(themeColor);
+  const theme = { bg: 'bg-blue-600', shadow: 'shadow-blue-500/40' };
 
   document.body.insertAdjacentHTML('afterbegin', `
-    <div class="w-64 bg-gray-900 text-white h-screen p-5 flex flex-col shadow-2xl rounded-r-3xl border-r border-gray-800 relative z-20">
-      <div class="flex items-center mb-10 gap-3 px-3 py-3 rounded-2xl" style="background:linear-gradient(135deg,#1e2736 0%,#1a2234 100%);border:1px solid rgba(59,130,246,0.2);">
+    <div id="appSidebar" class="w-64 bg-gray-900 text-white h-screen p-5 flex flex-col shadow-2xl rounded-r-3xl border-r border-gray-800 relative z-20">
+      <div id="sidebarBrand" class="flex items-center mb-10 gap-3 px-3 py-3 rounded-2xl" style="background:var(--rs-brand-bg);border:1px solid rgba(59,130,246,0.2);">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="w-10 h-10 flex-shrink-0 drop-shadow-lg" aria-label="RadiusStack">
           <defs>
             <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -227,9 +239,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         </svg>
         <div class="min-w-0">
           <div style="font-size:1.1rem;font-weight:800;letter-spacing:-0.02em;line-height:1.2;">
-            <span style="color:#f1f5f9;">Radius</span><span style="color:#3b82f6;">Stack</span>
+            <span data-brand-first style="color:#f1f5f9;">Radius</span><span data-brand-second style="color:#3b82f6;">Stack</span>
           </div>
-          <div style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#475569;font-weight:600;margin-top:1px;">Network Auth</div>
+          <div data-brand-caption style="font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:#94a3b8;font-weight:600;margin-top:1px;">Network Auth</div>
           <p id="sidebarVersion" class="text-xs" style="color:#94a3b8;margin-top:2px;">Version unavailable</p>
           <a id="sidebarUpdateStatus" href="https://github.com/deangoldhill/RadiusStack/releases" target="_blank" rel="noopener noreferrer" class="text-xs hover:underline" style="margin-top:2px;" hidden></a>
           <p id="sidebarUsername" class="text-xs truncate max-w-xs" style="color:#64748b;margin-top:2px;"></p>
@@ -290,7 +302,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.querySelectorAll('.nav-link').forEach(link => {
     if (link.getAttribute('href') === currentPage) {
       link.classList.remove('text-gray-400', 'hover:bg-gray-800', 'hover:text-white');
-      link.classList.add(theme.bg, 'text-white', 'shadow-lg', 'font-bold', theme.shadow);
+      if (themeColor === 'blue') link.classList.add(theme.bg, 'text-white', 'shadow-lg', 'font-bold', theme.shadow);
+      link.classList.add('rs-active');
     }
   });
 
@@ -305,14 +318,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         <p class="text-sm mb-4">Username: <strong id="profileUsername"></strong></p>
         <p id="profileVersion" class="text-sm mb-4 text-gray-600" role="status">Version unavailable</p>
         <form id="profileThemeForm" class="space-y-3 mb-6">
-          <label class="block text-sm font-bold text-gray-700" for="profileTheme">Colour scheme</label>
+          <label class="block text-sm font-bold text-gray-700" for="profileTheme">My appearance</label>
           <select id="profileTheme" class="w-full border p-2 rounded-lg">
             <option value="">Use platform default</option>
-            <option value="blue">Default Blue</option><option value="red">Danger Red</option>
-            <option value="green">Secure Green</option><option value="purple">Royal Purple</option>
-            <option value="gray">Dark Mode Accent</option>
           </select>
-          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Save colour scheme</button>
+          <div id="profileThemePreview" class="theme-preview" aria-live="polite"></div>
+          <p class="text-xs text-gray-500">Preview now; save to keep this choice across devices. Use platform default to follow the shared setting.</p>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Save appearance</button>
           <p id="profileThemeStatus" role="status" class="text-sm text-gray-600"></p>
         </form>
         <h3 class="font-bold mb-2">Change My Password</h3>
@@ -336,7 +348,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById('profileUsername').textContent = window.currentAdmin || '';
   loadAppVersion().then(version => { if (version) void checkForUpdates(version); });
+  RSTheme?.fillSelector(document.getElementById('profileTheme'), true);
   document.getElementById('profileTheme').value = personalTheme || '';
+  RSTheme?.preview(document.getElementById('profileTheme'), document.getElementById('profileThemePreview'), platformTheme);
+  document.getElementById('profileTheme').onchange = () => RSTheme?.preview(
+    document.getElementById('profileTheme'), document.getElementById('profileThemePreview'), platformTheme, true
+  );
   document.getElementById('profileThemeForm').onsubmit = async (e) => {
     e.preventDefault();
     const status = document.getElementById('profileThemeStatus');
@@ -358,6 +375,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   window.closeadminPasswordModal = () => {
       document.getElementById('adminPasswordModal').classList.add('hidden');
+      RSTheme?.apply(themeColor);
+      document.getElementById('profileTheme').value = personalTheme || '';
+      RSTheme?.preview(document.getElementById('profileTheme'), document.getElementById('profileThemePreview'), platformTheme);
   };
 
   document.getElementById('adminPasswordForm').onsubmit = async (e) => {

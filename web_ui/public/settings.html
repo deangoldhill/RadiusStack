@@ -5,6 +5,13 @@
   <meta charset="UTF-8">
   <title>Settings</title>
   <script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .settings-toggle { cursor: pointer; list-style: none; }
+  .settings-toggle::-webkit-details-marker { display: none; }
+  .settings-toggle::after { content: '⌄'; margin-left: auto; color: #64748b; font-size: 1.25rem; transition: transform .2s ease; }
+  details[open] > .settings-toggle::after { transform: rotate(180deg); }
+  .settings-toggle:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+</style>
 </head>
 <body>
 <main>
@@ -19,16 +26,16 @@
   <div class="space-y-6">
 
     
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div id="settingsTopGrid" class="grid grid-cols-1 gap-6">
 
       
-      <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+      <details class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden" id="generalSettingsCard" data-settings-scope="both" open>
+        <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
             <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           </div>
           <h2 class="text-base font-bold text-gray-800">General Configuration</h2>
-        </div>
+        </summary>
         <div class="p-6 space-y-5">
           <p id="settingsVersion" class="text-sm font-semibold text-gray-600" role="status">Version unavailable</p>
           <div id="multiTenantControl" data-settings-scope="global" hidden class="border border-indigo-200 bg-indigo-50 rounded-xl p-4">
@@ -37,15 +44,12 @@
           </div>
 
           <div data-settings-scope="global" hidden>
-            <label class="block text-sm font-semibold text-gray-700 mb-1.5" for="uiTheme">UI Theme Color (platform default)</label>
+            <label class="block text-sm font-semibold text-gray-700 mb-1.5" for="uiTheme">Platform default appearance</label>
             <select id="uiTheme" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none">
-              <option value="blue">Default Blue</option>
-              <option value="red">Danger Red</option>
-              <option value="green">Secure Green</option>
-              <option value="purple">Royal Purple</option>
-              <option value="gray">Dark Mode Accent</option>
+              <option value="blue">Classic</option>
             </select>
-            <p class="text-xs text-gray-500 mt-1">Administrators may override this from their Profile.</p>
+            <div id="uiThemePreview" class="theme-preview" aria-live="polite"></div>
+            <p class="text-xs text-gray-500 mt-1">Changes the default for administrators without a personal choice. Preview here before saving; personal choices are unaffected.</p>
           </div>
 
 
@@ -86,16 +90,16 @@
           </div>
 
         </div>
-      </div>
+      </details>
 
       
-      <div class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+      <details class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden" id="userTotpSettingsCard" data-settings-scope="tenant" hidden>
+        <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center">
             <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
           </div>
           <h2 class="text-base font-bold text-gray-800">User TOTP Settings</h2>
-        </div>
+        </summary>
         <div class="p-6">
           <div class="bg-purple-50 border border-purple-100 rounded-lg p-4">
             <label class="block text-sm font-semibold text-gray-700 mb-1.5">Enrollment Code Expiry (Hours)</label>
@@ -106,26 +110,60 @@
             <p class="text-xs text-gray-400 mt-2">Default: 24 hours &nbsp;·&nbsp; Maximum: 720 hours (30 days)</p>
           </div>
         </div>
-      </div>
+      </details>
 
     </div>
 
+    <details id="pushbulletSettingsCard" data-settings-scope="both" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mb-6">
+      <summary class="settings-toggle px-6 py-4 border-b border-gray-100"><h2 class="text-base font-bold text-gray-800">Pushbullet Notifications</h2></summary>
+      <div class="p-6 space-y-4">
+        <label class="flex items-center gap-2 text-sm font-semibold"><input id="pushbulletEnabled" type="checkbox"> Enable notifications</label>
+        <div>
+          <label for="pushbulletApiKey" class="block text-sm font-semibold text-gray-700 mb-1">Pushbullet API key</label>
+          <input id="pushbulletApiKey" type="password" autocomplete="new-password" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm" placeholder="Leave blank to keep existing key">
+          <p id="pushbulletConfigured" class="text-xs text-gray-500 mt-1"></p>
+        </div>
+        <div>
+          <label for="pushbulletRecipientEmail" class="block text-sm font-semibold text-gray-700 mb-1">Recipient email (optional)</label>
+          <input id="pushbulletRecipientEmail" type="email" autocomplete="email" maxlength="254" class="w-full border border-gray-200 p-2.5 rounded-lg text-sm" placeholder="person@example.com">
+          <p class="text-xs text-gray-500 mt-1">Leave blank to notify every device on the API key’s Pushbullet account. Enter an email to send to that person instead; Pushbullet may deliver it as email if they do not have a device.</p>
+        </div>
+        <fieldset class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <legend class="font-semibold text-gray-700 mb-2">Notify on</legend>
+          <label class="flex items-center gap-2"><input id="pushbulletEvent_admin_new_public_ip" type="checkbox"> Administrator login from a new public IP</label>
+          <label class="flex items-center gap-2"><input id="pushbulletEvent_admin_failed_login" type="checkbox"> Failed administrator login</label>
+          <label class="flex items-center gap-2"><input id="pushbulletEvent_mac_auto_created" type="checkbox"> MAC auto-created</label>
+          <label class="flex items-center gap-2"><input id="pushbulletEvent_admin_password_changed" type="checkbox"> Administrator password changed</label>
+          <label data-settings-scope="global" hidden class="flex items-center gap-2"><input id="pushbulletEvent_container_restart" type="checkbox"> Container restart</label>
+          <label data-settings-scope="global" hidden class="flex items-center gap-2"><input id="pushbulletEvent_ha_disconnected" type="checkbox"> HA disconnected</label>
+          <label data-settings-scope="global" hidden class="flex items-center gap-2"><input id="pushbulletEvent_ha_reconnected" type="checkbox"> HA reconnected</label>
+        </fieldset>
+        <div class="flex items-center gap-3">
+          <button id="pushbulletSave" type="button" onclick="savePushbulletSettings()" disabled class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold">Save notifications</button>
+          <button id="pushbulletTest" type="button" onclick="testPushbulletSettings()" disabled class="bg-gray-700 hover:bg-gray-800 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold">Send test message</button>
+          <p id="pushbulletStatus" role="status" aria-live="polite" class="text-sm"></p>
+        </div>
+        <p class="text-xs text-gray-500">The test uses saved settings for this context. Save any API key or recipient changes first.</p>
+        <pre id="pushbulletDebug" role="status" aria-live="polite" class="whitespace-pre-wrap break-words text-xs text-gray-700 bg-gray-50 rounded-lg p-3" hidden></pre>
+      </div>
+    </details>
+
     <div id="settingsTenantToolsRow" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-    <section id="replyAttributeCatalogueCard" data-settings-scope="both" class="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden">
-      <div class="px-6 py-4 border-b border-blue-100 flex items-center justify-between gap-3"><h2 class="text-base font-bold text-slate-800">Reply Attribute Catalogue</h2><span class="text-[11px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Non-VLAN</span></div>
+    <details id="replyAttributeCatalogueCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden" hidden>
+      <summary class="settings-toggle px-6 py-4 border-b border-blue-100 flex items-center justify-between gap-3"><h2 class="text-base font-bold text-slate-800">Reply Attribute Catalogue</h2><span class="text-[11px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Non-VLAN</span></summary>
       <div class="p-6 space-y-3"><div><input id="attributeCatalogueSearch" type="search" oninput="renderAttributeCatalogue()" placeholder="Search standard or vendor attributes" class="w-full border border-blue-200 p-2.5 rounded-lg text-sm bg-white shadow-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"><p class="text-xs text-slate-500 mt-1.5">VLAN is controlled only by the Profile VLAN control. Add a standard or vendor reply attribute for profiles and NAS selection.</p></div><div id="attributeCatalogueResults" class="max-h-56 overflow-y-auto text-sm space-y-2 pr-1"></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 border-t pt-3"><input id="manualVsaVendorLabel" placeholder="Vendor label (optional)" class="border p-2 rounded-lg text-sm"><input id="manualVsaVendorCode" type="number" min="1" max="4294967295" placeholder="Vendor code" class="border p-2 rounded-lg text-sm"><input id="manualVsaAttributeNumber" type="number" min="1" max="255" placeholder="Vendor attribute number" class="border p-2 rounded-lg text-sm"><input id="manualVsaName" placeholder="Attribute name" class="border p-2 rounded-lg text-sm"><select id="manualVsaValueType" class="border p-2 rounded-lg text-sm"><option value="string">string</option><option value="integer">integer</option><option value="ipv4">ipv4</option><option value="octets">octets</option></select><button type="button" onclick="addManualVsa()" class="bg-gradient-to-r from-slate-700 to-slate-900 hover:from-slate-800 hover:to-slate-950 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow transition-all focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Add custom VSA</button></div><div id="savedReplyAttributes" class="text-sm space-y-1"></div></div>
-    </section>
+    </details>
 
       
-    <div id="siemForwardingCard" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+    <details id="siemForwardingCard" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+      <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0120 9.414V19a2 2 0 01-2 2z"/>
           </svg>
         </div>
         <h2 class="text-base font-bold text-gray-800">Syslog / SIEM Forwarding</h2>
-      </div>
+      </summary>
       <div class="p-6 space-y-5">
         <label class="flex items-start gap-3 cursor-pointer group">
           <input type="checkbox" id="syslogEnabled" class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" onchange="document.getElementById('syslogFields').classList.toggle('opacity-40', !this.checked); document.getElementById('syslogFields').classList.toggle('pointer-events-none', !this.checked);">
@@ -174,17 +212,17 @@
           </div>
         </div>
       </div>
-    </div>
+    </details>
 
 
 
-      <div id="macAuthAutocreateCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+      <details id="macAuthAutocreateCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden" hidden>
+        <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
             <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"/></svg>
           </div>
           <h2 class="text-lg font-bold text-gray-800">MAC Authentication</h2>
-        </div>
+        </summary>
         <div class="p-6 space-y-4">
           <label class="flex items-center gap-3 cursor-pointer">
             <input type="checkbox" id="macAuthAutocreate" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
@@ -215,17 +253,17 @@
             <p class="text-xs text-gray-500 mt-1">How frequently the background worker checks for rejected MAC authentication attempts to auto-create.</p>
           </div>
         </div>
-      </div>
+      </details>
     </div>
 
       
-      <div data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
-        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center gap-3">
+      <details data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6" id="sessionManagementCard" hidden>
+        <summary class="settings-toggle px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center gap-3">
           <div class="p-2 bg-yellow-100 rounded-lg text-yellow-600">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
           </div>
           <h2 class="text-base font-bold text-gray-800">Session Management</h2>
-        </div>
+        </summary>
         <div class="p-6 space-y-4">
           <label class="flex items-center gap-3 cursor-pointer">
             <input type="checkbox" id="clearStaleSessions" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
@@ -302,11 +340,11 @@
 
 
 
-      </div>
+      </details>
 
         
-        <div id="radiusStatsMaintenance" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-4">
-          <div class="flex items-center gap-3 mb-4">
+        <details id="radiusStatsMaintenance" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-4">
+          <summary class="settings-toggle flex items-center gap-3 mb-4">
             <div class="p-2 bg-indigo-100 rounded-lg text-indigo-600">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -314,7 +352,7 @@
               </svg>
             </div>
             <span class="text-sm font-semibold text-gray-700 block">Radius Stats Maintenance (Background Process)</span>
-          </div>
+          </summary>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
             <div>
               <label class="block text-sm font-semibold text-gray-700 mb-1">Retention Period (Days)</label>
@@ -348,17 +386,17 @@
               <p class="text-xs text-gray-500 mt-1">How often the Status-Server is queried and a row written to the stats table. Increasing this reduces write load.</p>
             </div>
           </div>
-        </div>
+        </details>
 
 
 
-    <div id="globalBackupRestore" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+    <details id="globalBackupRestore" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+      <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>
         </div>
         <h2 class="text-base font-bold text-gray-800">Database Backup & Restore</h2>
-      </div>
+      </summary>
       <div class="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
 
         
@@ -423,16 +461,16 @@
         </div>
 
       </div>
-    </div>
+    </details>
 
     
-    <div id="globalCertificateManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+    <details id="globalCertificateManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+      <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-yellow-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
         </div>
         <h2 class="text-base font-bold text-gray-800">EAP Certificate Manager</h2>
-      </div>
+      </summary>
       <div class="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
 
         
@@ -494,19 +532,19 @@
         </div>
 
       </div>
-    </div>
+    </details>
 
     
-    <div id="globalContainerManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+    <details id="globalContainerManagement" data-settings-scope="global" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden" open>
+      <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center">
             <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"></path></svg>
           </div>
           <h2 class="text-base font-bold text-gray-800">System Health & Containers</h2>
         </div>
-        <button onclick="loadHealth()" class="bg-gray-100 hover:bg-gray-200 transition-colors text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">↻ Refresh</button>
-      </div>
+        <button type="button" onclick="event.preventDefault(); event.stopPropagation(); loadHealth()" class="bg-gray-100 hover:bg-gray-200 transition-colors text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm">↻ Refresh</button>
+      </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-left text-sm whitespace-nowrap" id="healthTable">
           <thead>
@@ -520,13 +558,13 @@
           <tbody></tbody>
         </table>
       </div>
-    </div>
+    </details>
 
   </div>
 
         
-        <div id="globalHaSettings" data-settings-scope="global" hidden class="bg-white p-6 rounded-lg shadow-md mb-6">
-            <h2 class="text-lg font-semibold mb-4 text-gray-800">High Availability Status</h2>
+        <details id="globalHaSettings" data-settings-scope="global" hidden class="bg-white p-6 rounded-lg shadow-md mb-6" open>
+            <summary class="settings-toggle"><h2 class="text-lg font-semibold mb-4 text-gray-800">High Availability Status <span id="haPeerIndicator" role="status" aria-live="polite" class="ml-2 text-sm font-semibold text-gray-500">Unknown</span></h2></summary>
             <div id="haStatusContainer" class="text-sm">
                 <p class="text-gray-600" id="haLoadingText">Loading HA Status...</p>
             </div>
@@ -545,7 +583,7 @@
                 <p id="haReconcileStatus" role="status" class="text-sm mt-2 font-semibold"></p>
             </div>
             <p id="haActionMsg" role="status" class="mt-2 text-sm font-semibold"></p>
-        </div>
+        </details>
 
         <script>
             document.addEventListener('DOMContentLoaded', async () => {
@@ -562,6 +600,11 @@
                         const resumeBtn = document.getElementById('btnHaResume');
                         const reconcilePanel = document.getElementById('haReconcilePanel');
                         if (!res.ok) throw new Error(data.error || `HA status returned HTTP ${res.status}`);
+                        const indicator = document.getElementById('haPeerIndicator');
+                        const peerState = !data.enabled ? 'disabled' : (data.peerHealth?.state || 'unknown');
+                        const peerLabels = {connected:'● Secondary connected',disconnected:'● Secondary disconnected',unknown:'● Checking secondary',paused:'● HA paused',disabled:'● HA disabled'};
+                        indicator.textContent = data.role === 'secondary' ? 'Secondary member (probe runs on primary)' : (peerLabels[peerState] || peerLabels.unknown);
+                        indicator.className = `ml-2 text-sm font-semibold ${peerState === 'connected' ? 'text-green-700' : peerState === 'disconnected' ? 'text-red-700' : 'text-gray-500'}`;
 
                         if (!data.enabled) {
                             container.innerHTML = '<p class="text-gray-500 italic">High Availability is disabled in the environment variables.</p>';
@@ -611,6 +654,7 @@
                         document.getElementById('btnHaReconcile').disabled = !paused || (data.pause?.queueDepth ?? 1) !== 0 || (job?.phase && !['idle','completed','partial'].includes(job.phase));
                     } catch (e) {
                         console.error('Failed to load HA stats', e);
+                        document.getElementById('haPeerIndicator').textContent = '● HA status unavailable';
                         document.getElementById('haLoadingText').textContent = 'Failed to load HA stats. Check console.';
                     }
                 };
@@ -671,7 +715,7 @@
             });
         </script>
 
-<section id="tenantRadsecCard" data-settings-scope="tenant" hidden class="bg-amber-50 border border-amber-300 rounded-xl p-6 mt-6"><h2 class="font-bold text-amber-950">Tenant RadSec CA</h2><p class="text-sm text-amber-900 mt-1">This tenant CA signs NAS client certificates. Rotating it revokes every current tenant NAS client certificate; issue replacements from each NAS client.</p><label class="flex gap-2 mt-3 font-semibold"><input id="radsecEnabled" type="checkbox"> Enable TLS (RadSec) listener for this tenant</label><p id="radsecStatus" class="text-sm mt-2"></p><div class="flex flex-wrap gap-2 mt-3"><button type="button" onclick="provisionRadsec()" class="bg-amber-700 text-white px-3 py-2 rounded font-bold">Provision tenant CA</button><button type="button" onclick="downloadTenantRadsec('ca')" class="bg-white border border-amber-600 text-amber-900 px-3 py-2 rounded font-bold">Download tenant CA</button></div></section></main>
+<details id="tenantRadsecCard" data-settings-scope="tenant" hidden class="bg-amber-50 border border-amber-300 rounded-xl p-6 mt-6"><summary class="settings-toggle"><h2 class="font-bold text-amber-950">RadSec</h2></summary><p class="text-sm text-amber-900 mt-1">This tenant CA signs NAS client certificates. Rotating it revokes every current tenant NAS client certificate; issue replacements from each NAS client.</p><label class="flex gap-2 mt-3 font-semibold"><input id="radsecEnabled" type="checkbox"> Enable TLS (RadSec) listener for this tenant</label><p id="radsecStatus" class="text-sm mt-2"></p><div class="flex flex-wrap gap-2 mt-3"><button type="button" onclick="provisionRadsec()" class="bg-amber-700 text-white px-3 py-2 rounded font-bold">Provision tenant CA</button><button type="button" onclick="downloadTenantRadsec('ca')" class="bg-white border border-amber-600 text-amber-900 px-3 py-2 rounded font-bold">Download tenant CA</button></div></details></main>
 
 
 <div id="logsModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
@@ -758,7 +802,7 @@
   function addManualVsa() { const vendor_code=Number(document.getElementById('manualVsaVendorCode').value), vendor_attribute_number=Number(document.getElementById('manualVsaAttributeNumber').value), name=document.getElementById('manualVsaName').value.trim(); if (!Number.isInteger(vendor_code)||vendor_code<1||vendor_code>4294967295||!Number.isInteger(vendor_attribute_number)||vendor_attribute_number<1||vendor_attribute_number>255||!name) return alert('Vendor code, vendor attribute number, and attribute name are required.'); savedCustomAttributes.push({vendor_label:document.getElementById('manualVsaVendorLabel').value.trim() || undefined,vendor_code,vendor_attribute_number,name,value_type:document.getElementById('manualVsaValueType').value,source:'custom'}); ['manualVsaVendorLabel','manualVsaVendorCode','manualVsaAttributeNumber','manualVsaName'].forEach(id=>document.getElementById(id).value=''); renderSavedReplyAttributes(); renderAttributeCatalogue(); }
   async function loadReplyAttributeCatalogue() { const res=await apiFetch('/api/settings/reply-attribute-catalogue'); if(res.ok) { const data=await res.json(); catalogueAttributes=data.attributes || []; renderAttributeCatalogue(); } }
   const TENANT_SETTING_FIELDS = ['custom_reply_attributes','enforce_2fa','mask_user_passwords','mac_auth_autocreate','mac_auth_autocreate_plan','mac_auth_autocreate_profile','mac_auth_autocreate_interval','clear_stale_sessions','stale_session_threshold','stale_session_interim_threshold_minutes','stale_session_interval','radsec_enabled'];
-  const GLOBAL_SETTING_FIELDS = ['multi_tenant_enabled','radius_debug','api_debug','custom_reply_attributes','ui_theme','totp_enrollment_hours','authlogs_purge_enabled','authlogs_purge_days','authlogs_purge_interval','syslog_enabled','syslog_host','syslog_port','syslog_protocol','syslog_send_audit','syslog_send_authlogs'];
+  const GLOBAL_SETTING_FIELDS = ['multi_tenant_enabled','radius_debug','api_debug','ui_theme','authlogs_purge_enabled','authlogs_purge_days','authlogs_purge_interval','syslog_enabled','syslog_host','syslog_port','syslog_protocol','syslog_send_audit','syslog_send_authlogs'];
   const fieldsForScope = () => localStorage.getItem('activeTenantId') === 'global' || !window.multiTenantEnabled ? GLOBAL_SETTING_FIELDS : TENANT_SETTING_FIELDS;
   function resolveSettingsContext() { const context=window.radiusstackContext; if(!context) throw new Error('Unable to load tenant context'); window.multiTenantEnabled=context.multiTenantEnabled===true; window.currentAdminSuper=context.is_super_admin===true; window.availableTenants=Array.isArray(context.tenants)?context.tenants:[]; const multiTenantToggle=document.getElementById('multiTenantEnabled'); if (multiTenantToggle) multiTenantToggle.checked = context.multiTenantEnabled === true; return context; }
   function settingsScopeHeaders(){const id=localStorage.getItem('activeTenantId');return {'X-Tenant-ID':id&&id!=='global'?String(id):'global'};}
@@ -766,7 +810,10 @@
     const activeTenantId = localStorage.getItem('activeTenantId');
     const tenantActive = window.multiTenantEnabled === true && activeTenantId !== 'global';
     const globalSuperAdminActive = !tenantActive && window.currentAdminSuper === true;
+    document.getElementById('settingsTopGrid').classList.toggle('md:grid-cols-2', tenantActive);
+    document.getElementById('siemForwardingCard').classList.toggle('md:col-span-2', globalSuperAdminActive);
     document.querySelectorAll('[data-settings-scope]').forEach(el => { el.hidden = el.dataset.settingsScope !== 'both' && el.dataset.settingsScope !== (globalSuperAdminActive ? 'global' : 'tenant'); });
+    document.getElementById('pushbulletSettingsCard').hidden = true; // Wait for resolved authorization and config.
     // Two tenant fields share the legacy General card; hide their labels independently.
     ['enforce2FA', 'maskUserPasswords'].forEach(id => document.getElementById(id)?.closest('label')?.toggleAttribute('hidden', !tenantActive));
     if (tenantActive) { ['radiusDebug', 'apiDebug'].forEach(id => document.getElementById(id)?.closest('label')?.remove()); }
@@ -810,7 +857,8 @@
       document.getElementById('enforce2FA').checked = data.enforce_2fa === 'true';
       const radiusDebugToggle=document.getElementById('radiusDebug'); if (radiusDebugToggle) radiusDebugToggle.checked = data.radius_debug === 'true';
       const apiDebugToggle=document.getElementById('apiDebug'); if (apiDebugToggle) apiDebugToggle.checked = data.api_debug === 'true';
-      if (data.ui_theme) document.getElementById('uiTheme').value = data.ui_theme;
+      if (window.RSTheme?.valid(data.ui_theme)) document.getElementById('uiTheme').value = data.ui_theme;
+      window.RSTheme?.preview(document.getElementById('uiTheme'), document.getElementById('uiThemePreview'));
       savedCustomAttributes = normalizeCustomReplyAttributes(data.custom_reply_attributes);
       renderSavedReplyAttributes();
       await loadReplyAttributeCatalogue();
@@ -889,12 +937,130 @@
     const scopedPayload = Object.fromEntries(Object.entries(payload).filter(([key]) => fieldsForScope().includes(key)));
     const res = await apiFetch('/api/settings', { method: 'POST', headers: settingsScopeHeaders(), body: JSON.stringify(scopedPayload) });
     if (res.ok) {
-      alert('Settings saved. UI Theme will apply on next reload.');
+      alert('Settings saved. Appearance changes apply after reload.');
       await loadSettings();
       window.location.reload();
     } else {
       const err = await res.json().catch(() => ({}));
       alert('Failed to save settings: ' + (err.error || res.statusText));
+    }
+  }
+
+  // Notifications have a dedicated API and are never included in generic settings POSTs.
+  const PUSHBULLET_TENANT_EVENTS = ['admin_new_public_ip', 'admin_failed_login', 'mac_auto_created', 'admin_password_changed'];
+  const PUSHBULLET_GLOBAL_EVENTS = ['container_restart', 'ha_disconnected', 'ha_reconnected'];
+  let pushbulletScope = null;
+  let pushbulletConfigured = false;
+  function pushbulletEventsForScope() {
+    return pushbulletScope === 'global'
+      ? [...PUSHBULLET_TENANT_EVENTS, ...PUSHBULLET_GLOBAL_EVENTS]
+      : [...PUSHBULLET_TENANT_EVENTS];
+  }
+  function pushbulletMessage(message, error = false) {
+    const status = document.getElementById('pushbulletStatus');
+    status.textContent = message;
+    status.className = 'text-sm ' + (error ? 'text-red-700' : 'text-green-700');
+  }
+  function resolvePushbulletScope() {
+    if (!window.radiusstackContext) return null;
+    const id = localStorage.getItem('activeTenantId');
+    if (id === 'global' || !window.multiTenantEnabled) return window.currentAdminSuper === true ? 'global' : null;
+    return id && id !== 'global' ? 'tenant' : null;
+  }
+  async function loadPushbulletSettings() {
+    const card = document.getElementById('pushbulletSettingsCard');
+    const save = document.getElementById('pushbulletSave');
+    const test = document.getElementById('pushbulletTest');
+    const debug = document.getElementById('pushbulletDebug');
+    const scope = resolvePushbulletScope();
+    pushbulletScope = scope;
+    card.hidden = !scope;
+    save.disabled = true;
+    test.disabled = true;
+    debug.hidden = true;
+    debug.textContent = '';
+    if (!scope) return;
+    PUSHBULLET_GLOBAL_EVENTS.forEach(name => {
+      const label = document.getElementById('pushbulletEvent_' + name).closest('label');
+      label.hidden = scope !== 'global';
+    });
+    document.getElementById('pushbulletApiKey').value = '';
+    document.getElementById('pushbulletRecipientEmail').value = '';
+    pushbulletMessage('');
+    try {
+      const res = await apiFetch('/api/notifications/config', { headers: settingsScopeHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Unable to load notification settings');
+      if (scope !== resolvePushbulletScope()) return;
+      document.getElementById('pushbulletEnabled').checked = data.enabled === true;
+      document.getElementById('pushbulletRecipientEmail').value = data.recipientEmail || '';
+      pushbulletConfigured = data.configured === true;
+      document.getElementById('pushbulletConfigured').textContent = pushbulletConfigured ? 'API key configured. Leave blank to keep it.' : 'No API key configured.';
+      pushbulletEventsForScope().forEach(name => {
+        document.getElementById('pushbulletEvent_' + name).checked = Array.isArray(data.events) && data.events.includes(name);
+      });
+      save.disabled = false;
+      test.disabled = false;
+    } catch (_) {
+      pushbulletMessage('Could not load notification settings. Please retry by reloading the page.', true);
+    }
+  }
+  async function savePushbulletSettings() {
+    const scope = resolvePushbulletScope();
+    const save = document.getElementById('pushbulletSave');
+    if (!scope || scope !== pushbulletScope || save.disabled) return;
+    const apiKeyInput = document.getElementById('pushbulletApiKey');
+    const apiKey = apiKeyInput.value.trim();
+    const events = pushbulletEventsForScope().filter(name =>
+      document.getElementById('pushbulletEvent_' + name).checked);
+    const recipient = document.getElementById('pushbulletRecipientEmail');
+    if (!recipient.checkValidity()) { pushbulletMessage('Enter a valid recipient email or leave it blank.', true); return; }
+    const payload = { enabled: document.getElementById('pushbulletEnabled').checked, events, recipientEmail: recipient.value.trim() };
+    if (apiKey) payload.apiKey = apiKey;
+    save.disabled = true;
+    pushbulletMessage('Saving...');
+    try {
+      const res = await apiFetch('/api/notifications/config', { method: 'PUT', headers: settingsScopeHeaders(), body: JSON.stringify(payload) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not save notification settings');
+      apiKeyInput.value = '';
+      pushbulletConfigured = !!apiKey || data.configured === true || pushbulletConfigured;
+      document.getElementById('pushbulletConfigured').textContent = pushbulletConfigured ? 'API key configured. Leave blank to keep it.' : 'No API key configured.';
+      pushbulletMessage('Notification settings saved.');
+    } catch (_) {
+      pushbulletMessage('Could not save notification settings. Check your connection and retry.', true);
+    } finally {
+      save.disabled = scope !== resolvePushbulletScope();
+    }
+  }
+
+  async function testPushbulletSettings() {
+    const scope = resolvePushbulletScope();
+    const test = document.getElementById('pushbulletTest');
+    const debug = document.getElementById('pushbulletDebug');
+    if (!scope || scope !== pushbulletScope || test.disabled) return;
+    test.disabled = true;
+    debug.hidden = false;
+    debug.textContent = 'Checking saved Pushbullet configuration...';
+    pushbulletMessage('Sending test message...');
+    try {
+      const res = await apiFetch('/api/notifications/test', { method: 'POST', headers: settingsScopeHeaders(), body: '{}' });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+      if (scope !== resolvePushbulletScope()) return;
+      const lines = [`Scope: ${scope}`, `Target: ${result.target === 'recipient_email' ? 'configured recipient email' : 'all devices on the API key account'}`];
+      for (const check of result.checks || []) {
+        lines.push(`${check.stage}: ${check.outcome}${check.httpStatus ? ` (HTTP ${check.httpStatus})` : ''}${check.durationMs !== undefined ? `, ${check.durationMs} ms` : ''}${check.providerCode ? `, provider code ${check.providerCode}` : ''}${check.transportCode ? `, network code ${check.transportCode}` : ''}${check.timeout ? ', timed out' : ''}${check.reason ? ` — ${check.reason}` : ''}`);
+        if (check.stage === 'authentication' && check.httpStatus === 401)
+          lines.push('Pushbullet rejected the saved API key. Replace the key in this scope, save, and test again.');
+      }
+      debug.textContent = lines.join('\n');
+      pushbulletMessage(result.ok ? 'Pushbullet accepted the test message. Check the target account/device.' : 'Test message failed. See diagnostic details below.', !result.ok);
+    } catch (error) {
+      debug.textContent = `RadiusStack test request failed: ${error.message}`;
+      pushbulletMessage('Unable to run test. See diagnostic details below.', true);
+    } finally {
+      test.disabled = scope !== resolvePushbulletScope();
     }
   }
 
@@ -1054,7 +1220,20 @@
   }
   // ─── INIT ─────────────────────────────────────────────────────────────────
   let settingsBootstrapStarted = false;
-  async function bootstrapSettings() { if (settingsBootstrapStarted || !window.radiusstackContext) return; settingsBootstrapStarted = true; try { resolveSettingsContext(); applySettingsScope(); await loadSettings(); } catch (err) { settingsBootstrapStarted = false; alert('Unable to load settings context: ' + err.message); } }
+  async function bootstrapSettings() {
+    if (settingsBootstrapStarted || !window.radiusstackContext) return;
+    settingsBootstrapStarted = true;
+    try {
+      resolveSettingsContext();
+      applySettingsScope();
+      window.RSTheme?.fillSelector(document.getElementById('uiTheme'));
+      document.getElementById('uiTheme').onchange = () => window.RSTheme?.preview(
+        document.getElementById('uiTheme'), document.getElementById('uiThemePreview'), 'blue', true
+      );
+      await loadSettings();
+      await loadPushbulletSettings();
+    } catch (err) { settingsBootstrapStarted = false; alert('Unable to load settings context: ' + err.message); }
+  }
   document.addEventListener('radiusstack:tenant-context-ready', bootstrapSettings, { once: true });
   window.addEventListener('load', bootstrapSettings, { once: true });
   loadHealth();
