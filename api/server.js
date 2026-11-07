@@ -23,6 +23,10 @@ const {validateReverseLogBatch,checkReverseLogOwnership} = require('./ha_reverse
 const { loadTenantScope } = require('./tenant');
 const { summarizeRequest } = require('./debug_request');
 const { createTenantMaintenanceWorkers } = require('./workers/tenantMaintenanceWorkers');
+const { createPushbulletService } = require('./pushbullet_notifications');
+const notificationConfig = require('./routes/notifications');
+const { publicClientIp, newPublicAdminIp } = require('./notification_events');
+const { createHaPeerHealth } = require('./ha_peer_health');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
 require('./workers/radiusStatsWorker');
 
@@ -74,6 +78,17 @@ const pool = mysql.createPool({
     dateStrings: true
 });
 const { getRadiusCredential, syncUserTotpToRadius, generateEnrollmentCode } = createTotpHelpers(pool, crypto, bcrypt);
+const pushbullet = createPushbulletService({pool, configLoader: tenantId => notificationConfig.loadConfig(pool, tenantId === null ? {enabled:false} : {enabled:true, tenantId})});
+function sendNotification(message) {
+    return pushbullet.send(message).catch(error => {
+        console.error('[Pushbullet] Notification delivery unavailable', JSON.stringify({
+            scope:message.tenantId == null ? 'global' : `tenant:${message.tenantId}`,
+            event:message.event,
+            httpStatus:error.httpStatus || null,
+            transportCode:error.transportCode || null
+        }));
+    });
+}
 
 let apiDebugEnabled = false;
 
@@ -123,6 +138,25 @@ function decryptHaPayload(body) {
 
 global.haRole = process.env.HA_ROLE || 'primary';
 global.haStats = { success: 0, failed: 0, lastSync: null };
+const haPeerHealth = createHaPeerHealth({
+    peerURL: path => haTransport.peerURL(path), encrypt: encryptHaPayload, decrypt: decryptHaPayload,
+    onTransition: ({from,to}) => {
+        if (global.haRole !== 'primary' || (from === 'unknown' && to === 'connected')) return;
+        const event = to === 'connected' ? 'ha_reconnected' : 'ha_disconnected';
+        void sendNotification({tenantId:null,event,title:`HA secondary ${to}`,body:`HA secondary peer ${haTransport.peer} is ${to}.`});
+    }
+});
+if (!haTransport.enabled) void haPeerHealth.probe({enabled:false});
+app.post('/api/sync/heartbeat', (req,res) => {
+    if (!haTransport.enabled) return res.status(403).json({error:'HA unavailable'});
+    try {
+        const payload = decryptHaPayload(req.body);
+        if (!Number.isSafeInteger(payload._ts) || Math.abs(Date.now()-payload._ts)>30000 ||
+            typeof payload.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(payload.nonce))
+            return res.status(400).json({error:'Invalid heartbeat'});
+        return res.json(encryptHaPayload({success:true,nonce:payload.nonce}));
+    } catch { return res.status(400).json({error:'Invalid heartbeat'}); }
+});
 
 app.use((req, res, next) => {
     if (process.env.HA_ENABLED === 'true' && global.haRole === 'secondary') {
@@ -337,6 +371,16 @@ async function syncRadiusTables() {
 if (haTransport.enabled) {
     setInterval(() => processHaQueue().catch(error => console.error('[HA Delivery]',error.message)), 2000);
     setInterval(syncRadiusTables, 5000);
+    if (global.haRole === 'primary') {
+        const checkPeer = async () => {
+            let paused = false;
+            try { paused = (await haPause.status()).paused === true; }
+            catch { return; }
+            await haPeerHealth.probe({enabled:true,paused});
+        };
+        setInterval(() => checkPeer().catch(() => console.error('[HA Peer] Probe unavailable')), 5000);
+        setTimeout(() => checkPeer().catch(() => console.error('[HA Peer] Probe unavailable')), 1000);
+    }
 }
 
 function requireHaAdmin(level) {
@@ -368,6 +412,7 @@ app.get('/api/ha/status', requireHaAdmin('read-only'), async (req, res) => {
         pause,
         reconcile,
         stats: global.haStats,
+        peerHealth: haPeerHealth.status(),
         certificateSync: reconcileHaCertificates.status
     });
     } catch(error) { console.error('[HA Status]',error.message);res.status(503).json({error:'HA state unavailable'}); }
@@ -749,21 +794,43 @@ async function initDb() {
 initDb();
 
 const { resolveLoginAuditScope } = require('./routes/auth_self');
+const trustedLoginProxies = (process.env.TRUSTED_LOGIN_PROXY_IPS || '').split(',').map(ip => ip.trim()).filter(Boolean);
+async function loginNotificationTenant(admin, scope) {
+    if (Number(admin.is_super_admin) === 1) return null;
+    if (scope?.enabled) return Number(scope.tenantId);
+    const [[setting]] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'multi_tenant_enabled'");
+    return ['true','1'].includes(String(setting?.setting_value).toLowerCase()) ? undefined : null;
+}
+function notifyLogin(tenantId, event, username, ip) {
+    if (tenantId === undefined) return; // Multi-tenant administrator with ambiguous ownership.
+    void sendNotification({tenantId,event,title:event === 'admin_failed_login' ? 'Failed administrator login' : 'Administrator login from a new public IP',body:`Administrator ${username} from ${ip || 'unknown address'}.`});
+}
+async function notifyNewLoginIfNeeded(req, admin, scope, ip) {
+    const publicIp = publicClientIp(req, trustedLoginProxies);
+    if (!publicIp) return;
+    try {
+        const tenantId = await loginNotificationTenant(admin, scope);
+        if (tenantId !== undefined && await newPublicAdminIp(pool, admin.username, publicIp))
+            notifyLogin(tenantId, 'admin_new_public_ip', admin.username, publicIp);
+    } catch { console.error('[Pushbullet] New-IP check unavailable'); }
+}
 app.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
-    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    const ip = publicClientIp(req, trustedLoginProxies) || req.connection.remoteAddress;
 
     const [admins] = await pool.query('SELECT * FROM admins WHERE username = ?', [username]);
     const admin = admins[0];
 
     if (!admin) {
         await auditLog(username, 'webui', 'Login attempt', 'failed', 'User not found', ip);
+        notifyLogin(null,'admin_failed_login',username,publicClientIp(req,trustedLoginProxies) || ip);
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const loginAuditScope = await resolveLoginAuditScope(pool, admin);
     if (!(await bcrypt.compare(password, admin.password_hash))) {
         await auditLog(username, 'webui', 'Login attempt', 'failed', 'Invalid password', ip, loginAuditScope);
+        notifyLogin(await loginNotificationTenant(admin,loginAuditScope),'admin_failed_login',username,publicClientIp(req,trustedLoginProxies) || ip);
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -784,6 +851,7 @@ app.post('/auth/login', async (req, res) => {
     if (admin.two_factor_enabled && admin.two_factor_setup_complete)
         return res.json({ status: 'needs_2fa_verify', token: jwt.sign({ ...payload, step: '2fa_verify' }, JWT_SECRET, { expiresIn: '15m' }) });
 
+    await notifyNewLoginIfNeeded(req, admin, loginAuditScope, ip);
     await auditLog(username, 'webui', 'Login completed', 'success', 'Granted API key', ip, loginAuditScope);
     await pool.query('UPDATE admins SET last_login_at = NOW(6) WHERE id = ?', [admin.id]);
     res.json({ status: 'success', api_key: admin.api_key });
@@ -791,7 +859,7 @@ app.post('/auth/login', async (req, res) => {
 
 app.post('/auth/verify-2fa', async (req, res) => {
     const { token, code } = req.body;
-    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    const ip = publicClientIp(req, trustedLoginProxies) || req.connection.remoteAddress;
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         const [admins] = await pool.query('SELECT * FROM admins WHERE id = ?', [decoded.id]);
@@ -800,6 +868,7 @@ app.post('/auth/verify-2fa', async (req, res) => {
         const loginAuditScope = await resolveLoginAuditScope(pool, admin);
         if (!authenticator.check(code, admin.two_factor_secret)) {
             await auditLog(admin.username, 'webui', '2FA verification', 'failed', 'Invalid TOTP code', ip, loginAuditScope);
+            notifyLogin(await loginNotificationTenant(admin,loginAuditScope),'admin_failed_login',admin.username,publicClientIp(req,trustedLoginProxies) || ip);
             return res.status(401).json({ error: 'Invalid Code' });
         }
 
@@ -808,6 +877,8 @@ app.post('/auth/verify-2fa', async (req, res) => {
         if (decoded.step === '2fa_setup')
             await pool.query('UPDATE admins SET two_factor_setup_complete = true WHERE id = ?', [admin.id]);
 
+        await notifyNewLoginIfNeeded(req, admin, loginAuditScope, ip);
+        await auditLog(admin.username, 'webui', 'Login completed', 'success', 'Granted API key', ip, loginAuditScope);
         await pool.query('UPDATE admins SET last_login_at = NOW(6) WHERE id = ?', [admin.id]);
         res.json({ status: 'success', api_key: admin.api_key });
     } catch (err) {
@@ -828,6 +899,10 @@ app.post('/auth/change-pwd', async (req, res) => {
         const admin = admins[0];
 
         await auditLog(admin.username, 'webui', 'Password changed', 'success', 'Forced password change completed', ip, await resolveLoginAuditScope(pool, admin));
+        void Promise.resolve().then(async () => {
+            const tenantId = await loginNotificationTenant(admin, await resolveLoginAuditScope(pool,admin));
+            if (tenantId !== undefined) await sendNotification({tenantId,event:'admin_password_changed',title:'Administrator password changed',body:`Administrator ${admin.username} changed their password.`});
+        }).catch(() => console.error('[Pushbullet] Password-change notification unavailable'));
 
         if (admin.two_factor_enabled && !admin.two_factor_setup_complete) {
             const secret = authenticator.generateSecret();
@@ -883,8 +958,8 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
         req.tenantScope = { enabled: false, tenantId: null, superAdmin: Number(admin.is_super_admin) === 1 };
     } else {
         try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); } catch (err) { return res.status(403).json({ error: err.message }); }
-        const platformControls = ['/api/admins', '/api/settings', '/api/radius/stats', '/api/auth/self', '/api/system', '/api/certs'];
-        const globalOperationalGetRoutes = new Set(['/api/reports/dashboard-overview', '/api/reports/live-stats', '/api/reports/dashboard-stats', '/api/reports/failed-auth', '/api/logs/auth', '/api/accounting', '/api/audit']);
+        const platformControls = ['/api/admins', '/api/settings', '/api/notifications', '/api/radius/stats', '/api/auth/self', '/api/system', '/api/certs'];
+        const globalOperationalGetRoutes = new Set(['/api/reports/dashboard-overview', '/api/reports/live-stats', '/api/reports/dashboard-stats', '/api/reports/failed-auth', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions/active', '/api/sessions/stale', '/api/sessions/nas-options']);
         const isOperationalPath = ['/api/reports', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions'].some(prefix => req.path.startsWith(prefix));
         if (req.tenantScope.globalContext && !tenantMfaPath && ((!isOperationalPath && !platformControls.some(prefix => req.path.startsWith(prefix))) || (isOperationalPath && (req.method !== 'GET' || !globalOperationalGetRoutes.has(req.path))))) {
             return res.status(403).json({ error: 'Global context is limited to platform controls; select a tenant for operational data' });
@@ -912,9 +987,10 @@ const routeDependencies = {
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
     signTotpEnrollmentToken, verifyTotpEnrollmentToken,
-    apiDebugLog, setApiDebugMode, requireGlobalSuperAdmin
+    apiDebugLog, setApiDebugMode, requireGlobalSuperAdmin, notify: sendNotification
 };
 require('./routes')(app, pool, requireApiAuth, auditLog, routeDependencies);
+require('./routes/notifications')(app, pool, requireApiAuth, auditLog, {diagnose: options => pushbullet.diagnose(options)});
 require('./routes/tenants')(app, pool, requireApiAuth, auditLog, routeDependencies);
 require('./routes/downstream_proxy')(app, pool, requireApiAuth, auditLog, require('./radius_activation'));
 require('./radsec').registerTenantRadsecRoutes(app, pool, requireApiAuth, auditLog);
@@ -1102,7 +1178,7 @@ app.listen(3000, '0.0.0.0', () => {
 });
 
 
-const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog });
+const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog, notify: sendNotification });
 setInterval(() => maintenanceWorkers.processAutoCreateMacs(), 1000);
 
 const planPodEnforcementWorker = createPlanPodEnforcementWorker({ pool });

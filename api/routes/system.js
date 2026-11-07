@@ -22,10 +22,12 @@ app.get('/api/system/status', requireApiAuth('settings', 'read-only'), requireGl
     });
 });
 
-app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, (req, res) => {
+app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, async (req, res) => {
     const { container } = req.params;
-    if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
+    if (!/^radius_[a-z0-9_-]+$/.test(container)) return res.status(403).json({ error: 'Invalid container' });
 
+    // Notify before execution, since restarting the API stops this process.
+    await dependencies.notify?.({tenantId:null,event:'container_restart',title:'Manual container restart requested',body:`${req.admin.username} requested a restart of ${container} from ${req.ip}.`});
     exec(`docker restart ${container}`, async (error) => {
         if (error) {
             await auditLog(req.admin.username, req.origin, `Restart container ${container}`, 'failed', error.message, req.ip);
@@ -38,7 +40,7 @@ app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-writ
 
 app.get('/api/system/logs/:container', requireApiAuth('settings', 'read-only'), requireGlobalSuperAdmin, (req, res) => {
     const { container } = req.params;
-    if (!container.startsWith('radius_')) return res.status(403).json({ error: 'Invalid container' });
+    if (!/^radius_[a-z0-9_-]+$/.test(container)) return res.status(403).json({ error: 'Invalid container' });
 
     exec(`docker logs --tail 200 ${container}`, (error, stdout, stderr) => {
         res.json({ logs: stdout + stderr });

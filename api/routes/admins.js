@@ -1,4 +1,5 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
+    const { isTheme } = require('../theme_catalog');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
 
     // Profile preferences are keyed to the authenticated administrator, not the active tenant.
@@ -16,7 +17,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
                 const [settings] = await pool.query("SELECT setting_value FROM settings WHERE setting_key = 'ui_theme'");
                 const platformTheme = settings[0]?.setting_value;
                 res.json({ username: admin.username, ui_theme: admin.ui_theme,
-                    platform_ui_theme: ['blue', 'red', 'green', 'purple', 'gray'].includes(platformTheme) ? platformTheme : 'blue' });
+                    platform_ui_theme: isTheme(platformTheme) ? platformTheme : 'blue' });
             }
         } catch (_) { res.status(500).json({ error: 'Unable to load profile theme' }); }
     });
@@ -25,7 +26,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const admin = await ownProfile(req, res);
             if (!admin) return;
             const color = req.body && req.body.ui_theme;
-            if (color !== null && !['blue', 'red', 'green', 'purple', 'gray'].includes(color)) return res.status(400).json({ error: 'Invalid theme' });
+            if (color !== null && !isTheme(color)) return res.status(400).json({ error: 'Invalid theme' });
             await pool.query('UPDATE admins SET ui_theme = ? WHERE id = ?', [color, admin.id]);
             res.json({ username: admin.username, ui_theme: color });
         } catch (_) { res.status(500).json({ error: 'Unable to save profile theme' }); }

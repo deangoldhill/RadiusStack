@@ -19,10 +19,10 @@ app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (re
         if (s.setting_key === 'stale_session_interim_threshold_minutes') interimThresholdMinutes = parseInt(s.setting_value, 10) || 180;
     });
 
-    const scoped = scope(req.tenantScope, 'tenant_id');
+    const scoped = reportScope(req, 'a.tenant_id');
     const query = `
         SELECT
-            radacctid,
+            a.radacctid, a.tenant_id, COALESCE(t.name,'Unassigned') AS tenant_name,
             username,
             nasipaddress,
             framedipaddress,
@@ -36,8 +36,8 @@ app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (re
                 WHEN acctupdatetime IS NULL OR TIMESTAMPDIFF(SECOND, acctstarttime, acctupdatetime) <= 10 THEN 'start-only'
                 ELSE 'interim-stale'
             END AS stale_reason
-        FROM radacct
-        WHERE acctstoptime IS NULL${scoped.sql}
+        FROM radacct a LEFT JOIN tenants t ON t.id=a.tenant_id
+        WHERE a.acctstoptime IS NULL${scoped.sql}
           AND (
                 (
                     acctstarttime <= DATE_SUB(NOW(), INTERVAL ? DAY)
@@ -69,15 +69,21 @@ app.post('/api/sessions/clear', requireApiAuth('reports', 'read-write'), async (
     await auditLog(req.admin.username, req.origin, `Cleared ${sessionIds.length} stale sessions`, 'success', '', req.ip, req.tenantScope);
     res.json({ success: true });
 });
+app.get('/api/sessions/nas-options', requireApiAuth('reports', 'read-only'), async (req, res) => {
+    const scoped = reportScope(req, 'a.tenant_id');
+    const [rows] = await pool.query(`SELECT DISTINCT a.nasipaddress FROM radacct a WHERE a.acctstoptime IS NULL AND a.nasipaddress IS NOT NULL${scoped.sql} ORDER BY a.nasipaddress`, scoped.params);
+    res.json(rows.map(row => row.nasipaddress));
+});
 app.get('/api/sessions/active', requireApiAuth('reports', 'read-only'), async (req, res) => {
     const { username, nasip, callingstationid, framedip } = req.query; const paginated=req.query.page !== undefined;
     const page=Math.max(1,parseInt(req.query.page,10)||1); const pageSize=[25,50,100].includes(parseInt(req.query.page_size,10))?parseInt(req.query.page_size,10):25;
-    const scoped = scope(req.tenantScope, 'a.tenant_id');
+    const scoped = reportScope(req, 'a.tenant_id');
     const conditions=['a.acctstoptime IS NULL' + scoped.sql], params=[...scoped.params];
     if(username){conditions.push('(a.username LIKE ? OR m.mac_id LIKE ?)');params.push('%'+username+'%','%'+username+'%');} if(nasip){conditions.push('a.nasipaddress = ?');params.push(nasip);} if(callingstationid){conditions.push('a.callingstationid LIKE ?');params.push('%'+callingstationid+'%');} if(framedip){conditions.push('a.framedipaddress LIKE ?');params.push('%'+framedip+'%');}
-    const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username WHERE '+conditions.join(' AND ');
-    if(!paginated){const limit=Math.min(parseInt(req.query.limit,10)||200,1000);const [rows]=await pool.query('SELECT a.*,COALESCE(m.mac_id,a.username) AS username'+from+' ORDER BY a.acctstarttime DESC LIMIT ?',[...params,limit]);return res.json(rows);}
-    const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query('SELECT a.*,COALESCE(m.mac_id,a.username) AS username'+from+' ORDER BY a.acctstarttime DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
+    const from=' FROM radacct a LEFT JOIN mac_auth_devices m ON m.mac_address=a.username AND m.tenant_id <=> a.tenant_id LEFT JOIN tenants t ON t.id=a.tenant_id WHERE '+conditions.join(' AND ');
+    const select="SELECT a.*,COALESCE(m.mac_id,a.username) AS username,COALESCE(t.name,'Unassigned') AS tenant_name";
+    if(!paginated){const limit=Math.min(parseInt(req.query.limit,10)||200,1000);const [rows]=await pool.query(select+from+' ORDER BY a.acctstarttime DESC LIMIT ?',[...params,limit]);return res.json(rows);}
+    const [[count]]=await pool.query('SELECT COUNT(*) AS total'+from,params);const total=Number(count.total),safePage=Math.min(page,Math.max(1,Math.ceil(total/pageSize)));const [rows]=await pool.query(select+from+' ORDER BY a.acctstarttime DESC LIMIT ? OFFSET ?',[...params,pageSize,(safePage-1)*pageSize]);res.json({items:rows,total,page:safePage,pageSize,totalPages:Math.max(1,Math.ceil(total/pageSize))});
 });
 
 app.post('/api/sessions/:sessionId/dynamic-auth', requireApiAuth('reports', 'read-write'), async (req, res) => {

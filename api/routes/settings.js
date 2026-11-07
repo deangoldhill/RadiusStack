@@ -11,9 +11,10 @@ const GLOBAL_SETTING_KEYS = new Set([
   'syslog_enabled', 'syslog_host', 'syslog_port', 'syslog_protocol', 'syslog_send_audit', 'syslog_send_authlogs'
 ]);
 
-function asMap(rows) { return rows.reduce((result, row) => ({ ...result, [row.setting_key]: row.setting_value }), {}); }
+function asMap(rows) { return rows.filter(row => row.setting_key !== 'pushbullet_api_key').reduce((result, row) => ({ ...result, [row.setting_key]: row.setting_value }), {}); }
 function truthy(value) { return ['true', '1', true, 1].includes(value); }
 const { STANDARD_REPLY_ATTRIBUTES, normalizeCustomReplyAttributes } = require('../custom_attributes');
+const { isTheme } = require('../theme_catalog');
 
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
   const syslog = require('../utils/syslog');
@@ -40,6 +41,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
   app.post('/api/settings', requireApiAuth('settings', 'read-write'), async (req, res) => {
     try {
       const entries = Object.entries(req.body || {}).filter(([, value]) => value !== undefined);
+      if (entries.some(([key, value]) => key === 'ui_theme' && !isTheme(value))) return res.status(400).json({ error: 'Invalid theme' });
       if (entries.some(([key]) => key === 'multi_tenant_enabled') && Number(req.admin.is_super_admin) === 1) req.tenantScope = { enabled: false, globalContext: true, superAdmin: true };
       const customEntry = entries.find(([key]) => key === 'custom_reply_attributes');
       if (customEntry) {

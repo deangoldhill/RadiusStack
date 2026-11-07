@@ -56,6 +56,12 @@ app.put('/api/auth/me/password', async (req, res) => {
     await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [hash, admin.id]);
 
     await auditLog(admin.username, 'webui', 'Changed their own password', 'success', '', req.ip || '');
+    // Notification failure must not undo or delay a successful password change.
+    if (typeof dependencies.notify === 'function') void Promise.resolve().then(async () => {
+        const scope = await resolveLoginAuditScope(pool, admin);
+        const tenantId = Number(admin.is_super_admin) === 1 ? null : scope?.enabled ? scope.tenantId : undefined;
+        if (tenantId !== undefined) await dependencies.notify({tenantId, event:'admin_password_changed',title:'Administrator password changed',body:`Administrator ${admin.username} changed their password.`});
+    }).catch(() => console.error('[Pushbullet] Password-change notification unavailable'));
     res.json({ success: true });
 });
 

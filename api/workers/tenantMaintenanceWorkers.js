@@ -42,7 +42,7 @@ async function loadScopes(pool) {
   return [...scopes.values()];
 }
 
-function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}, logger = console, now = () => Date.now() }) {
+function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}, notify = () => {}, logger = console, now = () => Date.now() }) {
   const lastAutoCreateRuns = new Map();
   const lastStaleSessionRuns = new Map();
 
@@ -92,6 +92,7 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
             }
             await conn.commit();
             logger.log(`[MAC Auto-Create Worker] Registered new MAC for ${multiTenant ? `tenant ${tenantId}` : 'global'}: ${macAddress}`);
+            Promise.resolve().then(() => notify({tenantId, event:'mac_auto_created', title:'New MAC device registered', body:`MAC ${macAddress} was auto-created${multiTenant ? ` for tenant ${tenantId}` : ''}.`})).catch(() => logger.error('[MAC Auto-Create Worker] Notification unavailable'));
           } catch (error) {
             await conn.rollback();
             logger.error(`[MAC Auto-Create Worker] Error registering MAC for ${multiTenant ? `tenant ${tenantId}` : 'global'}:`, error);
