@@ -1,10 +1,15 @@
 # RadiusStack
 
-RadiusStack is a self-hosted RADIUS platform for Wi-Fi, VPN, and network access. It brings FreeRADIUS, MariaDB, a REST API, and a web dashboard together in Docker Compose.
+RadiusStack is a full stack containerized Radius platform built on FreeRadius focussed on ease of use with a wide range is use cases.<br/>
+Useful for network access control, permission assignment, network visibility and volume tracking & enforcment.<br/>
+Manage WIFI network access, Dot1X authentication, VPN authenitcation and many other authentication use cases.<br/>
+It includes advanced Radius features such as EAP tunneled authentication protocol (WPA-Enterprise), RadSec (Radius over TLS) and Multi-factor authentication.<br/>
+A highly secure NodeJS API server at the core with a modern WebUI.<br/>
+High-availability with 2-way sessions sync, Multi-tenancy and granular role based access control.
 
 ## Features
 
-- Manage users, MAC devices, NAS clients, profiles, and usage plans in the web UI.
+- Manage users, MAC Auth devices, NAS clients, profiles, and usage plans in the web UI.
 - Monitor live sessions, authentication and accounting logs, reports, and administrator activity.
 - Use administrator and user TOTP, RadSec, certificates, backups, and API integrations.
 - Organize customers with tenant isolation; high availability is available for multi-server setups.
