@@ -18,8 +18,9 @@ RadiusStack is a self-hosted RADIUS platform for Wi-Fi, VPN, and network access.
    cd RadiusStack
    cp .env.example .env
    ```
+You can either run the interactive 'setup_env.sh' script which will guide you through and generate strong random keys and passwords, or you can manually edit the .env file. Using the script is highly recommended to ensure strong security.
 
-2. Edit `.env`: **change `DB_ROOT_PASSWORD`, `DB_PASSWORD`, `JWT_SECRET`, and `RADSEC_PASSPHRASE_ENCRYPTION_KEY`** from their public defaults. Set `RADSEC_SERVER_DNS` to the hostname your RadSec clients will use. Change published ports if they conflict with other services; leave `HA_ENABLED=false` for a single server.
+2. Edit `.env`: **change `DB_ROOT_PASSWORD`, `DB_PASSWORD`, `JWT_SECRET`, and `RADSEC_PASSPHRASE_ENCRYPTION_KEY`** from their public defaults. You can change published ports if they conflict with other services, this will change the docker port mappings.
 3. Start the stack:
 
    ```sh
