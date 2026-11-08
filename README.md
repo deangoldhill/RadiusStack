@@ -9,14 +9,15 @@ High-availability with 2-way sessions sync, Multi-tenancy and granular role base
 
 ## Features
 
-- Manage users, MAC Auth devices, NAS clients, profiles, and usage plans in the web UI.
-- Monitor live sessions, authentication and accounting logs, reports, and administrator activity.
-- Use administrator and user TOTP, RadSec, certificates, backups, and API integrations.
-- Organize customers with tenant isolation; high availability is available for multi-server setups.
+- Advanced security features - RadSec (Radius over TLS), EAP, MFA (TOTP).
+- Policy enforcment - assign profiles with NAS restrictions, reply attributes, Usage limits and dynamic authorisation. Change of Authorisation (COA), packet of disconnect (POD).
+- Visibility - Monitor active sessions, authentication and accounting logs, reports, and administrator activity.
+- Granular administration - Multi-tenancy, role based access control, API integration.
+- Operational effeciency - High-availability, debug logging, Syslog/SIEM, notifications.
 
 ## Install
 
-1. On a host with Git, Docker, and Docker Compose v2, clone the repository:
+1. On a host with Git, Docker, and Docker Compose, clone the repository:
 
    ```sh
    git clone https://github.com/deangoldhill/RadiusStack.git
