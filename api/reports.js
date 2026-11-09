@@ -1,6 +1,6 @@
 const { scope } = require('../tenant');
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
 
 
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
@@ -316,80 +316,6 @@ app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), asyn
     const [details] = await pool.query("SELECT p.*, COALESCE(m.mac_id, p.username) AS username FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' ORDER BY p.authdate DESC LIMIT 500");
     const [summary] = await pool.query("SELECT COALESCE(m.mac_id, p.username) AS username, COUNT(*) as fail_count FROM radpostauth p LEFT JOIN mac_auth_devices m ON m.mac_address = p.username WHERE p.reply = 'Access-Reject' GROUP BY COALESCE(m.mac_id, p.username) ORDER BY fail_count DESC");
     res.json({ details, summary });
-});
-
-app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const { username } = req.params;
-    const reportRes = await fetch(`http://localhost:3000/api/reports/user/${username}`, {
-        headers: { 'X-API-Key': req.admin.api_key, 'X-Tenant-ID': req.header('X-Tenant-ID') }
-    });
-    const data = await reportRes.json();
-
-    const html = `
-        <html><head><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ccc;padding:8px;text-align:left;} th{background:#f4f4f4;} h1,h2{color:#333;}</style></head>
-        <body>
-            <h1>Executive Report: ${data.username}</h1>
-            <h2>Summary</h2>
-            <table>
-                <tr><th>Total Sessions</th><th>Total Upload (bytes)</th><th>Total Download (bytes)</th><th>Total Time (sec)</th></tr>
-                <tr><td>${data.stats.total_sessions}</td><td>${data.stats.total_input || 0}</td><td>${data.stats.total_output || 0}</td><td>${data.stats.total_time || 0}</td></tr>
-            </table>
-            <h2>Recent Accounting</h2>
-            <table>
-                <tr><th>Session ID</th><th>NAS IP</th><th>Start</th><th>Stop</th><th>Duration</th></tr>
-                ${data.accounting.slice(0, 20).map(a => `<tr><td>${a.acctsessionid}</td><td>${a.nasipaddress}</td><td>${a.acctstarttime || 'N/A'}</td><td>${a.acctstoptime || 'Active'}</td><td>${a.acctsessiontime || 0}s</td></tr>`).join('')}
-            </table>
-            <h2>Recent Authentications</h2>
-            <table>
-                <tr><th>Date</th><th>Reply</th><th>Class</th></tr>
-                ${data.postauth.slice(0, 20).map(p => `<tr><td>${p.authdate}</td><td>${p.reply}</td><td>${p.class}</td></tr>`).join('')}
-            </table>
-        </body></html>
-    `;
-
-    const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium-browser', args: ['--no-sandbox'] });
-    const page = await browser.newPage();
-    await page.setContent(html);
-    const pdf = await page.pdf({ format: 'A4' });
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Report_${username}.pdf`);
-    res.send(pdf);
-});
-
-app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const reportRes = await fetch(`http://localhost:3000/api/reports/failed-auth`, {
-        headers: { 'X-API-Key': req.admin.api_key, 'X-Tenant-ID': req.header('X-Tenant-ID') }
-    });
-    const data = await reportRes.json();
-
-    const html = `
-        <html><head><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ccc;padding:8px;text-align:left;} th{background:#f4f4f4;} h1,h2{color:#333;}</style></head>
-        <body>
-            <h1>Failed Authentication Report</h1>
-            <h2>Most Failures</h2>
-            <table>
-                <tr><th>Username</th><th>Failed Attempts</th></tr>
-                ${data.summary.slice(0, 20).map(s => `<tr><td>${s.username}</td><td>${s.fail_count}</td></tr>`).join('')}
-            </table>
-            <h2>Recent Failures</h2>
-            <table>
-                <tr><th>Username</th><th>Date/Time</th><th>Class</th></tr>
-                ${data.details.slice(0, 50).map(d => `<tr><td>${d.username}</td><td>${d.authdate}</td><td>${d.class}</td></tr>`).join('')}
-            </table>
-        </body></html>
-    `;
-
-    const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium-browser', args: ['--no-sandbox'] });
-    const page = await browser.newPage();
-    await page.setContent(html);
-    const pdf = await page.pdf({ format: 'A4' });
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=FailedAuthReport.pdf`);
-    res.send(pdf);
 });
 
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {

@@ -26,6 +26,12 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     async function userNotFound(db, username, tenantScope) {
         return !(await userExists(db, { tenantScope }, username));
     }
+    async function setDisabled(conn, req, username, disabled) {
+        if (typeof disabled !== 'boolean') throw new Error('disabled must be a boolean');
+        const scoped = userScope(req);
+        await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type' AND op = ':=' AND value = 'Reject'" + scoped.sql, [username, ...scoped.params]);
+        if (disabled) await conn.query("INSERT INTO radcheck (username, attribute, op, value, tenant_id) VALUES (?, 'Auth-Type', ':=', 'Reject', ?)", [username, selectedTenantId(req)]);
+    }
 
     app.get('/api/users', requireApiAuth('users', 'read-only'), async (req, res) => {
         const paginated = req.query.page !== undefined;
@@ -49,7 +55,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const joins = `FROM radcheck c LEFT JOIN mac_auth_devices m ON c.username = m.mac_address AND m.tenant_id <=> c.tenant_id LEFT JOIN radusergroup u ON c.username = u.username${req.tenantScope.enabled ? ' AND u.tenant_id = ?' : ''} LEFT JOIN user_plans up ON c.username = up.username${req.tenantScope.enabled ? ' AND up.tenant_id = ?' : ''} LEFT JOIN plans p ON up.plan_id = p.id LEFT JOIN user_totp ut ON c.username = ut.username${req.tenantScope.enabled ? ' AND ut.tenant_id = ?' : ''} LEFT JOIN radreply sr ON sr.username = c.username AND sr.attribute = 'Framed-IP-Address'${req.tenantScope.enabled ? ' AND sr.tenant_id = ?' : ''}`;
         const clause = `WHERE ${where.join(' AND ')}${scoped.sql}`;
         const params = [...tenantJoinParams, ...values, ...scoped.params];
-        const fields = `c.username, c.value AS password, u.groupname AS profile, up.plan_id, p.name AS plan_name, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id) AS last_online, COALESCE(ut.enabled, 0) AS totp_enabled, CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered, sr.value AS static_ip`;
+        const fields = `c.username, c.value AS password, u.groupname AS profile, up.plan_id, p.name AS plan_name, EXISTS(SELECT 1 FROM radcheck disabled_check WHERE disabled_check.username = c.username AND disabled_check.tenant_id <=> c.tenant_id AND disabled_check.attribute = 'Auth-Type' AND disabled_check.op = ':=' AND disabled_check.value = 'Reject') AS disabled, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = c.username AND a.tenant_id <=> c.tenant_id) AS last_online, COALESCE(ut.enabled, 0) AS totp_enabled, CASE WHEN ut.secret IS NOT NULL THEN 1 ELSE 0 END AS totp_registered, sr.value AS static_ip`;
         if (!paginated) { const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause}`, params); return res.json(rows); }
         const [[count]] = await pool.query(`SELECT COUNT(*) AS total ${joins} ${clause}`, params);
         const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY ${sort} ${order}, c.username ASC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
@@ -64,6 +70,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const [existing] = await conn.query('SELECT 1 FROM radcheck WHERE username = ? LIMIT 1', [username]);
             if (existing.length) throw new Error('Username already exists');
             await conn.query('INSERT INTO radcheck (username, attribute, op, value, tenant_id) VALUES (?, "Cleartext-Password", ":=", ?, ?)', [username, password, tenantId]);
+            if (req.body.disabled !== undefined) await setDisabled(conn, req, username, req.body.disabled);
             if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority, tenant_id) VALUES (?, ?, 1, ?)', [username, profile, tenantId]);
             await replaceStaticIpv4(conn, req, username, staticIp);
             if (plan_id) { await conn.query('INSERT INTO user_plans (username, plan_id, manual_reset_date, tenant_id) VALUES (?, ?, NOW(), ?)', [username, parseInt(plan_id, 10), tenantId]); await snapshotUserPlanUsage(conn, username, tenantId); }
@@ -98,6 +105,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const { username } = req.params; const { password, profile, plan_id, totp_enabled } = req.body; const staticIp = req.body.static_ip === undefined ? undefined : validateStaticIpv4(req.body.static_ip); const tenantId = selectedTenantId(req); const scoped = userScope(req); const conn = await pool.getConnection();
         try {
             await conn.beginTransaction(); if (!await userExists(conn, req, username)) { await conn.rollback(); return missingUser(res); }
+            if (req.body.disabled !== undefined) await setDisabled(conn, req, username, req.body.disabled);
             if (password && password.trim()) await conn.query("UPDATE radcheck SET value = ? WHERE username = ? AND attribute = 'Cleartext-Password'" + scoped.sql, [password, username, ...scoped.params]);
             if (profile !== undefined) { await conn.query('DELETE FROM radusergroup WHERE username = ?' + scoped.sql, [username, ...scoped.params]); if (profile) await conn.query('INSERT INTO radusergroup (username, groupname, priority, tenant_id) VALUES (?, ?, 1, ?)', [username, profile, tenantId]); }
             if (plan_id !== undefined) { await conn.query('DELETE FROM user_plans WHERE username = ?' + scoped.sql, [username, ...scoped.params]); await conn.query('DELETE FROM user_plan_usage WHERE username = ?' + scoped.sql, [username, ...scoped.params]); if (plan_id) { await conn.query('INSERT INTO user_plans (username, plan_id, manual_reset_date, tenant_id) VALUES (?, ?, NOW(), ?)', [username, parseInt(plan_id, 10), tenantId]); await snapshotUserPlanUsage(conn, username, tenantId); } }

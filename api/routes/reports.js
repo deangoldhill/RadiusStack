@@ -5,7 +5,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         return req.tenantScope.enabled ? scope(req.tenantScope, column) : { sql: '', params: [] };
     }
     const { buildDynamicAuthorizationRequest, sendDynamicAuthorization } = require('../dynamic_auth');
-    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, puppeteer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
+    const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, signTotpEnrollmentToken, verifyTotpEnrollmentToken } = dependencies;
 
 
 app.get('/api/sessions/stale', requireApiAuth('reports', 'read-only'), async (req, res) => {
@@ -448,89 +448,6 @@ app.get('/api/reports/failed-auth', requireApiAuth('reports', 'read-only'), asyn
     const [details] = await pool.query(`SELECT p.*, COALESCE(m.mac_id,p.username) AS username${from} ORDER BY p.authdate DESC LIMIT 500`, pScope.params);
     const [summary] = await pool.query(`SELECT COALESCE(m.mac_id,p.username) AS username, COUNT(*) AS fail_count${from} GROUP BY COALESCE(m.mac_id,p.username) ORDER BY fail_count DESC`, pScope.params);
     res.json({ details, summary });
-});
-
-app.post('/api/reports/pdf/user/:username', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const { username } = req.params;
-    const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-    const reportRes = await fetch(`http://localhost:3000/api/reports/user/${encodeURIComponent(username)}`, {
-        headers: { 'X-API-Key': req.admin.api_key, ...(req.tenantScope.enabled ? { 'X-Tenant-ID': String(req.tenantScope.tenantId) } : {}) }
-    });
-    if (!reportRes.ok) return res.status(reportRes.status || 502).json({ error: 'Executive report unavailable in selected tenant' });
-    const data = await reportRes.json();
-    const allocation = data.planUsage;
-    const allocationHtml = allocation ? `<h2>Current allocation cycle</h2>
-      <p>Plan: ${escapeHtml(allocation.plan_name)}. Cycle usage is independent of the report date range.</p>
-      <table><tr><th>Allowance</th><th>Used</th><th>Limit</th><th>Remaining</th><th>Status</th></tr>
-      <tr><td>Data (bytes)</td><td>${Number(allocation.data_used_bytes) || 0}</td><td>${Number(allocation.data_limit_bytes) > 0 ? Number(allocation.data_limit_bytes) : 'Unlimited'}</td><td>${Number(allocation.data_limit_bytes) > 0 ? Math.max(0, Number(allocation.data_limit_bytes) - Number(allocation.data_used_bytes || 0)) : 'Unlimited'}</td><td>${allocation.data_depleted ? 'Depleted' : 'Available'}</td></tr>
-      <tr><td>Time (seconds)</td><td>${Number(allocation.time_used_seconds) || 0}</td><td>${Number(allocation.time_limit_seconds) > 0 ? Number(allocation.time_limit_seconds) : 'Unlimited'}</td><td>${Number(allocation.time_limit_seconds) > 0 ? Math.max(0, Number(allocation.time_limit_seconds) - Number(allocation.time_used_seconds || 0)) : 'Unlimited'}</td><td>${allocation.time_depleted ? 'Depleted' : 'Available'}</td></tr></table>` : '<h2>Current allocation cycle</h2><p>No billing plan assigned — unlimited access.</p>';
-
-    const html = `
-        <html><head><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ccc;padding:8px;text-align:left;} th{background:#f4f4f4;} h1,h2{color:#333;}</style></head>
-        <body>
-            <h1>Executive Report: ${escapeHtml(data.username)}</h1>
-            <h2>Summary</h2>
-            <table>
-                <tr><th>Total Sessions</th><th>Total Upload (bytes)</th><th>Total Download (bytes)</th><th>Total Time (sec)</th></tr>
-                <tr><td>${Number(data.stats.total_sessions) || 0}</td><td>${Number(data.stats.total_input) || 0}</td><td>${Number(data.stats.total_output) || 0}</td><td>${Number(data.stats.total_time) || 0}</td></tr>
-            </table>
-            ${allocationHtml}
-            <h2>Recent Accounting</h2>
-            <table>
-                <tr><th>Session ID</th><th>NAS IP</th><th>Start</th><th>Stop</th><th>Duration</th></tr>
-                ${data.accounting.slice(0, 20).map(a => `<tr><td>${escapeHtml(a.acctsessionid)}</td><td>${escapeHtml(a.nasipaddress)}</td><td>${escapeHtml(a.acctstarttime || 'N/A')}</td><td>${escapeHtml(a.acctstoptime || 'Active')}</td><td>${Number(a.acctsessiontime) || 0}s</td></tr>`).join('')}
-            </table>
-            <h2>Recent Authentications</h2>
-            <table>
-                <tr><th>Date</th><th>Reply</th><th>Class</th></tr>
-                ${data.postauth.slice(0, 20).map(p => `<tr><td>${escapeHtml(p.authdate)}</td><td>${escapeHtml(p.reply)}</td><td>${escapeHtml(p.class)}</td></tr>`).join('')}
-            </table>
-        </body></html>
-    `;
-
-    const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium-browser', args: ['--no-sandbox'] });
-    const page = await browser.newPage();
-    await page.setContent(html);
-    const pdf = await page.pdf({ format: 'A4' });
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Report_${username.replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`);
-    res.send(pdf);
-});
-
-app.post('/api/reports/pdf/failed-auth', requireApiAuth('reports', 'read-only'), async (req, res) => {
-    const reportRes = await fetch(`http://localhost:3000/api/reports/failed-auth`, {
-        headers: { 'X-API-Key': req.admin.api_key }
-    });
-    const data = await reportRes.json();
-
-    const html = `
-        <html><head><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{border:1px solid #ccc;padding:8px;text-align:left;} th{background:#f4f4f4;} h1,h2{color:#333;}</style></head>
-        <body>
-            <h1>Failed Authentication Report</h1>
-            <h2>Most Failures</h2>
-            <table>
-                <tr><th>Username</th><th>Failed Attempts</th></tr>
-                ${data.summary.slice(0, 20).map(s => `<tr><td>${s.username}</td><td>${s.fail_count}</td></tr>`).join('')}
-            </table>
-            <h2>Recent Failures</h2>
-            <table>
-                <tr><th>Username</th><th>Date/Time</th><th>Class</th></tr>
-                ${data.details.slice(0, 50).map(d => `<tr><td>${d.username}</td><td>${d.authdate}</td><td>${d.class}</td></tr>`).join('')}
-            </table>
-        </body></html>
-    `;
-
-    const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium-browser', args: ['--no-sandbox'] });
-    const page = await browser.newPage();
-    await page.setContent(html);
-    const pdf = await page.pdf({ format: 'A4' });
-    await browser.close();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=FailedAuthReport.pdf`);
-    res.send(pdf);
 });
 
 app.get('/api/reports/dashboard-stats', requireApiAuth('reports', 'read-only'), async (req, res) => {

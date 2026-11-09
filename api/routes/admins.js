@@ -162,7 +162,7 @@ app.post('/api/admins/:id/enable-2fa', requireApiAuth('admins', 'read-write'), a
     }
 });
 
-app.post('/api/admins/:id/disable-2fa', requireApiAuth('settings', 'read-write'), async (req, res) => {
+app.post('/api/admins/:id/disable-2fa', requireApiAuth('admins', 'read-write'), async (req, res) => {
     const { id } = req.params;
     try {
         await assertAdminTargetAccess(req, id);

@@ -1,7 +1,5 @@
 FROM node:18-alpine
-RUN apk add --no-cache docker-cli openssl chromium tzdata
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+RUN apk add --no-cache docker-cli openssl tzdata
 WORKDIR /app
 COPY package*.json ./
 RUN npm install

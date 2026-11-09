@@ -24,6 +24,12 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const [rows] = await db.query('SELECT 1 FROM mac_auth_devices WHERE mac_address = ?' + scoped.sql + ' LIMIT 1', [address, ...scoped.params]);
         return rows.length > 0;
     }
+    async function setDisabled(conn, req, address, disabled) {
+        if (typeof disabled !== 'boolean') throw new Error('disabled must be a boolean');
+        const scoped = tenantScope(req);
+        await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type' AND op = ':=' AND value = 'Reject'" + scoped.sql, [address, ...scoped.params]);
+        if (disabled) await conn.query("INSERT INTO radcheck (username, attribute, op, value, tenant_id) VALUES (?, 'Auth-Type', ':=', 'Reject', ?)", [address, selectedTenantId(req)]);
+    }
     async function replaceMacRelations(conn, req, address, profile, planId, staticIp) {
         const tenantId = selectedTenantId(req);
         const scoped = tenantScope(req);
@@ -58,7 +64,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const joinParams = req.tenantScope.enabled ? [req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId] : [];
             const clause = `WHERE ${where.join(' AND ')}${scoped.sql}`;
             const params = [...joinParams, ...values, ...scoped.params];
-            const fields = `m.mac_id, m.mac_address, g.groupname AS profile, up.plan_id, p.name AS plan_name, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id) AS last_online, sr.value AS static_ip`;
+            const fields = `m.mac_id, m.mac_address, g.groupname AS profile, up.plan_id, p.name AS plan_name, EXISTS(SELECT 1 FROM radcheck disabled_check WHERE disabled_check.username = m.mac_address AND disabled_check.tenant_id <=> m.tenant_id AND disabled_check.attribute = 'Auth-Type' AND disabled_check.op = ':=' AND disabled_check.value = 'Reject') AS disabled, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id) AS last_online, sr.value AS static_ip`;
             if (!paginated) { const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY m.mac_id ASC`, params); return res.json(rows); }
             const [[count]] = await pool.query(`SELECT COUNT(*) AS total ${joins} ${clause}`, params);
             const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY ${sort} ${order}, m.mac_address ASC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
@@ -71,11 +77,13 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const { mac_id, profile, plan_id } = req.body; const staticIp = validateStaticIpv4(req.body.static_ip); const address = macAddress(req.body.mac_address);
         if (!mac_id || !address) return res.status(400).json({ error: 'MAC ID and Address required' });
         if (!validMac(address)) return res.status(400).json({ error: 'Invalid MAC address format' });
+        if (req.body.disabled !== undefined && typeof req.body.disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be a boolean' });
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
             await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id, tenant_id) VALUES (?, ?, ?)', [address, mac_id, selectedTenantId(req)]);
             await replaceMacRelations(conn, req, address, profile, plan_id, staticIp);
+            if (req.body.disabled !== undefined) await setDisabled(conn, req, address, req.body.disabled);
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Created MAC device: ${mac_id}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC authenticated device created' });
         } catch (err) { await conn.rollback(); res.status(err.code === 'ER_DUP_ENTRY' ? 400 : 500).json({ error: err.code === 'ER_DUP_ENTRY' ? 'MAC ID or Address already exists' : err.message }); } finally { conn.release(); }
     });
@@ -99,6 +107,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     app.put('/api/mac-auth/:macAddress', requireApiAuth('users', 'read-write'), async (req, res) => {
         const { mac_id, profile, plan_id } = req.body; const staticIp = req.body.static_ip === undefined ? undefined : validateStaticIpv4(req.body.static_ip); const address = macAddress(req.params.macAddress);
         if (!mac_id) return res.status(400).json({ error: 'MAC ID required' });
+        if (req.body.disabled !== undefined && typeof req.body.disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be a boolean' });
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
@@ -106,6 +115,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const scoped = tenantScope(req);
             await conn.query('UPDATE mac_auth_devices SET mac_id = ? WHERE mac_address = ?' + scoped.sql, [mac_id, address, ...scoped.params]);
             if (staticIp === undefined) { const existingIp = await conn.query("SELECT value FROM radreply WHERE username = ? AND attribute = 'Framed-IP-Address'" + tenantScope(req).sql, [address, ...tenantScope(req).params]); await replaceMacRelations(conn, req, address, profile, plan_id, existingIp[0][0]?.value || null); } else await replaceMacRelations(conn, req, address, profile, plan_id, staticIp);
+            if (req.body.disabled !== undefined) await setDisabled(conn, req, address, req.body.disabled);
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Updated MAC device: ${address}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC authenticated device updated' });
         } catch (err) { await conn.rollback(); res.status(err.code === 'ER_DUP_ENTRY' ? 400 : 500).json({ error: err.code === 'ER_DUP_ENTRY' ? 'MAC ID already exists' : err.message }); } finally { conn.release(); }
     });

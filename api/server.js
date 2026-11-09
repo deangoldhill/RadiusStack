@@ -8,7 +8,6 @@ const { v4: uuidv4 } = require('uuid');
 const { exec, execFile } = require('child_process');
 const multer = require('multer');
 const fs = require('fs').promises;
-const puppeteer = require('puppeteer');
 const crypto = require('crypto');
 const { createTotpHelpers } = require('./totp_helpers');
 const { createHaTransport } = require('./ha_transport');
@@ -983,7 +982,7 @@ function setApiDebugMode(enabled) {
 }
 
 const routeDependencies = {
-    bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, puppeteer, multer,
+    bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer,
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
     signTotpEnrollmentToken, verifyTotpEnrollmentToken,
