@@ -71,7 +71,8 @@
       </div>
   </div>
 
-  <script src="/js/layout.js"></script>
+  <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
   <script>
     let currentSort = 'acctstarttime';
     let currentOrder = 'desc';
@@ -81,7 +82,7 @@
         const nRes = await apiFetch('/api/nas');
         if (nRes.ok) {
             const nas = await nRes.json();
-            document.getElementById('fNas').innerHTML += nas.map(n => `<option value="${n.nasname}">${n.shortname} (${n.nasname})</option>`).join('');
+            document.getElementById('fNas').innerHTML += nas.map(n => `<option value="${xssHtml(n.nasname)}">${xssHtml(n.shortname)} (${xssHtml(n.nasname)})</option>`).join('');
         }
         fetchAcct();
     }
@@ -122,9 +123,9 @@
         document.querySelector('#acctTable tbody').innerHTML = allRecords.map((a, index) => `<tr class="border-b border-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onclick="showDetails(${index})">
           <td class="p-3 text-xs text-gray-500">${new Date(a.acctstarttime).toLocaleString()}</td>
           <td class="p-3 text-xs text-gray-500">${a.acctstoptime ? new Date(a.acctstoptime).toLocaleString() : '<span class="px-2 py-0.5 bg-green-100 text-green-800 rounded font-bold border border-green-200">Active</span>'}</td>
-          <td class="p-3 text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${a.tenant_name||'Global'}</span></td>
-          <td class="p-3 font-bold text-gray-800">${a.username}</td>
-          <td class="p-3 font-mono text-gray-600 text-xs">${a.nasipaddress}</td>
+          <td class="p-3 text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${xssHtml(a.tenant_name||'Global')}</span></td>
+          <td class="p-3 font-bold text-gray-800">${xssHtml(a.username)}</td>
+          <td class="p-3 font-mono text-gray-600 text-xs">${xssHtml(a.nasipaddress)}</td>
           <td class="p-3 font-mono text-gray-600 text-xs">${(a.acctsessiontime/3600).toFixed(2)} hr</td>
           <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctinputoctets || 0) / 1073741824).toFixed(3)} GB</td>
           <td class=\"p-3 font-mono text-gray-600 text-xs\">${((a.acctoutputoctets || 0) / 1073741824).toFixed(3)} GB</td>
@@ -147,8 +148,8 @@
             }
             return `
                 <tr class="border-b hover:bg-gray-50 transition-colors">
-                    <td class="p-2 font-bold text-gray-700 w-1/3">${key}</td>
-                    <td class="p-2 text-gray-800 break-all font-mono text-xs">${displayVal}</td>
+                    <td class="p-2 font-bold text-gray-700 w-1/3">${xssHtml(key)}</td>
+                    <td class="p-2 text-gray-800 break-all font-mono text-xs">${val === null ? displayVal : xssHtml(displayVal)}</td>
                 </tr>
             `;
         }).join('');

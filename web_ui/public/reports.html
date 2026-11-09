@@ -325,7 +325,8 @@
         </div>
     </main>
 
-    <script src="/js/layout.js">
+    <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js">
         // ── RADIUS STATS ──
         function fmtUptime(sec) {
             if (sec === null || sec < 0) return '—';
@@ -466,7 +467,7 @@
                     var mx = Math.max.apply(null, d.nas_breakdown.map(function (n) { return Number(n.session_count); }));
                     nasEl.innerHTML = d.nas_breakdown.map(function (n) {
                         var p = mx > 0 ? Math.round(Number(n.session_count) / mx * 100) : 0;
-                        return '<div><div class="flex justify-between text-xs mb-0.5"><span class="font-mono text-gray-600 truncate max-w-[140px]">' + (n.nasipaddress || 'Unknown') + '</span><span class="font-bold text-gray-700">' + n.session_count + '</span></div><div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="nas-bar-fill h-2 rounded-full bg-blue-400" style="width:' + p + '%"></div></div></div>';
+                        return '<div><div class="flex justify-between text-xs mb-0.5"><span class="font-mono text-gray-600 truncate max-w-[140px]">' + xssHtml(n.nasipaddress || 'Unknown') + '</span><span class="font-bold text-gray-700">' + n.session_count + '</span></div><div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="nas-bar-fill h-2 rounded-full bg-blue-400" style="width:' + p + '%"></div></div></div>';
                     }).join('');
                 }
                 var lbl = d.hourly_trend.map(function (h) { return h.hour_label; }),
@@ -555,8 +556,8 @@
                 '<tr class="bg-gray-50 text-gray-600 font-bold"><th class="p-2">NAS IP</th><th class="p-2">Framed IP</th><th class="p-2">Start</th><th class="p-2">End</th><th class="p-2">Duration</th><th class="p-2 text-right">Upload</th><th class="p-2 text-right">Download</th><th class="p-2 text-right">Total</th></tr>' +
                 (d.accounting || []).slice(0, 20).map(function (a) {
                     return '<tr class="border-t hover:bg-gray-50">' +
-                        '<td class="p-2 font-mono text-gray-500">' + (a.nasipaddress || '-') + '</td>' +
-                        '<td class="p-2 font-mono text-gray-500">' + (a.framedipaddress || '-') + '</td>' +
+                        '<td class="p-2 font-mono text-gray-500">' + xssHtml(a.nasipaddress || '-') + '</td>' +
+                        '<td class="p-2 font-mono text-gray-500">' + xssHtml(a.framedipaddress || '-') + '</td>' +
                         '<td class="p-2 text-gray-700">' + (a.acctstarttime ? new Date(a.acctstarttime).toLocaleString() : '-') + '</td>' +
                         '<td class="p-2 text-gray-500">' + (a.acctstoptime ? new Date(a.acctstoptime).toLocaleString() : '<span class="text-green-600 font-bold">Active</span>') + '</td>' +
                         '<td class="p-2">' + (a.acctsessiontime ? fmtHrs(a.acctsessiontime) : '-') + '</td>' +
@@ -575,10 +576,10 @@
                 (d.postauth || []).slice(0, 20).map(function (a) {
                     var badge = a.reply === 'Access-Accept' ? 'bg-green-500' : 'bg-red-500';
                     return '<tr class="border-t hover:bg-gray-50">' +
-                        '<td class="p-2"><span class="px-1.5 py-0.5 rounded text-white text-xs ' + badge + '">' + a.reply + '</span></td>' +
-                        '<td class="p-2 font-mono text-gray-500">' + (a.nasipaddress || '-') + '</td>' +
-                        '<td class="p-2 font-mono text-gray-500">' + (a.callingstationid || '-') + '</td>' +
-                        '<td class="p-2 text-gray-500 truncate max-w-xs">' + (a.replymessage || '-') + '</td>' +
+                        '<td class="p-2"><span class="px-1.5 py-0.5 rounded text-white text-xs ' + badge + '">' + xssHtml(a.reply) + '</span></td>' +
+                        '<td class="p-2 font-mono text-gray-500">' + xssHtml(a.nasipaddress || '-') + '</td>' +
+                        '<td class="p-2 font-mono text-gray-500">' + xssHtml(a.callingstationid || '-') + '</td>' +
+                        '<td class="p-2 text-gray-500 truncate max-w-xs">' + xssHtml(a.replymessage || '-') + '</td>' +
                         '<td class="p-2 text-gray-600">' + fmtDate(a.authdate) + '</td>' +
                         '</tr>';
                 }).join('') +
@@ -590,7 +591,7 @@
             rep.innerHTML =
                 '<div class="border-b pb-3 mb-5 flex items-center justify-between">' +
                 '<div><h3 class="font-black text-2xl text-gray-800">' + reportEscape(username) + '</h3>' +
-                '<p class="text-xs text-gray-500 mt-0.5">Report period: ' + (start || 'All time') + ' → ' + (end || 'Now') + '</p></div>' +
+                '<p class="text-xs text-gray-500 mt-0.5">Report period: ' + xssHtml(start || 'All time') + ' → ' + xssHtml(end || 'Now') + '</p></div>' +
                 '<span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-1 rounded font-medium">Executive Report</span>' +
                 '</div>' +
                 planUsageHtml + kpiHtml + charts1 + charts2 + charts3 + tableHtml + authHtml;
@@ -620,7 +621,7 @@
             var maxNas = nasData.length ? Math.max.apply(null, nasData.map(function (n) { return Number(n.session_count); })) : 1;
             document.getElementById('uNasBars').innerHTML = nasData.length ? nasData.map(function (n) {
                 var p = Math.round(Number(n.session_count) / maxNas * 100);
-                return '<div><div class="flex justify-between text-xs mb-0.5"><span class="font-mono text-gray-600 truncate max-w-[120px]">' + (n.nasipaddress || '?') + '</span><span class="font-bold text-gray-700">' + n.session_count + ' sess &middot; ' + fmtGB(n.total_bytes) + '</span></div><div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="nas-bar-fill h-2 rounded-full bg-purple-400" style="width:' + p + '%"></div></div></div>';
+                return '<div><div class="flex justify-between text-xs mb-0.5"><span class="font-mono text-gray-600 truncate max-w-[120px]">' + xssHtml(n.nasipaddress || '?') + '</span><span class="font-bold text-gray-700">' + Number(n.session_count) + ' sess &middot; ' + fmtGB(n.total_bytes) + '</span></div><div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="nas-bar-fill h-2 rounded-full bg-purple-400" style="width:' + p + '%"></div></div></div>';
             }).join('') : '<div class="text-xs text-gray-400">No data</div>';
         };
 
@@ -692,11 +693,11 @@
             el.innerHTML =
                 '<h4 class="font-bold text-gray-700 mb-3">Top Failing Users</h4>' +
                 '<table class="w-full text-sm mb-6"><tr class="bg-gray-50"><th class="p-2 text-left">Username</th><th class="p-2 text-right">Failures</th></tr>' +
-                data.summary.slice(0, 10).map(function (u) { return '<tr class="border-t"><td class="p-2 font-mono">' + u.username + '</td><td class="p-2 text-right text-red-600 font-bold">' + u.fail_count + '</td></tr>'; }).join('') +
+                data.summary.slice(0, 10).map(function (u) { return '<tr class="border-t"><td class="p-2 font-mono">' + xssHtml(u.username) + '</td><td class="p-2 text-right text-red-600 font-bold">' + u.fail_count + '</td></tr>'; }).join('') +
                 '</table><h4 class="font-bold text-gray-700 mb-3">Recent Failures</h4>' +
                 '<div class="overflow-x-auto"><table class="w-full text-sm whitespace-nowrap">' +
                 '<tr class="bg-gray-50"><th class="p-2 text-left">Username</th><th class="p-2">NAS IP</th><th class="p-2">Calling Station</th><th class="p-2">Time</th></tr>' +
-                data.details.slice(0, 20).map(function (r) { return '<tr class="border-t hover:bg-gray-50"><td class="p-2 font-bold text-red-600">' + r.username + '</td><td class="p-2 text-xs font-mono text-gray-500">' + (r.nasipaddress || '') + '</td><td class="p-2 text-xs font-mono text-gray-500">' + (r.callingstationid || '') + '</td><td class="p-2 text-xs">' + r.authdate + '</td></tr>'; }).join('') +
+                data.details.slice(0, 20).map(function (r) { return '<tr class="border-t hover:bg-gray-50"><td class="p-2 font-bold text-red-600">' + xssHtml(r.username) + '</td><td class="p-2 text-xs font-mono text-gray-500">' + xssHtml(r.nasipaddress || '') + '</td><td class="p-2 text-xs font-mono text-gray-500">' + xssHtml(r.callingstationid || '') + '</td><td class="p-2 text-xs">' + xssHtml(r.authdate) + '</td></tr>'; }).join('') +
                 '</table></div>';
         }
     

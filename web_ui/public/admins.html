@@ -91,7 +91,8 @@
     </div>
   </div>
 
-  <script src="/js/layout.js"></script>
+  <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
   <script>
     let adminsList = [];
     let availableTenants = [];
@@ -131,14 +132,14 @@
 
             return `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
             <td class="p-3 font-mono text-gray-500">${a.id}</td>
-            <td class="p-3 font-bold text-gray-800">${a.username}</td>
+            <td class="p-3 font-bold text-gray-800">${xssHtml(a.username)}</td>
             <td class="p-3">${roleBadge}</td>
             <td class="p-3 text-gray-500" data-last-login>${a.last_login_at ? new Date(a.last_login_at).toLocaleDateString() : '—'}</td>
             <td class="p-3 text-right space-x-2">
-                <button type="button" onclick="generateKey(${a.id})" class="bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Gen API Key</button>
-                <button type="button" onclick="${a.two_factor_enabled ? `disable2FA(${a.id}, '${a.username}')` : `enable2FA(${a.id}, '${a.username}')`}" class="bg-${a.two_factor_enabled ? 'yellow' : 'green'}-50 text-${a.two_factor_enabled ? 'yellow' : 'green'}-700 border border-${a.two_factor_enabled ? 'yellow' : 'green'}-200 hover:bg-${a.two_factor_enabled ? 'yellow' : 'green'}-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">${a.two_factor_enabled ? 'Disable 2FA' : 'Enable 2FA'}</button>
-                <button type="button" onclick="openModal(${a.id})" class="bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-                <button type="button" onclick="deleteAdmin(${a.id}, '${a.username}')" class="bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm" ${isSuper?'disabled style="opacity:0.5; cursor:not-allowed" title="Cannot delete root admin"':''}>Delete</button>
+                <button type="button" onclick="generateKey(${Number(a.id)})" class="bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Gen API Key</button>
+                <button type="button" onclick="${a.two_factor_enabled ? `disable2FA(${Number(a.id)}, ${xssArg(a.username)})` : `enable2FA(${Number(a.id)}, ${xssArg(a.username)})`}" class="bg-${a.two_factor_enabled ? 'yellow' : 'green'}-50 text-${a.two_factor_enabled ? 'yellow' : 'green'}-700 border border-${a.two_factor_enabled ? 'yellow' : 'green'}-200 hover:bg-${a.two_factor_enabled ? 'yellow' : 'green'}-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">${a.two_factor_enabled ? 'Disable 2FA' : 'Enable 2FA'}</button>
+                <button type="button" onclick="openModal(${Number(a.id)})" class="bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                <button type="button" onclick="deleteAdmin(${Number(a.id)}, ${xssArg(a.username)})" class="bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm" ${isSuper?'disabled style="opacity:0.5; cursor:not-allowed" title="Cannot delete root admin"':''}>Delete</button>
             </td>
             </tr>`;
         }).join('');

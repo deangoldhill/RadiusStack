@@ -113,7 +113,8 @@
             </table>
         </div><div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm"><span id="pageSummary" class="text-gray-500"></span><div class="flex gap-2"><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div></div>
     </main>
-    <script src="/js/layout.js"></script>
+    <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
     <script>
         function setFilter(field, value) {
             if (!value) return;
@@ -213,24 +214,24 @@
                         return `<tr class="hover:bg-gray-50 transition-colors">
                     <td class="p-2 border-b text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${tenant}</span></td>
                     <td class="p-2 border-b font-bold">
-                      <span class="filterable" title="Filter by this username" onclick="setFilter('usernameFilter', '${username}')">${username}</span>
+                      <span class="filterable" title="Filter by this username" onclick="setFilter('usernameFilter', ${xssArg(l.username)})">${username}</span>
                     </td>
                     <td class="p-2 border-b">
                       <span class="px-2 py-1 text-xs rounded text-white ${badge}">${escHtml(l.reply)}</span>
                     </td>
                     <td class="p-2 border-b text-xs font-medium text-gray-700">${server}</td>
                     <td class="p-2 border-b text-xs text-gray-600">
-                      ${nasip ? `<span class="filterable" title="Filter by this NAS IP" onclick="setFilter('nasipFilter', '${nasip}')">${nasip}</span>` : ''}
+                      ${nasip ? `<span class="filterable" title="Filter by this NAS IP" onclick="setFilter('nasipFilter', ${xssArg(l.nasipaddress)})">${nasip}</span>` : ''}
                     </td>
                     <td class="p-2 border-b text-xs font-mono text-gray-600">
-                      ${callingstation ? `<span class="filterable" title="Filter by this Calling Station ID" onclick="setFilter('callingStationFilter', '${callingstation}')">${callingstation}</span>` : ''}
+                      ${callingstation ? `<span class="filterable" title="Filter by this Calling Station ID" onclick="setFilter('callingStationFilter', ${xssArg(l.callingstationid)})">${callingstation}</span>` : ''}
                     </td>
                     <td class="p-2 border-b text-xs font-mono text-gray-600">
-                      ${calledstation ? `<span class="filterable" title="Filter by this Called Station ID" onclick="setFilter('calledStationFilter', '${calledstation}')">${calledstation}</span>` : ''}
+                      ${calledstation ? `<span class="filterable" title="Filter by this Called Station ID" onclick="setFilter('calledStationFilter', ${xssArg(l.calledstationid)})">${calledstation}</span>` : ''}
                     </td>
                     <td class="p-2 border-b text-xs text-gray-600 truncate max-w-xs" title="${replymsg}">${replymsg}</td>
                     <td class="p-2 border-b text-xs">
-                      ${authdateLocal ? `<span class="filterable" title="Set as Date To filter" onclick="setFilter('dateTo', '${authdateLocal}')">${authdate}</span>` : authdate}
+                      ${authdateLocal ? `<span class="filterable" title="Set as Date To filter" onclick="setFilter('dateTo', ${xssArg(authdateLocal)})">${authdate}</span>` : authdate}
                     </td>
                   </tr>`;
                     }).join('');

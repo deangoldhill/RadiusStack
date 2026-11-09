@@ -1,0 +1,11 @@
+# RadiusStack 6.1.1
+
+Changes since the 6.1.0 source archive:
+
+- **Disable users and MAC-auth devices without deleting them.** The create/edit form has a Disabled checkbox below Profile, unchecked for new objects. Disabled identities appear red in the existing list/detail UI, without a new column. The API accepts a boolean `disabled` value and returns a numeric 0/1 status. Disabling writes a tenant-scoped `Auth-Type := Reject` check; re-enabling removes that check while keeping credentials, profiles, plans and accounting history. Native proxy-only requests remain governed by the downstream result: a downstream accept can still be accepted even when the local identity is disabled. Existing sessions are not disconnected.
+- **Harden administrator MFA permissions.** Disabling another administrator's 2FA now requires Admins read-write permission rather than Settings read-write permission.
+- **Remove the unused PDF report exports.** The executive/user and failed-auth PDF endpoints, Puppeteer dependency, and Chromium image package are removed. JSON and dashboard reports remain available. API route documentation is updated; integrations using those PDF endpoints must stop calling them.
+- **Escape browser-rendered RADIUS and administrative data.** Shared HTML/inline-handler escaping is applied to affected table, detail, and dashboard renderers so values cannot become executable markup when inserted into the UI. The Disabled controls are retained on the merged Users and MAC Auth pages.
+- **Fresh-install setup.** The archive includes `setup_env.sh` and `.env.example`, but no `.env`. The Bash setup wizard creates a private environment file; manual installation can copy the template and set secure private values. HA secondary nodes must reuse the primary's shared keys and token.
+
+This folder is a **candidate source archive from an uncommitted development worktree**, not a Git tag or published GitHub Release. Dean manually reviews, commits, tags and publishes the asset. Do not run `./upgrade.sh --to 6.1.1` until the exact tag and asset have been published and their digest independently verified. Keep an existing installation's private `.env`, database, certificates and Compose overrides; back up and rehearse the exact published asset before upgrading. See [UPGRADE.md](UPGRADE.md).

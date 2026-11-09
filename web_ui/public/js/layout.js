@@ -15,6 +15,11 @@ const themeReady = Promise.all([themeStylesReady, new Promise(resolve => {
   document.head.appendChild(script);
 })]).then(([, system]) => system);
 
+// Layout also runs on pages that do not load the page-level rendering helper.
+function layoutHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[character]));
+}
+
 function getApiKey() {
   const key = localStorage.getItem('apiKey');
   if (!key && !window.location.pathname.endsWith('login.html')) window.location.href = 'login.html';
@@ -282,7 +287,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.className = "flex bg-gray-100 font-sans h-screen text-gray-800 antialiased";
 
   if (!window.currentAdminSuper) document.getElementById('tenantManagementNav')?.remove();
-  if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${t.id}">${t.name}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{localStorage.setItem('activeTenantId',select.value);window.location.reload()}; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
+  if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${layoutHtml(t.id)}">${layoutHtml(t.name)}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{localStorage.setItem('activeTenantId',select.value);window.location.reload()}; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
 
   if (window.multiTenantEnabled && window.currentAdminSuper && localStorage.getItem('activeTenantId') === 'global') { GLOBAL_CONTEXT_BLOCKED_PAGES.forEach(href => document.querySelector(`.nav-link[href="${href}"]`)?.classList.add('nav-hidden')); }
   document.querySelectorAll('.nav-link').forEach(link => {

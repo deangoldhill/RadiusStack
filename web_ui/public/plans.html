@@ -146,7 +146,8 @@
     </div>
   </div>
 
-  <script src="/js/layout.js"></script>
+  <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
   <script src="/js/plan-table.js"></script>
   <script>
 
@@ -184,15 +185,15 @@
           planPage = pageState.page;
           const tbody = document.querySelector('#plansTable tbody');
           tbody.innerHTML = pageState.totalRows ? pageState.rows.map(p => `
-            <tr class="border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer" onclick="showPlanDetails(${p.id})">
-            <td class="p-3 font-bold text-blue-600">${p.name}</td>
+            <tr class="border-b border-gray-50 hover:bg-blue-50 transition-colors cursor-pointer" onclick="showPlanDetails(${Number(p.id)})">
+            <td class="p-3 font-bold text-blue-600">${xssHtml(p.name)}</td>
             <td class="p-3 font-mono text-gray-600">${p.data_limit_mb > 0 ? p.data_limit_mb : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
             <td class="p-3 font-mono text-gray-600">${p.time_limit_seconds > 0 ? (p.time_limit_seconds/3600).toFixed(1) : '<span class="text-green-500 font-bold text-xs">Unlimited</span>'}</td>
-            <td class="p-3 text-xs capitalize"><span class="px-2 py-1 bg-gray-100 rounded border font-bold">${p.reset_period}</span></td>
+            <td class="p-3 text-xs capitalize"><span class="px-2 py-1 bg-gray-100 rounded border font-bold">${xssHtml(p.reset_period)}</span></td>
             <td class="p-3 font-mono font-bold ${Number(p.depleted_users) > 0 ? 'text-red-600' : 'text-gray-600'}">${Number(p.depleted_users) || 0}</td>
             <td class="p-3 text-right space-x-2" onclick="event.stopPropagation()">
-                <button onclick="openModal(${p.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-                <button onclick="deletePlan(${p.id}, '${p.name}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+                <button onclick="openModal(${Number(p.id)})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                <button onclick="deletePlan(${p.id}, ${xssArg(p.name)})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
             </td>
             </tr>`).join('') : '<tr><td colspan="6" class="p-6 text-center text-sm text-gray-400">No plans match this search.</td></tr>';
           const startRow = pageState.totalRows ? (pageState.page - 1) * pageState.pageSize + 1 : 0;
@@ -252,7 +253,7 @@ async function showPlanDetails(id) {
                 return `
                 <div class="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
                     <div>
-                        <div class="font-bold text-sm text-gray-800">${u.username}</div>
+                        <div class="font-bold text-sm text-gray-800">${xssHtml(u.username)}</div>
                         <div class="text-xs text-gray-500 mt-0.5">${formatUsageMegabytes(u.data_used_mb)} / ${(u.time_used_sec/60).toFixed(0)} min</div>
                     </div>
                     <div>

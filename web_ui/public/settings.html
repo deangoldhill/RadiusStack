@@ -619,10 +619,10 @@
                         container.innerHTML = `
                             <div class="grid grid-cols-2 gap-4">
                                 <div><strong>Role:</strong> ${roleBadge}</div>
-                                <div><strong>Peer IP:</strong> ${data.peer}</div>
-                                <div><strong>Pending Sync Queue:</strong> ${data.queueLength} operations</div>
-                                <div><strong>Successful Syncs:</strong> ${data.stats.success}</div>
-                                <div><strong>Failed Syncs:</strong> ${data.stats.failed}</div>
+                                <div><strong>Peer IP:</strong> ${xssHtml(data.peer)}</div>
+                                <div><strong>Pending Sync Queue:</strong> ${xssHtml(data.queueLength)} operations</div>
+                                <div><strong>Successful Syncs:</strong> ${xssHtml(data.stats.success)}</div>
+                                <div><strong>Failed Syncs:</strong> ${xssHtml(data.stats.failed)}</div>
                                 <div><strong>Last Sync:</strong> ${data.stats.lastSync ? new Date(data.stats.lastSync).toLocaleString() : 'Never'}</div>
                             </div>
                         `;
@@ -738,6 +738,7 @@
   </div>
 </div>
 
+<script src="/js/xss-render.js"></script>
 <script src="/js/layout.js"></script>
 <script>
 
@@ -1074,12 +1075,12 @@
           ? 'bg-green-100 text-green-800 border-green-200'
           : 'bg-red-100 text-red-800 border-red-200';
         return `<tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-          <td class="p-3 font-bold text-gray-700">${c.name}</td>
-          <td class="p-3"><span class="px-2 py-1 text-xs rounded border font-bold ${stateColor}">${c.state.toUpperCase()}</span></td>
-          <td class="p-3 text-xs text-gray-500 font-mono">${c.status}</td>
+          <td class="p-3 font-bold text-gray-700">${xssHtml(c.name)}</td>
+          <td class="p-3"><span class="px-2 py-1 text-xs rounded border font-bold ${stateColor}">${xssHtml(String(c.state).toUpperCase())}</span></td>
+          <td class="p-3 text-xs text-gray-500 font-mono">${xssHtml(c.status)}</td>
           <td class="p-3 text-right space-x-2">
-            <button onclick="viewLogs('${c.name}')" class="bg-gray-800 text-white hover:bg-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">View Logs</button>
-            <button onclick="restartContainer('${c.name}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Restart</button>
+            <button onclick="viewLogs(${xssArg(c.name)})" class="bg-gray-800 text-white hover:bg-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">View Logs</button>
+            <button onclick="restartContainer(${xssArg(c.name)})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Restart</button>
           </td>
         </tr>`;
       }).join('');

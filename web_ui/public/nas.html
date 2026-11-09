@@ -43,7 +43,8 @@
   </div>
 
   <div id="cloneNasModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm"><div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full"><h2 class="text-xl font-bold mb-4 text-gray-800">Clone NAS Client</h2><p class="text-sm text-gray-600 mb-4">The new NAS will reuse the source configuration and RadSec credential set.</p><form id="cloneNasForm" class="space-y-4"><input type="hidden" id="cloneSourceNasId"><div><label class="block text-sm font-bold text-gray-700">IP Address</label><input id="cloneNasIp" required class="w-full border p-2 rounded-lg"></div><div><label class="block text-sm font-bold text-gray-700">Shortname</label><input id="cloneNasShort" required class="w-full border p-2 rounded-lg"></div><div class="flex justify-end gap-3 pt-3"><button type="button" onclick="closeCloneNas()" class="bg-gray-200 px-4 py-2 rounded-lg font-bold">Cancel</button><button class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold">Clone NAS</button></div></form></div></div>
-  <script src="/js/layout.js"></script><script src="/js/downstream-route-controls.js"></script>
+  <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script><script src="/js/downstream-route-controls.js"></script>
   <script>
     let nasList = [];
     const dynamicAuthDefaults=['User-Name','Acct-Session-Id','NAS-IP-Address','NAS-Identifier','Calling-Station-Id','Framed-IP-Address','Profile-Reply-Attributes'];
@@ -59,13 +60,13 @@
         nasList = await res.json();
         document.querySelector('#nasTable tbody').innerHTML = nasList.map(n => `
         <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-          <td class="p-3 font-bold text-gray-800">${n.nasname}</td>
-          <td class="p-3 text-gray-600">${n.shortname}</td><td class="p-3 text-gray-600">${n.tenant_name||'Global'}</td>
+          <td class="p-3 font-bold text-gray-800">${xssHtml(n.nasname)}</td>
+          <td class="p-3 text-gray-600">${xssHtml(n.shortname)}</td><td class="p-3 text-gray-600">${xssHtml(n.tenant_name||'Global')}</td>
           <td class="p-3 font-mono text-gray-500 text-xs">••••••••</td>
-          <td class="p-3 text-gray-500 text-xs">${n.description || ''}</td><td class="p-3">${n.radsec_enabled ? '<span class="text-green-700 font-bold">TLS (RadSec)</span>' : '—'}</td>
+          <td class="p-3 text-gray-500 text-xs">${xssHtml(n.description || '')}</td><td class="p-3">${n.radsec_enabled ? '<span class="text-green-700 font-bold">TLS (RadSec)</span>' : '—'}</td>
           <td class="p-3 text-right space-x-2">
-            <button onclick="cloneNas(${n.id})" class="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold">Clone</button><button onclick="openModal(${n.id})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-            <button onclick="deleteNas(${n.id})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+            <button onclick="cloneNas(${Number(n.id)})" class="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold">Clone</button><button onclick="openModal(${Number(n.id)})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+            <button onclick="deleteNas(${Number(n.id)})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
           </td>
         </tr>`).join('');
       }

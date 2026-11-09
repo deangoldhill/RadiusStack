@@ -148,7 +148,8 @@
         </div>
     </div>
 
-    <script src="/js/layout.js"></script><script src="/js/downstream-route-controls.js"></script>
+    <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script><script src="/js/downstream-route-controls.js"></script>
     <script src="/js/profile-table.js"></script>
     <script>
 
@@ -219,9 +220,7 @@
             return new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         }
 
-        function escapeHtml(s) {
-            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
+        function escapeHtml(s) { return xssHtml(s); }
 
         // ─── INIT ─────────────────────────────────────────────────────────────────
 
@@ -279,12 +278,12 @@
                         ? `<span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded border border-indigo-200">${row.users} user${row.users !== 1 ? 's' : ''}</span>`
                         : `<span class="text-gray-400 text-xs">0 users</span>`;
                     return `
-                      <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeHtml(p)}')">
+                      <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onclick="openDetailPanel(${xssArg(p)})">
                         <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${escapeHtml(p)}</td>
                         <td class="p-3">${vlanBadge}</td><td class="p-3">${nasBadge}</td><td class="p-3">${replyBadge}</td><td class="p-3">${userBadge}</td>
                         <td class="p-3 text-right space-x-2" onclick="event.stopPropagation()">
-                          <button onclick="openModal('${escapeHtml(p)}')" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-                          <button onclick="deleteProfile('${escapeHtml(p)}')" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+                          <button onclick="openModal(${xssArg(p)})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                          <button onclick="deleteProfile(${xssArg(p)})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
                         </td>
                       </tr>`;
                 }).join('');
@@ -417,13 +416,13 @@
                 document.getElementById('pdSubtitle').innerHTML = `
                   <span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-bold">${numUsers} user${numUsers !== 1 ? 's' : ''}</span>
                   <span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-bold">${numMacs} MAC${numMacs !== 1 ? 's' : ''}</span>
-                  ${vlan ? `<span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">VLAN ${vlan.value}</span>` : ''}
+                  ${vlan ? `<span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">VLAN ${xssHtml(vlan.value)}</span>` : ''}
                   <span class="px-1.5 py-0.5 ${activeSessions.length > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'} rounded text-xs font-bold">${activeSessions.length} active</span>
                 `;
 
                 renderTab(currentDetailTab, currentDetailData);
             } catch (e) {
-                document.getElementById('pdBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load profile data: ${e.message}</div>`;
+                document.getElementById('pdBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load profile data: ${xssHtml(e.message)}</div>`;
             }
         }
 
@@ -510,13 +509,13 @@
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
                   <div class="text-xs font-bold text-gray-400 uppercase mb-2">VLAN</div>
                   ${vlan
-                    ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 text-sm font-bold rounded border border-blue-200">VLAN ${vlan.value}</span><div class="text-xs text-gray-400 mt-1">Tunnel-Type · IEEE-802 · PVID</div>`
+                    ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 text-sm font-bold rounded border border-blue-200">VLAN ${xssHtml(vlan.value)}</span><div class="text-xs text-gray-400 mt-1">Tunnel-Type · IEEE-802 · PVID</div>`
                     : `<span class="text-gray-400 text-sm">No VLAN assigned</span>`}
                 </div>
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
                   <div class="text-xs font-bold text-gray-400 uppercase mb-2">NAS Restriction</div>
                   ${nasIps.length > 0
-                    ? `<div class="space-y-1">${nasIps.map(ip => `<span class="block px-2 py-0.5 bg-orange-50 text-orange-700 text-xs font-mono rounded border border-orange-200">${ip}</span>`).join('')}</div>`
+                    ? `<div class="space-y-1">${nasIps.map(ip => `<span class="block px-2 py-0.5 bg-orange-50 text-orange-700 text-xs font-mono rounded border border-orange-200">${xssHtml(ip)}</span>`).join('')}</div>`
                     : `<span class="px-2 py-1 bg-green-50 text-green-700 text-xs font-bold rounded border border-green-200">Any NAS Allowed</span>`}
                 </div>
               </div>
@@ -532,7 +531,7 @@
                             ? Math.round(((u.data_30d || 0) / Math.max(...profileUsers.map(x => x.data_30d || 0))) * 100) : 0;
                         return `
                     <div class="flex items-center gap-3">
-                      <div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center flex-shrink-0">${u.username.charAt(0).toUpperCase()}</div>
+                      <div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center flex-shrink-0">${xssHtml(u.username.charAt(0).toUpperCase())}</div>
                       <div class="flex-1 min-w-0">
                         <div class="flex justify-between text-xs mb-1">
                           <span class="font-semibold text-gray-700 truncate">${escapeHtml(u.username)}</span>
@@ -559,7 +558,7 @@
             <div class="space-y-2">
               ${profileUsers.map(u => `
                 <div class="flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl p-3 hover:border-indigo-200 transition-colors">
-                  <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold text-sm flex items-center justify-center flex-shrink-0">${u.username.charAt(0).toUpperCase()}</div>
+                  <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold text-sm flex items-center justify-center flex-shrink-0">${xssHtml(u.username.charAt(0).toUpperCase())}</div>
                   <div class="flex-1 min-w-0">
                     <div class="font-semibold text-gray-800 text-sm truncate">${escapeHtml(u.username)}</div>
                     <div class="flex items-center gap-2 mt-0.5">
@@ -592,7 +591,7 @@
                     <span class="font-bold text-gray-800 text-sm">${escapeHtml(s.username)}</span>
                     <span class="text-xs font-mono text-gray-500">${fmtDuration(s.acctsessiontime)}</span>
                   </div>
-                  <div class="text-xs text-gray-500 mt-0.5">${s.framedipaddress || '—'} · NAS: ${s.nasipaddress || '—'}</div>
+                  <div class="text-xs text-gray-500 mt-0.5">${xssHtml(s.framedipaddress || '—')} · NAS: ${xssHtml(s.nasipaddress || '—')}</div>
                   <div class="text-xs text-gray-400 mt-0.5">↑ ${fmtBytes(s.acctinputoctets)} · ↓ ${fmtBytes(s.acctoutputoctets)}</div>
                   <div class="text-xs text-gray-400">Started: ${fmtDate(s.acctstarttime)}</div>
                 </div>
@@ -617,7 +616,7 @@
                       <span class="text-xs font-mono text-gray-500">${fmtDuration(s.acctsessiontime)}</span>
                     </div>
                     <div class="text-xs text-gray-400 mt-0.5">${fmtDate(s.acctstarttime)} → ${fmtDate(s.acctstoptime)}</div>
-                    <div class="text-xs text-gray-400">↑ ${fmtBytes(s.acctinputoctets)} · ↓ ${fmtBytes(s.acctoutputoctets)} · NAS: ${s.nasipaddress || '—'}</div>
+                    <div class="text-xs text-gray-400">↑ ${fmtBytes(s.acctinputoctets)} · ↓ ${fmtBytes(s.acctoutputoctets)} · NAS: ${xssHtml(s.nasipaddress || '—')}</div>
                   </div>`).join('')}
               </div>
             </div>` : ''}`;
@@ -642,7 +641,7 @@
                     <table class="w-full text-xs font-mono">
                       <tr class="border-b border-gray-100"><td class="py-1.5 text-gray-500 pr-4">Tunnel-Type</td><td class="text-gray-800 font-semibold">VLAN</td></tr>
                       <tr class="border-b border-gray-100"><td class="py-1.5 text-gray-500 pr-4">Tunnel-Medium-Type</td><td class="text-gray-800 font-semibold">IEEE-802</td></tr>
-                      <tr><td class="py-1.5 text-gray-500 pr-4">Tunnel-Private-Group-ID</td><td class="text-gray-800 font-semibold">${vlan.value}</td></tr>
+                      <tr><td class="py-1.5 text-gray-500 pr-4">Tunnel-Private-Group-ID</td><td class="text-gray-800 font-semibold">${xssHtml(vlan.value)}</td></tr>
                     </table>` : `<span class="text-gray-400 text-sm">No VLAN configured</span>`}
                 </div>
               </div>
@@ -652,7 +651,7 @@
                 <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">NAS-IP-Address Checks (${nasIps.length})</h3>
                 <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
                   ${nasIps.length > 0
-                    ? `<div class="flex flex-wrap gap-2">${nasIps.map(c => `<span class="px-2 py-1 bg-orange-50 text-orange-700 text-xs font-mono font-bold rounded border border-orange-200">${c.value}</span>`).join('')}</div>`
+                    ? `<div class="flex flex-wrap gap-2">${nasIps.map(c => `<span class="px-2 py-1 bg-orange-50 text-orange-700 text-xs font-mono font-bold rounded border border-orange-200">${xssHtml(c.value)}</span>`).join('')}</div>`
                     : `<span class="text-gray-400 text-sm">No NAS restriction — any NAS allowed</span>`}
                 </div>
               </div>

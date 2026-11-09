@@ -98,6 +98,7 @@
                     <label class="block text-sm font-bold text-gray-700">Profile</label>
                     <select id="uprofile" class="w-full border p-2 rounded-lg bg-gray-50 focus:ring outline-none"><option value="">-- None --</option></select>
                 </div>
+                <label class="flex items-center gap-2 text-sm font-bold text-gray-700"><input id="udisabled" type="checkbox" class="h-4 w-4 text-red-600">Disabled</label>
                 <div class="flex justify-end space-x-3 pt-4 border-t">
                     <button type="button" onclick="closeModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-bold transition-colors">Cancel</button>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">Save</button>
@@ -212,7 +213,8 @@
         }
     </style>
 
-    <script src="/js/layout.js"></script>
+    <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
     <script src="/js/table-pagination.js"></script>
     <script>
 
@@ -325,30 +327,30 @@
             const filtered = allUsers;
             const pagination = { rows: filtered, totalRows: usersTotal, totalPages: usersTotalPages, page: usersPage, pageSize: usersPageSize };
 document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u => `
-            <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel('${escapeJS(u.username)}')">
-              <td class="p-3 w-10" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeJS(u.username)}" class="row-checkbox cursor-pointer" onchange="updateMultiSelect()"></td>
-              <td class="p-3 font-bold text-blue-700 hover:text-blue-900">${u.username}</td>
-              <td class="p-3 text-gray-500 font-mono text-xs" onclick="event.stopPropagation()">${maskPasswords ? maskPassword(u.password) : (u.password || '')}</td>
-              <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${u.plan_name || 'No Plan'}</span></td>
-              <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${u.profile || 'None'}</span></td>
+            <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="openDetailPanel(${xssArg(u.username)})">
+              <td class="p-3 w-10" onclick="event.stopPropagation()"><input type="checkbox" value="${xssHtml(u.username)}" class="row-checkbox cursor-pointer" onchange="updateMultiSelect()"></td>
+              <td class="p-3 font-bold ${Number(u.disabled) === 1 ? 'text-red-700 hover:text-red-900' : 'text-blue-700 hover:text-blue-900'}">${xssHtml(u.username)}${Number(u.disabled) === 1 ? ' <span class="text-xs">Disabled</span>' : ''}</td>
+              <td class="p-3 text-gray-500 font-mono text-xs" onclick="event.stopPropagation()">${xssHtml(maskPasswords ? maskPassword(u.password) : (u.password || ''))}</td>
+              <td class="p-3"><span class="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs font-bold border border-purple-200">${xssHtml(u.plan_name || 'No Plan')}</span></td>
+              <td class="p-3"><span class="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold border border-blue-200">${xssHtml(u.profile || 'None')}</span></td>
               <td class="p-3 font-mono text-xs text-gray-600">${u.sessions_30d || 0}</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.data_30d || 0) / 1048576).toFixed(2)} MB</td>
               <td class="p-3 font-mono text-xs text-gray-600">${((u.time_30d || 0) / 3600).toFixed(1)} hrs</td>
               <td class="p-3 font-mono text-xs text-gray-500">${u.last_online ? new Date(u.last_online).toLocaleDateString() : '—'}</td>
               <td class="p-3" onclick="event.stopPropagation()">
                 <div class="flex items-center gap-2">
-                  <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp('${escapeJS(u.username)}', this.checked)" class="h-4 w-4 text-blue-600 rounded">
+                  <input type="checkbox" ${Number(u.totp_enabled) === 1 ? 'checked' : ''} onchange="toggleTotp(${xssArg(u.username)}, this.checked)" class="h-4 w-4 text-blue-600 rounded">
                   <span class="text-sm ${Number(u.totp_registered) === 1 ? 'text-green-600 font-medium' : 'text-amber-600'}">
                     ${Number(u.totp_enabled) === 1 ? (Number(u.totp_registered) === 1 ? 'Active' : 'Pending') : 'Off'}
                   </span>
-                  ${Number(u.totp_enabled) === 1 ? `<div class="text-[10px] text-blue-600 mt-1 cursor-pointer hover:underline uppercase tracking-wider font-bold" onclick="event.stopPropagation();resetTotp('${escapeJS(u.username)}')">Reset Key</div>` : ''}
+                  ${Number(u.totp_enabled) === 1 ? `<div class="text-[10px] text-blue-600 mt-1 cursor-pointer hover:underline uppercase tracking-wider font-bold" onclick="event.stopPropagation();resetTotp(${xssArg(u.username)})">Reset Key</div>` : ''}
                 </div>
               </td>
               <td class="p-3 text-right" onclick="event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1 flex-wrap">
-                  ${u.plan_id ? `<button onclick="resetPlan(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
-                  <button onclick="editUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
-                  <button onclick="deleteUser(decodeURIComponent('${encodeURIComponent(u.username)}'))" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
+                  ${u.plan_id ? `<button onclick="resetPlan(${xssArg(u.username)})" class="bg-yellow-100 text-yellow-700 hover:bg-yellow-200 border border-yellow-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Reset Usage</button>` : ''}
+                  <button onclick="editUser(${xssArg(u.username)})" class="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Edit</button>
+                  <button onclick="deleteUser(${xssArg(u.username)})" class="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Delete</button>
                 </div>
               </td>
             </tr>
@@ -356,26 +358,26 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
               <tr class="bg-blue-50 border-b border-blue-100">
                 <td colspan="9" class="px-4 py-3">
                   <div class="flex flex-wrap gap-4 items-start">
-                    <div class="font-semibold text-blue-800 text-sm">🔑 TOTP Enrollment Pending for <strong>${u.username}</strong></div>
+                    <div class="font-semibold text-blue-800 text-sm">🔑 TOTP Enrollment Pending for <strong>${xssHtml(u.username)}</strong></div>
                     <div>
                       <div class="font-semibold text-gray-700 text-xs mb-1">Setup URL</div>
                       <div class="flex">
-                        <input id="url_${u.username}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-72" readonly value="${window.totpEnrollments[u.username].url}">
-                        <button onclick="navigator.clipboard.writeText(document.getElementById('url_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                        <input id="url_${xssHtml(encodeURIComponent(u.username))}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-72" readonly value="${xssHtml(window.totpEnrollments[u.username].url)}">
+                        <button onclick="navigator.clipboard.writeText(document.getElementById(${xssArg('url_' + encodeURIComponent(u.username))}).value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
                       </div>
                     </div>
                     <div>
                       <div class="font-semibold text-gray-700 text-xs mb-1">Enrollment Code</div>
                       <div class="flex">
-                        <input id="code_${u.username}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-36 font-mono tracking-widest" readonly value="${window.totpEnrollments[u.username].code}">
-                        <button onclick="navigator.clipboard.writeText(document.getElementById('code_${u.username}').value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
+                        <input id="code_${xssHtml(encodeURIComponent(u.username))}" class="border rounded-l px-2 py-1.5 bg-white text-xs text-gray-600 w-36 font-mono tracking-widest" readonly value="${xssHtml(window.totpEnrollments[u.username].code)}">
+                        <button onclick="navigator.clipboard.writeText(document.getElementById(${xssArg('code_' + encodeURIComponent(u.username))}).value)" class="bg-gray-200 border border-l-0 rounded-r px-2 py-1 hover:bg-gray-300 text-xs">Copy</button>
                       </div>
                     </div>
                     <div>
                       <div class="font-semibold text-gray-700 text-xs mb-1">Expires</div>
                       <input class="w-full border rounded px-2 py-1.5 bg-gray-100 text-xs text-gray-600" readonly value="${new Date(window.totpEnrollments[u.username].expires_at).toLocaleString()}">
                     </div>
-                    <button onclick="clearEnrollment('${escapeJS(u.username)}')" class="text-xs text-blue-600 hover:text-blue-800 self-end">Dismiss</button>
+                    <button onclick="clearEnrollment(${xssArg(u.username)})" class="text-xs text-blue-600 hover:text-blue-800 self-end">Dismiss</button>
                   </div>
                 </td>
               </tr>` : ''}`).join('');
@@ -461,9 +463,15 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                 const plan = userData.plan_name || 'No Plan';
                 const profile = userData.profile || 'No Profile';
                 document.getElementById('dpSubtitle').innerHTML = `
-              <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
-              <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>
+              <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${xssHtml(plan)}</span>
+              <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${xssHtml(profile)}</span>${Number(userData.disabled) === 1 ? '<span class="text-red-700 font-bold">Disabled</span>' : ''}
             `;
+                const detailName = document.getElementById('dpUsername');
+                detailName.classList.remove('text-gray-800', 'text-red-700', 'text-blue-700');
+                detailName.classList.add(Number(userData.disabled) === 1 ? 'text-red-700' : 'text-blue-700');
+                const detailAvatar = document.getElementById('dpAvatar');
+                detailAvatar.classList.remove('bg-blue-100', 'text-blue-700', 'bg-red-100', 'text-red-700');
+                detailAvatar.classList.add(...(Number(userData.disabled) === 1 ? ['bg-red-100', 'text-red-700'] : ['bg-blue-100', 'text-blue-700']));
 
                 // Footer buttons
                 document.getElementById('dpEditBtn').onclick = () => { closeDetailPanel(); editUser(username); };
@@ -477,7 +485,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
 
                 renderDetailTab(currentDetailTab, currentDetailData);
             } catch (e) {
-                document.getElementById('dpBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
+                document.getElementById('dpBody').innerHTML = `<div class="text-red-500 text-sm p-4">Failed to load user data: ${xssHtml(e.message)}</div>`;
             }
         }
 
@@ -611,7 +619,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                   <thead><tr class="bg-gray-50 text-gray-500 text-xs"><th class="px-3 py-2 text-left">NAS IP</th><th class="px-3 py-2 text-right">Sessions</th><th class="px-3 py-2 text-right">Data</th><th class="px-3 py-2 text-right">Avg Duration</th></tr></thead>
                   <tbody>${r.nasStats.map(n => `
                     <tr class="border-t border-gray-50">
-                      <td class="px-3 py-2 font-mono text-xs">${n.nasipaddress}</td>
+                      <td class="px-3 py-2 font-mono text-xs">${xssHtml(n.nasipaddress)}</td>
                       <td class="px-3 py-2 text-right font-bold">${Number(n.session_count).toLocaleString()}</td>
                       <td class="px-3 py-2 text-right text-gray-600">${fmtBytes(n.total_bytes)}</td>
                       <td class="px-3 py-2 text-right text-gray-600">${fmtDuration(n.avg_duration)}</td>
@@ -656,7 +664,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
 
             return `
             <div class="mb-5">
-              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${plan.name} <span class="normal-case text-gray-400 font-normal">(resets ${resetPeriod})</span></h3>
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${xssHtml(plan.name)} <span class="normal-case text-gray-400 font-normal">(resets ${xssHtml(resetPeriod)})</span></h3>
               <div class="bg-gray-50 rounded-xl border border-gray-100 p-4 space-y-4">
 
                 ${dataPct !== null ? `
@@ -712,9 +720,9 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                     <td class="px-3 py-2 font-mono">${isActive ? '<span class="text-green-600 font-bold">Active</span>' : fmtDateShort(a.acctstoptime)}</td>
                     <td class="px-3 py-2 text-right font-mono">${fmtDuration(a.acctsessiontime)}</td>
                     <td class="px-3 py-2 text-right font-mono">${fmtBytes(dataBytes)}</td>
-                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
-                    <td class="px-3 py-2 font-mono">${a.framedipaddress || '—'}</td>
-                    <td class="px-3 py-2 text-gray-400">${a.acctterminatecause || (isActive ? '—' : '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.nasipaddress || '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.framedipaddress || '—')}</td>
+                    <td class="px-3 py-2 text-gray-400">${xssHtml(a.acctterminatecause || '—')}</td>
                   </tr>`;
             }).join('')}
                 </tbody>
@@ -744,12 +752,12 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                   <tr class="border-t border-gray-50">
                     <td class="px-3 py-2 font-mono">${fmtDateShort(a.authdate)}</td>
                     <td class="px-3 py-2">
-                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${a.reply}</span>
+                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${xssHtml(a.reply)}</span>
                     </td>
-                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
-                    <td class="px-3 py-2 font-mono">${a.callingstationid || '—'}</td>
-                    <td class="px-3 py-2 text-gray-500">${a.class || '—'}</td>
-                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${a.replymessage || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.nasipaddress || '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.callingstationid || '—')}</td>
+                    <td class="px-3 py-2 text-gray-500">${xssHtml(a.class || '—')}</td>
+                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${xssHtml(a.replymessage || '—')}</td>
                   </tr>`;
             }).join('')}
                 </tbody>
@@ -765,8 +773,8 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             const profileFilter = document.getElementById('profileFilter');
             const currentPlan = planFilter.value;
             const currentProfile = profileFilter.value;
-            planFilter.innerHTML = '<option value="">All Plans</option><option value="__NO_PLAN__">No Plan</option>' + plans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
-            profileFilter.innerHTML = '<option value="">All Profiles</option><option value="__NO_PROFILE__">No Profile</option>' + profiles.map(x => `<option value="${x}">${x}</option>`).join('');
+            planFilter.innerHTML = '<option value="">All Plans</option><option value="__NO_PLAN__">No Plan</option>' + plans.map(x => `<option value="${Number(x.id)}">${xssHtml(x.name)}</option>`).join('');
+            profileFilter.innerHTML = '<option value="">All Profiles</option><option value="__NO_PROFILE__">No Profile</option>' + profiles.map(x => `<option value="${xssHtml(x)}">${xssHtml(x)}</option>`).join('');
             planFilter.value = currentPlan;
             profileFilter.value = currentProfile;
         }
@@ -782,8 +790,8 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                 // Rendering 100,000 native select options blocks the page; server-side name search covers the complete catalog.
                 const visiblePlans = allPlans.slice(0, 500);
                 const visibleProfiles = profiles.slice(0, 500);
-                document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + visiblePlans.map(x => `<option value="${x.id}">${x.name}</option>`).join('');
-                document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + visibleProfiles.map(x => `<option value="${x}">${x}</option>`).join('');
+                document.getElementById('uplan').innerHTML = '<option value="">-- No Plan (Unlimited) --</option>' + visiblePlans.map(x => `<option value="${Number(x.id)}">${xssHtml(x.name)}</option>`).join('');
+                document.getElementById('uprofile').innerHTML = '<option value="">-- None --</option>' + visibleProfiles.map(x => `<option value="${xssHtml(x)}">${xssHtml(x)}</option>`).join('');
                 populateFilters(visiblePlans, visibleProfiles);
                 usersLookupsLoaded = true;
             }
@@ -817,6 +825,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             originalUsername = null;
             document.getElementById('userModal').classList.remove('hidden');
             document.getElementById('userForm').reset();
+            document.getElementById('udisabled').checked = false;
             document.getElementById('uname').readOnly = false;
             document.getElementById('uname').classList.remove('bg-gray-100');
         }
@@ -849,6 +858,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             ensureAssignedSelectOption('uprofile', u.profile, u.profile);
             ensureAssignedSelectOption('uplan', u.plan_id, u.plan_name || `Plan ${u.plan_id}`);
             document.getElementById('uprofile').value = u.profile || '';
+            document.getElementById('udisabled').checked = Number(u.disabled) === 1;
             document.getElementById('staticIp').value = u.static_ip || '';
             document.getElementById('uplan').value = u.plan_id || '';
         }
@@ -865,7 +875,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             const p = document.getElementById('upass').value;
             const prof = document.getElementById('uprofile').value;
             const plan = document.getElementById('uplan').value;
-            const payload = { username: u, password: p, profile: prof, plan_id: plan, static_ip: document.getElementById('staticIp').value.trim() };
+            const payload = { username: u, password: p, profile: prof, plan_id: plan, static_ip: document.getElementById('staticIp').value.trim(), disabled: document.getElementById('udisabled').checked };
             if (originalUsername) {
                 const res = await apiFetch(`/api/users/${originalUsername}`, { method: 'PUT', body: JSON.stringify(payload) });
                 if (res.ok) { closeModal(); loadData(); } else { const err = await res.json(); alert('Error: ' + err.error); }

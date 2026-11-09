@@ -217,7 +217,8 @@
         </div>
     </div>
 
-    <script src="/js/layout.js"></script>
+    <script src="/js/xss-render.js"></script>
+<script src="/js/layout.js"></script>
     <script>
 
         let currentSort = null;
@@ -472,7 +473,7 @@
 
             return `
             <div class="mb-5">
-              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${plan.name} <span class="normal-case text-gray-400 font-normal">(resets ${resetPeriod})</span></h3>
+              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plan: ${xssHtml(plan.name)} <span class="normal-case text-gray-400 font-normal">(resets ${xssHtml(resetPeriod)})</span></h3>
               <div class="bg-gray-50 rounded-xl border border-gray-100 p-4 space-y-4">
 
                 ${dataPct !== null ? `
@@ -527,9 +528,9 @@
                     <td class="px-3 py-2 font-mono">${isActive ? '<span class="text-green-600 font-bold">Active</span>' : fmtDateShort(a.acctstoptime)}</td>
                     <td class="px-3 py-2 text-right font-mono">${fmtDuration(a.acctsessiontime)}</td>
                     <td class="px-3 py-2 text-right font-mono">${fmtBytes(dataBytes)}</td>
-                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
-                    <td class="px-3 py-2 font-mono">${a.framedipaddress || '—'}</td>
-                    <td class="px-3 py-2 text-gray-400">${a.acctterminatecause || (isActive ? '—' : '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.nasipaddress || '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.framedipaddress || '—')}</td>
+                    <td class="px-3 py-2 text-gray-400">${xssHtml(a.acctterminatecause || '—')}</td>
                   </tr>`;
             }).join('')}
                 </tbody>
@@ -558,12 +559,12 @@
                   <tr class="border-t border-gray-50">
                     <td class="px-3 py-2 font-mono">${fmtDateShort(a.authdate)}</td>
                     <td class="px-3 py-2">
-                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${a.reply}</span>
+                      <span class="px-1.5 py-0.5 rounded text-xs font-bold ${isAccept ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${xssHtml(a.reply)}</span>
                     </td>
-                    <td class="px-3 py-2 font-mono">${a.nasipaddress || '—'}</td>
-                    <td class="px-3 py-2 font-mono">${a.callingstationid || '—'}</td>
-                    <td class="px-3 py-2 text-gray-500">${a.class || '—'}</td>
-                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${a.replymessage || '—'}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.nasipaddress || '—')}</td>
+                    <td class="px-3 py-2 font-mono">${xssHtml(a.callingstationid || '—')}</td>
+                    <td class="px-3 py-2 text-gray-500">${xssHtml(a.class || '—')}</td>
+                    <td class="px-3 py-2 text-gray-400 max-w-xs truncate">${xssHtml(a.replymessage || '—')}</td>
                   </tr>`;
             }).join('')}
                 </tbody>
@@ -695,7 +696,7 @@
                   <thead><tr class="bg-gray-50 text-gray-500 text-xs"><th class="px-3 py-2 text-left">NAS IP</th><th class="px-3 py-2 text-right">Sessions</th><th class="px-3 py-2 text-right">Data</th><th class="px-3 py-2 text-right">Avg Duration</th></tr></thead>
                   <tbody>${r.nasStats.map(n => `
                     <tr class="border-t border-gray-50">
-                      <td class="px-3 py-2 font-mono text-xs">${n.nasipaddress}</td>
+                      <td class="px-3 py-2 font-mono text-xs">${xssHtml(n.nasipaddress)}</td>
                       <td class="px-3 py-2 text-right font-bold">${Number(n.session_count).toLocaleString()}</td>
                       <td class="px-3 py-2 text-right text-gray-600">${fmtBytes(n.total_bytes)}</td>
                       <td class="px-3 py-2 text-right text-gray-600">${fmtDuration(n.avg_duration)}</td>
@@ -804,8 +805,8 @@
                 const plan = userData.plan_name || 'No Plan';
                 const profile = userData.profile || 'No Profile';
                 document.getElementById('dpSubtitle').innerHTML = `
-          <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${plan}</span>
-          <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${profile}</span>`;
+          <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">${xssHtml(plan)}</span>
+          <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">${xssHtml(profile)}</span>`;
 
                 document.getElementById('dpResetPlanBtn').classList.toggle('hidden', !userData.plan_id);
 
@@ -819,7 +820,7 @@
                 renderDetailTab(currentDetailTab, currentDetailData);
             } catch (e) {
                 document.getElementById('dpBody').innerHTML =
-                    `<div class="text-red-500 text-sm p-4">Failed to load user data: ${e.message}</div>`;
+                    `<div class="text-red-500 text-sm p-4">Failed to load user data: ${xssHtml(e.message)}</div>`;
             }
         }
 
@@ -897,12 +898,12 @@
             tbody.innerHTML = filtered.map(function (s) {
                 var idx = allSessions.indexOf(s);
                 return '<tr class="row-in border-b border-gray-50 hover:bg-blue-50 cursor-pointer transition-colors" onclick="showModal(' + idx + ')">' +
-                    (globalSessionsReadOnly ? '' : '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="session-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="' + s.radacctid + '" onchange="updateClearButton()"></td>') +
+                    (globalSessionsReadOnly ? '' : '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="session-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="' + Number(s.radacctid) + '" onchange="updateClearButton()"></td>') +
                     '<td class="p-3 font-bold text-gray-800">' + escapeSessionText(s.username) + '</td>' +
                     (globalSessionsReadOnly ? '<td class="p-3 text-xs text-gray-700">' + escapeSessionText(s.tenant_name || 'Unassigned') + '</td>' : '') +
-                    '<td class="p-3 font-mono text-xs text-gray-600">' + (s.framedipaddress || '—') + '</td>' +
-                    '<td class="p-3 font-mono text-xs text-gray-600">' + (s.nasipaddress || '—') + '</td>' +
-                    '<td class="p-3 font-mono text-xs text-gray-500 max-w-[140px] truncate">' + (s.callingstationid || '—') + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-600">' + xssHtml(s.framedipaddress || '—') + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-600">' + xssHtml(s.nasipaddress || '—') + '</td>' +
+                    '<td class="p-3 font-mono text-xs text-gray-500 max-w-[140px] truncate">' + xssHtml(s.callingstationid || '—') + '</td>' +
                     '<td class="p-3 text-xs text-gray-600">' + (s.acctstarttime ? new Date(s.acctstarttime).toLocaleString() : '—') + '</td>' +
                     '<td class="p-3 text-xs font-mono text-green-700 font-bold">' + (s.acctstarttime ? elapsed(s.acctstarttime) : '—') + '</td>' +
                     '<td class="p-3 text-xs text-right font-mono text-green-600">' + fmtGB(s.acctinputoctets) + '</td>' +
@@ -932,7 +933,7 @@
                 var display = val === null ? '<span class="text-gray-300 italic">null</span>' : val;
                 if (val && typeof val === 'string' && (val.match(/^\d{4}-\d{2}-\d{2}T/) || val.match(/^\d{4}-\d{2}-\d{2} /))) { display = new Date(val).toLocaleString(); }
                 var highlight = (key === 'acctinputoctets' || key === 'acctoutputoctets') ? 'font-bold text-blue-700' : 'text-gray-800';
-                return '<tr class="border-b border-gray-50 hover:bg-gray-50"><td class="p-2 font-bold text-gray-600 w-1/3 text-xs">' + key + '</td><td class="p-2 font-mono text-xs break-all ' + highlight + '">' + display + '</td></tr>';
+                return '<tr class="border-b border-gray-50 hover:bg-gray-50"><td class="p-2 font-bold text-gray-600 w-1/3 text-xs">' + xssHtml(key) + '</td><td class="p-2 font-mono text-xs break-all ' + highlight + '">' + (val === null ? display : xssHtml(display)) + '</td></tr>';
             }).join('');
             document.getElementById('detailsModal').classList.remove('hidden');
         }

@@ -1,37 +1,36 @@
-# RadiusStack 6.1.0 source release
+# RadiusStack 6.1.1 source release
 
-This document describes the **declared source version**. The `6.1.0` GitHub tag and release asset are not created by changing `VERSION`; follow the upgrade procedure only after Dean publishes and verifies them. This archive contains the complete application source, the public `.env.example`, and an identical mode-0600 `.env` for **fresh installations only**. It does not contain the dev server's private environment. Existing installations must preserve their own `.env`, Compose overrides, database volumes, and operational backup files.
+This document describes the **declared source version**, not a published GitHub Release. The `6.1.1` tag and release asset do not exist merely because `VERSION` changes. **Do not run an asset-based upgrade until Dean publishes the exact tag and source asset, verifies their digest, and rehearses the upgrade on a copy of the installation.** This archive has `.env.example` and `setup_env.sh` but **no `.env`**. Keep the existing installation's private `.env`, Compose overrides, database volumes, certificates and backups.
 
-## Changes since 6.0.6
+## Changes since 6.1.0
 
-- Settings cards are collapsible, with scope-specific expanded defaults and irrelevant Global controls removed. Tenant certificate settings are labeled RadSec.
-- Global Active Sessions aggregates tenant sessions and identifies their tenant, while remaining read-only. Tenant session actions remain tenant-scoped.
-- Pushbullet notifications have scoped configuration, optional recipient email, and an authorized test message with safe delivery diagnostics.
-- See [RELEASE_6.1.0.md](RELEASE_6.1.0.md) for concise release notes. Features and migrations from 6.0.6 remain included; see [RELEASE_6.0.6.md](RELEASE_6.0.6.md) for those earlier changes.
+- Users and MAC-auth devices can be disabled/re-enabled in their edit forms; disabled identities appear red. The API uses tenant-scoped `Auth-Type := Reject` for local authentication; proxy-only downstream accepts intentionally remain valid. No schema migration is required.
+- Disabling another admin's MFA now requires Admins read-write permission.
+- Unused user/executive and failed-auth PDF exports are removed, with their Chromium/Puppeteer runtime dependency. JSON reports remain; clients calling PDF endpoints need to migrate.
+- Browser-rendered RADIUS/admin data is escaped in affected pages to prevent HTML and inline-handler injection.
+- Fresh-install setup gains the Bash `setup_env.sh` wizard, and the release archive omits `.env` entirely. See [RELEASE_6.1.1.md](RELEASE_6.1.1.md) for details and [RELEASE_6.1.0.md](RELEASE_6.1.0.md) for the preceding release's features.
 
 ## Fresh installation
 
-Review `.env.example`; replace public default secrets with unique credentials and set host ports, DNS and HA member values for your installation. Do not use the template credentials on a reachable service. After the 6.1.0 source asset is published and verified, from `radiusstack-6.1.0`:
+After obtaining and verifying the published archive, extract it and enter `radiusstack-6.1.1`. Run `bash setup_env.sh` to create a private mode-0600 `.env` (choose HA Y or N, then answer the setup prompts), **or** run `cp .env.example .env && chmod 600 .env` and replace every public default secret before exposing the service. On an HA secondary, reuse the primary's shared HA token and encryption/session keys rather than generating independent values. Set the actual host IP/DNS, ports and peer address for your installation. Then:
 
 ```sh
 docker compose -f docker-compose.yml config -q
 docker compose -f docker-compose.yml up -d --build
 ```
 
-Verify migration completion, the API and web listener, and Radius readiness. For HA, set distinct `HA_DB_OFFSET` values (1 and 2), appropriate `HA_ROLE` and actual peer addresses. Test both members before relying on replication or failover.
+Verify migrations and the API, web and Radius listeners on a disposable environment before production use. Test both members of an HA pair before relying on failover.
 
-## Upgrade from 6.0.6
+## Upgrade from 6.1.0
 
-**Do not run this command until the 6.1.0 GitHub Release asset is actually published and its metadata exposes the correct `sha256:` digest.** Back up the database independently and rehearse the exact published asset on a copy of the real installation. From the existing installation directory, use the **installed** updater so its rollback, private `.env`, and Compose override behavior apply:
+**Do not run this command until the 6.1.1 GitHub Release asset is actually published and its metadata exposes the correct `sha256:` digest.** Back up independently and rehearse the exact published asset on a copy of the installation first. Run the installed upgrader from the existing installation directory, not a script extracted from the new archive:
 
 ```sh
-./upgrade.sh --to 6.1.0
+./upgrade.sh --to 6.1.1
 ```
 
-This version's Settings and session-visibility changes do not require a new schema migration. Existing migrations remain in the source release and must still run on older installations. The upgrade from the published asset has **not yet been rehearsed**; declaring the version on the dev host is not an upgrade test. On an HA pair, back up and plan an ordered upgrade of both members with compatible schemas and controlled replay. A live two-member transfer/failover was not demonstrated for this declaration.
+The installed updater requires an existing `.env` and preserves it; a fresh archive has no `.env`. Do not replace the private file with `.env.example`. If the old installation's updater cannot process the published archive, stop: a corrected updater inside the new archive cannot repair the old updater before it starts. Use only a separately verified bootstrap path. These changes do not require a new schema migration, but older migrations remain packaged for upgrades from earlier versions. The exact published-asset upgrade and two-member failover have **not** been rehearsed by this declaration. Database DDL from any migration is not rolled back by a source rollback.
 
-For older installations, rehearse the exact source version and populated schema before production. A failed upgrade can restore managed source files but **cannot roll back database DDL**. Inspect the restricted upgrade log and database compatibility before restarting an older writer.
+## Release identity
 
-## Release identity and verification
-
-Planned Git tag: `6.1.0` (no `v`). Planned asset: `radiusstack-source.tar.gz`, rooted at `radiusstack-6.1.0/`. Neither the tag nor asset is created by this declaration. After publication, verify the downloaded asset digest against GitHub Release metadata and its extracted version markers before upgrading a customer system. Production deployment is separate from this development declaration.
+Planned Git tag: `6.1.1` (no `v`). Planned asset: `radiusstack-source.tar.gz`, rooted at `radiusstack-6.1.1/`. The local candidate is not a published release. After Dean publishes it, verify the downloaded asset digest against the Release metadata and both extracted version markers before using an updater on a customer system.
