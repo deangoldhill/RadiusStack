@@ -12,6 +12,7 @@ Welcome to the RadiusStack Wiki! This guide covers everything from deployment to
    - [Managing Users & TOTP 2FA](#managing-users--totp-2fa)
    - [MAC Authentication](#mac-authentication)
    - [Profiles & Custom Attributes](#profiles--custom-attributes)
+   - [COA & POD](#COA--POD)
    - [Usage Plans](#usage-plans)
    - [NAS Clients](#nas-clients)
    - [Administrators & 2FA](#administrators--2fa)
@@ -112,7 +113,7 @@ sequenceDiagram
    git clone https://github.com/deangoldhill/RadiusStack.git
    cd RadiusStack
    ```
-2. Edit `.env` to set your desired passwords, keys and settings.
+2. Optionally use the interactive 'setup_env.sh' script to set vairables or rename '.env.example' to '.env' and edit it to set your desired passwords, keys and settings.
 3. Bring the stack online:
    ```bash
    docker compose up -d --build
@@ -236,91 +237,76 @@ Multi-tenancy is always enabled by design, even if it is not your intention to u
 The global tenant is for system wide configuration and visibility like HA, container management and debug. It is not intended to be a service tenant.<br/>
 On a fresh install, in addition to the global tenant, a default tenant is created, which is a service tenant.
 
-### Managing Users & TOTP 2FA
-The **Users** module allows you to create users and assign profiles and usage plans. 
-
-**TOTP (Multi-Factor Authentication):**
-* RadiusStack supports adding TOTP (e.g., Google Authenticator) to RADIUS users on a per user basis (TOTP only supports PAP authentication).
-* **To Enable:** Toggle the TOTP switch next to a user. The UI will instantly generate a one-time registration code and a secure registration URL.
-* **Registration:** Provide the user with the URL and code. They will log in via the web portal using their standard RADIUS password + the one-time code to receive their scannable QR Code.
+### Managing Users & MFA
+The **Users** page is where you to create users and assign profiles and usage plans.<br/>
+RadiusStack supports MFA using TOTP. for example using the Google or Microsoft authenticator app.
+- **To Enable:** Tick the TOTP option next to a user. This generate a unique one-time registration code and a registration URL which should be provided to the user.
 *By default the registration code is valid for 24 hours, but can be modified in the settings page.
-* **Authentication:** Once registered, the user authenticates by appending their 6-digit TOTP code directly to the end of their normal password (e.g., `password123456`).
-*Users without TOTP enabled will be able to login with just their username and password. Therefore, it is highly recomended users without TOTP (e.g. for WIFI authenticaiton) be assigned to a profile restricted by NAS IP (Access Points) otherwise a brute force attack may still be possible for these users.
-*Note - The freeRadius TOTP module only works with PAP because the radius server needs to see the code in order to validate it against the TOTP key on record. It will not work with a challange password protocol. It will still work with EAP but only when using PAP as the password protocol. 
+- **Registration:** The user must use the link to access the registration portal. They must provide the registration code and password and then will be shown a QR code to import. Once imported, the user must enter the one-time code from the app to complete registration.
+- **Authentication:** Once registered, the user authenticates by appending the one-time code directly to the end of their normal password (e.g., `password123456`).
+Note - MFA only works with PAP authentication protocol. 
 
 ### MAC Authentication
-## MAC Authentication (MAB)
 
-RadiusStack natively supports MAC Authentication Bypass (MAB). This is incredibly useful for authenticating "headless" or IoT devices that cannot type in a username or password (e.g., Smart TVs, Printers, Game Consoles, or corporate VoIP phones).
-
-Instead of prompting for credentials, your Network Access Server (NAS) reads the device's MAC address and automatically queries the RADIUS server in the background.
-
-### How to Configure MAC Authentication
-
-In RadiusStack, a MAC address is simply treated as a standard user. 
-
-1. **Check your NAS format:** Different vendors send MAC addresses in different formats. Check your router/switch documentation or check the RadiusStack connection logs to see how it is formatting the request.
-   * Cisco / Ubiquiti often use: `aa:bb:cc:dd:ee:ff` or `AABBCCDDEEFF`
-   * Ruckus / Aruba might use: `aa-bb-cc-dd-ee-ff`
-2. **Create the "MAC" User:** 
-   * Navigate to the **Users** tab in the WebUI.
-   * Click **Add User**.
-   * **Username:** Enter the device's MAC address exactly as your NAS sends it (e.g., `aa:bb:cc:dd:ee:ff`).
-   * **Password:** Enter the MAC address again. *(Note: Most networking vendors send the MAC address as both the username and the password by default during MAB. If your vendor uses a specific static password for MAB, enter that instead).*
-3. **Assign a Profile:**
-   * Assign the device to an appropriate profile (e.g., an `IoT_Devices` group).
-   * You can use the Profile's custom reply attributes to dynamically assign the device to a specific VLAN (e.g., `Tunnel-Type = 13`, `Tunnel-Private-Group-Id = 40`).
-
-### Best Practices for MAC Authenitcation
-
-* **Dedicated Profiles:** Always put MAC-authenticated devices into their own restricted Profile. MAC addresses are easily spoofed, so you should ensure that the `IoT_Devices` profile has restricted firewall/VLAN access and is not granted the same privileges as your secure WPA2-Enterprise users.
-* **NAS IP Restrictions:** If you only have one or two specific switches that handle IoT devices, use the **NAS IP Restriction** feature on the Profile to ensure MAC authentication is *only* accepted from those specific network switches.
-* **Accounting:** RadiusStack tracks bandwidth for MAC users exactly the same way it tracks human users. You can apply data or session limits directly to the MAC address if you want to cap the bandwidth of a specific device.
+RadiusStack supports MAC Authentication which is where the NAS device acts as the supplicant and uses the connecting devices MAC address as the username and password. <br/>
+This is useful for authenticating devices for WIFI or Dot1X that do not have a supplicant. (e.g., Printers, Phones, IoT devices).<br/>
+VLAN assignment, usage limits and other features are still possible with MAC authentication.<br/>
+You can enable the 'Auto MAC registration' feature in the settings page which will automatically create MAC device objects for new devices and optionally apply a defined profile and usage plan. <br/>
+In RadiusStack, a MAC auth device is treated similar to a standard user. <br/>
+The format in which the MAC address is sent (E.G aa:bb:cc:dd:ee:ff, aa-bb-cc-dd-ee-ff, aabbccddee) can vary by NAS device and some may support multiple formats. RadiusStack support the 3 formats in the example above. Colon separation is the most common and is recommended where possible.
 
 ### Profiles & Custom Attributes
 Profiles act as permission groups for your users. Instead of configuring attributes for every single user, you create a Profile and assign users to it.
-* **VLAN assignment:** specify a VLAN ID. All supporting attributes for dynamic VLAN assignment will automatically be added.
-* **Reply Attributes:** You can inject any standard FreeRADIUS dictionary attribute (e.g., `Filter-Id`, `acct-interim-interval, Vendor-Specific`). Select form a list of commonly used attributes or add additional attributes to the list via the settings page.
-* **NAS Restrictions:** You can optionally lock a profile so its users can only authenticate from a list of specific NAS IP addresses.
+- **VLAN assignment:** specify a VLAN ID. All supporting attributes for dynamic VLAN assignment will automatically be added.
+- **Reply Attributes:** You can inject any standard FreeRADIUS dictionary attribute (e.g., `Filter-Id`, `acct-interim-interval, Vendor-Specific`). Select from a list of commonly used attributes or add additional attributes to the list via the settings page.
+- **NAS Restrictions:** You can optionally lock a profile so its users can only authenticate from a list of specific NAS IP addresses.
 *In a standard radius deployment, only 1 NAS-IP-Address check attribute can be specified. But RadiusStack uses a custom ULANG policy that allows multiple IP addresses to be listed in the profile, a match of any one will be accepted.
+
+### COA & POD
+Change of Authorisation (CoA) and Packet of Disconnect (PoD) are special packets sent by the Radius server on UDP port 3799 to the NAS to disconnect or modify access permission for active sessions.<br/>
+If a user's settings are changed like VLAN assignment or exceeds usage limits, changes will only apply on the next session which in some cases may be a very long time. These packets tell the NAS to update the session (CoA) or force a reconnect (PoD) to make these changes apply immediately.<br/>
+RadiusStack supports the following methods:<br/>
+Enable automatic PoD upon usage depletion in a usage plan - this will send a PoD packet when a user exceeds their limits.<br/>
+On-demand CoA or PoD from the active sessions page.<br/>
+Support for these packets vary by NAS device type and vendor. Most vendors align to RFC 5176 but some may not.<br/>
+Some vendors may require certain attributes to be sent. This can be configured in the NAS object under 'Advanced: CoA / PoD packet attributes'
 
 
 ### Usage Plans
-Usage plans enforce strict data and or time limits on user sessions.
-* **Data/Time Caps:** Define limits such as "10 GB data" or "24 hours connection time".
-* **Reset Cycles:** Set plans to reset automatically (`daily`, `monthly`) or `never`.
-* If a user breaches their limit, RadiusStack will dynamically reject their Access-Requests until the cycle resets.
-* Manually reset usage cycle in the users page.
+Usage plans can be assigned to users and MAC auth devices to enforce data and or time limits.<br/>
+When usage limits have been exceeded, authentication requests will be rejected until the cycle is automatically or manually reset.<br/>
+- **Data/Time Caps:** Define limits such as "10 GB data" or "24 hours connection time".
+- **Reset Cycles:** Set plans to reset automatically (`daily`, `weekly`, `monthly`) or `never`.
+
 
 ### NAS Clients
-The **NAS** (Network Access Server) module defines which network devices are permitted to send Radius requests to RadiusStack.
-* Add switches, firewalls, or Wi-Fi access points by IP address.
-* Set a strong, shared `Secret` key which must be mirrored on the client device. 
-* The FreeRadius service will be automatically restarted whenever a NAS device is added or edited, this is nessesary for the changes to take effect. 
+The **NAS** (Network Access Server) defines which network devices are permitted to send Radius requests to RadiusStack.
+- Add switches, firewalls, or Wi-Fi access points by IP address.
+- Set a strong, shared `Secret` key which must be mirrored on the client device. 
+- The FreeRadius service will be automatically restarted whenever a NAS device is added or edited, this is necessary for the changes to take effect. 
 
-### Administrators & 2FA
-The **Admins** tab manages who has access to the RadiusStack Web UI and REST API.
-* **Granular Permissions:** Restrict admins to specific modules (e.g., allow an admin to manage Users, but not profiles and Settings) Grant read-only or read-write permission.
-* **2FA Enforcement:** You can toggle 2FA on a per-admin basis. Alternatively, navigate to **Settings** and check `Enforce 2FA for all Administrators` to mandate MFA per tenant. When an admin with 2FA enabled logs in for the first time, they will be forced to register 2FA.
-* **API Keys:** Every admin has a unique `X-API-Key` that can be regenerated at any time for programmatic access.
+### Administration
+The **Adminstrators** tab manages who has access to the RadiusStack Web UI and REST API.
+- **Granular Permissions:** You can restrict admins to specific modules (e.g., allow an admin to manage Users, but not profiles and Settings) and grant read-only or read-write permission.<br/>
+An administrator with the 'platform super administration' role can assign permission to one or more tenants, while a tenant specific administrator can only assign permission to tenants which they have permission to.<br/>
+- **2FA Enforcement:** You can toggle 2FA on a per-admin basis, or you can enforce MFA for all administrators assigned to a tenant including the global tenant. When enabled, the administrator will be forced to register MFA and will be required to provide a one-time code in a second stage login page.<br/>
+- **API Keys:** Every admin has a unique `X-API-Key` that can be regenerated at any time for programmatic access.
 
 ### Certificates (EAP/SSL)
-For advanced 802.1X enterprise network deployments (like WPA2-Enterprise), FreeRADIUS requires TLS certificates.
-*Upon deployment, a 10 year certificate will be generated.
-* **Auto-Generate:** Navigate to the **Settings** tab and fill out the form to have the backend automatically generate a self-signed root CA and Server certificate.
-* **CA cert download:** to avoid the trust prompt on the client device, download and install the root CA certificate
-* **Custom certificate Upload:** You can upload your own pre-signed private key and server certificate.
-* Changes to certificates will automatically restart the FreeRadius service to apply the new keys.
+For tunneled authentication protocols (PEAP & TTLS), TLS certificates are used to establish the tunnel and for the client to authenticate the server.<br/>
+RadiusStack automatically generates a 10 year certificate and enables EAP on first use.<br/>
+You can generate a new CA certificate with custom attributes or import a custom certificate in the global tenant settings page.<br/>
+Some devices may enforce validation of the server certificate by importing the CA certificate. This can be downloaded in the settings page.
 
 ### RadSec
 Radsec (RFC 6614) is a protocol that runs over TCP port 2083 with the purpose of encrypting Radius traffic using mutual TLS.
 The entire data channel between the NAS client and the Radius server is encrypted, making it safe to traverse public networks.
 RadiusStack makes Radsec very easy to setup and manage
 1. Enable Radsec on the tenant setting page and provision a CA (this is synced to the secondary HA member)
-2. Create or edit a NAS client object, enable Radsec and save the NAs client before trying to generate the certificate.
-3. Edit the NAS client again, select either a combined key & certificate (P12) or seperate files depending on the type of NAS and what it wants. Click 'generate client certificate', download the client certificate & key and the tenant CA certificate. take a note of the pricate key passphrase.
+​2. Create or edit a NAS client object, enable Radsec and save the NAs client before trying to generate the certificate.
+3. Edit the NAS client again, select either a combined key & certificate (P12) or separate files depending on the type of NAS and what it wants. Click 'generate client certificate', download the client certificate & key and the tenant CA certificate. take a note of the private key passphrase.
 3. Enable Radsec on the NAS client, upload the client certificate and tenant CA certificate.
-You can use the [Radsec Test Tool](https://github.com/deangoldhill/Radsec-Test-Tool) to test the radsec implimentation. The tool will act as the NAS client and the end user. 
+You can use the [Radsec Test Tool](https://github.com/deangoldhill/Radsec-Test-Tool) to test the radsec implementation. The tool will act as the NAS client and the end user. 
 
 ### Downstream-proxy
 Downstream proxy is a feature to proxy requests to a downstream Radius server. Useful for shared service providers, identity providers or long term data storage.<br/>
@@ -330,7 +316,7 @@ You can select Duplicate, which will process the request locally and proxy the r
 Or you can select proxy only, which will log the request locally but will honour the response from the downstream Radius server only. It will not process the request locally.<br/>
 First define downstream radius server objects in the downstream Radius tab.<br/>
 Enable proxy either in a NAS or profile. <br/>
-in the event of a conflict, the setting in the profile will take presidence.
+in the event of a conflict, the setting in the profile will take precedence.
 
 ### Log Forwarding
 Log forwarding can be configured in the global tenant to forward authlogs and audit logs to a syslog server or SIEM.<br/>
@@ -339,27 +325,26 @@ This will apply to all tenants.
 
 ### Database Backup & Restore
 Located in the **Settings** page. Backup is exported in JSON format with two options
-* **Full Backup:** Generates a full database backup including all objects, settings and accounting / authenticaton / audit logs.
+- **Full Backup:** Generates a full database backup including all objects, settings and accounting / authentication / audit logs.
 *Note - full backups may fail to restore if imported to a different version as the database schema may be different.
-* **Object Backup:** Generates a partial backup of users, profiles, plans and NAS clients. and optionally include accounting / authenticaton / audit logs. This contains most of the data needed to restore the server.
-* The partial backup should safely import to different versions because the structure of these tables should never change.
-* **Backup Restore:** Upload a previously generated backup. RadiusStack intelligently maps the columns, ignoring obsolete schemas to prevent database crashes when upgrading to newer server versions.
+- **Object Backup:** Generates a partial backup of users, profiles, plans and NAS clients. and optionally include accounting / authentication / audit logs. This contains most of the data needed to restore the server.
+- The partial backup should safely import to different versions because the structure of these tables should never change.
+- **Backup Restore:** Upload a previously generated backup. RadiusStack intelligently maps the columns, ignoring obsolete schemas to prevent database crashes when upgrading to newer server versions.
 
-### Reporting and analyitcs 
-* **Dashboard:** The dashboard show most recent active sessions authenticaiton logs. Click an active session to view full details of the session.
-* **Auth Log:** View Authentication logs with search capability. This log will also show authentication attempts of unknown users.
-* **Accounting: View accounting records both active and closed. Filter by username, NAS client and date/time range. Click an accounting record to view full details.
+### Reporting and analytics 
+- **Dashboard:** The dashboard show most recent active sessions authentication logs. Click an active session to view full details of the session.
+- **Auth Log:** View Authentication logs with search capability. This log will also show authentication attempts of unknown users.
+- **Accounting: View accounting records both active and closed. Filter by username, NAS client and date/time range. Click an accounting record to view full details.
 *You can also purge accounting records for the specified filter scope.
-* **Audit Log:** The Audit Log tracks every action taken by Administrators (creations, deletions, setting changes). It shows the origin (webUI, API, System), result (success, failed, denied) and action attempted.
+- **Audit Log:** The Audit Log tracks every action taken by Administrators (creations, deletions, setting changes). It shows the origin (webUI, API, System), result (success, failed, denied) and action attempted.
 *Filter by date range, result or search for action keywords.
-* **Reports:** The top of the reports page shows the heaviest users by data usage and session time.
-*The failed authetnication report lists unique users with failed authentication by count, useful for detecting brute force attacks.
-*The user-specific report generates a detailed report of activity for a specific user including top sesssions, total requests, total data and session time for the specified date range.
-* **Module Stats:** Click an object in the users, MAC Auth, Profiles and Plans pages to view related stats
-* **Container logs: All containers are configured to redirect service logs to the container logs. View the container logs from the settings page.
+- **Reports:** The top of the reports page shows the heaviest users by data usage and session time.
+*The failed authentication report lists unique users with failed authentication by count, useful for detecting brute force attacks.
+*The user-specific report generates a detailed report of activity for a specific user including top sessions, total requests, total data and session time for the specified date range.
+- **Module Stats:** Click an object in the users, MAC Auth, Profiles and Plans pages to view related stats
+- **Container logs: All containers are configured to redirect service logs to the container logs. View the container logs from the settings page.
 
 ### API schema and tester
-* ** API schema:** The API Docs page lists the entire API schema
-* **Interactive API Tester:** Click one of the API endpoints to pre-populate the tester with the correct URL and modifiable sample data. Optionally generate a curl command to test the API call from a different host.
+- ** API schema:** The API Docs page lists the entire API schema
+- **Interactive API Tester:** Click one of the API endpoints to pre-populate the tester with the correct URL and modifiable sample data. Optionally generate a curl command to test the API call from a different host.
 *The API tester automatically uses the API key for the logged in administrator
-

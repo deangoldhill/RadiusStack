@@ -58,10 +58,23 @@ def build(source: str) -> str:
             token.attrSet("id", slug)
             if token.tag != "h1":
                 sections.append((slug, title, int(token.tag[1])))
+    # The wiki's hand-written contents still links to three renamed headings.
+    # Repair only those rendered fragments; keep the fetched Markdown unchanged.
+    legacy_anchors = {
+        "managing-users--totp-2fa": "managing-users--mfa",
+        "administrators--2fa": "administration",
+        "reporting-and-analyitcs": "reporting-and-analytics",
+    }
+    known_ids = {token.attrGet("id") for token in tokens if token.type == "heading_open"}
+    for token in tokens:
         if token.type == "inline":
             for child in token.children or []:
-                if child.type == "link_open" and (child.attrGet("href") or "").startswith("#"):
-                    child.attrSet("href", (child.attrGet("href") or "").lower())
+                href = child.attrGet("href") or ""
+                if child.type == "link_open" and href.startswith("#"):
+                    anchor = href[1:].lower()
+                    if anchor not in known_ids and legacy_anchors.get(anchor) in known_ids:
+                        anchor = legacy_anchors[anchor]
+                    child.attrSet("href", "#" + anchor)
     content = md.renderer.render(tokens, md.options, {})
     toc = "\n".join(
         f'<a class="toc-link depth-{depth}" href="#{html.escape(slug)}">{html.escape(title)}</a>'

@@ -78,8 +78,6 @@
                         <option value="Access-Reject">Reject</option>
                     </select>
                 </div>
-                <div><label class="block text-sm font-bold mb-1">Rows per page</label><select id="pageSize" onchange="changePageSize()" class="border p-2 rounded w-full"><option>25</option><option>50</option><option>100</option></select></div>
-
                 <div class="flex items-end gap-2">
                     <button onclick="loadLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">Apply</button>
                     <button onclick="clearFilters()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 transition-colors">Clear</button>
@@ -93,7 +91,6 @@
         </div>
 
         <div id="resultCount" class="text-sm text-gray-500 mb-2"></div>
-        <p class="text-xs text-gray-500 mb-2">Server 1/2 correspond to HA_DB_OFFSET 1/2 on the member that handled the request; they do not change when Primary/Secondary roles change. Unknown means the log predates origin tracking.</p>
         <div class="bg-white p-4 rounded shadow overflow-x-auto">
             <table class="w-full text-left text-sm" id="logsTable">
                 <thead>
@@ -101,7 +98,7 @@
                         <th class="p-2">Tenant</th>
                         <th class="p-2">Username</th>
                         <th class="p-2">Reply</th>
-                        <th class="p-2" title="Stable processing member; does not change on HA role promotion">Server</th>
+                        <th class="p-2">Server</th>
                         <th class="p-2">NAS IP</th>
                         <th class="p-2">Calling Station ID</th>
                         <th class="p-2">Called Station ID</th>
@@ -111,7 +108,20 @@
                 </thead>
                 <tbody></tbody>
             </table>
-        </div><div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm"><span id="pageSummary" class="text-gray-500"></span><div class="flex gap-2"><button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button><button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button></div></div>
+        </div>
+        <div id="pagination" class="flex flex-wrap items-center justify-between gap-3 mt-4 text-sm">
+            <span id="pageSummary" class="text-gray-500"></span>
+            <div class="flex items-center gap-2">
+                <label for="pageSize">Rows per page</label>
+                <select id="pageSize" onchange="changePageSize()" class="border rounded px-2 py-1" aria-label="Rows per page">
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                <button id="prevPage" onclick="changePage(-1)" class="border rounded px-3 py-1">Previous</button>
+                <button id="nextPage" onclick="changePage(1)" class="border rounded px-3 py-1">Next</button>
+            </div>
+        </div>
     </main>
     <script src="/js/xss-render.js"></script>
 <script src="/js/layout.js"></script>
@@ -209,8 +219,7 @@
 
                         const tenant = escHtml(l.tenant_name || 'Global');
                         const originNode = Number(l.origin_node);
-                        const server = l.origin_node != null && (originNode === 1 || originNode === 2)
-                            ? `Server ${originNode}` : 'Unknown';
+                        const server = originNode === 1 ? 'Primary' : originNode === 2 ? 'Secondary' : 'Unknown';
                         return `<tr class="hover:bg-gray-50 transition-colors">
                     <td class="p-2 border-b text-xs"><span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">${tenant}</span></td>
                     <td class="p-2 border-b font-bold">

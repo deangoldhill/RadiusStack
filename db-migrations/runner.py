@@ -144,6 +144,7 @@ POSTCONDITIONS = {
         {'downstream_radius_destinations'},
         {('downstream_radius_destinations', 'proxy_traffic')}, set()),
     '20261103_authlog_origin_node': (set(), {('radpostauth', 'origin_node')}, set()),
+    '20261112_mac_vendor': (set(), {('mac_auth_devices', 'vendor_name')}, set()),
 }
 
 

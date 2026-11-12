@@ -1,4 +1,26 @@
-# RadiusStack 6.1.1 source release
+# RadiusStack 6.1.2 source candidate
+
+This is a declared **candidate**, not a published GitHub Release or a project tag. **Do not run `./upgrade.sh --to 6.1.2` until Dean has published the exact `6.1.2` tag and `radiusstack-source.tar.gz`, independently verified its SHA-256 digest, and rehearsed the upgrade on a copy of the installation.** The installed 6.1.1 updater is the script that runs first; do not assume a fixed script inside this archive can repair an earlier updater before it starts. Preserve the existing private `.env`, database, certificates, generated configuration, and Compose overrides. The archive contains `.env.example` and `setup_env.sh`, but no `.env`.
+
+## Changes since 6.1.1
+
+MAC-auth vendor names are resolved locally at creation (including auto-create), stored, and backfilled in bounded batches. The per-tenant display checkbox defaults on; unknown vendors show `(Unknown Device Vendor)`. Settings cards have the requested RadSec/Notifications/Reply Attribute Catalogue visual changes, TOTP expiry is in General Settings, and Profile shows the authenticated administrator role below the version. See [RELEASE_6.1.2.md](RELEASE_6.1.2.md) for details. The complete archive retains all 6.1.1 files and earlier migrations.
+
+## Fresh installation (after publication)
+
+Extract the verified `radiusstack-6.1.2/` archive and run `bash setup_env.sh`, or copy `.env.example` to `.env`, set private values, and restrict mode to 0600. For HA secondaries, reuse shared keys and token from the primary. Validate with `docker compose config -q` before starting the stack. The initialization schema already includes `mac_auth_devices.vendor_name`.
+
+## Upgrade from 6.1.1 (after publication and rehearsal)
+
+The migration adds one nullable `vendor_name` column to `mac_auth_devices`; the API performs a bounded backfill of existing rows after startup. A rollback of source does not roll back database DDL. Do not run the command below before the published asset's digest and the previous installation's updater path have been verified:
+
+```sh
+./upgrade.sh --to 6.1.2
+```
+
+## Historical 6.1.1 guidance
+
+### RadiusStack 6.1.1 source release
 
 This document describes the **declared source version**, not a published GitHub Release. The `6.1.1` tag and release asset do not exist merely because `VERSION` changes. **Do not run an asset-based upgrade until Dean publishes the exact tag and source asset, verifies their digest, and rehearses the upgrade on a copy of the installation.** This archive has `.env.example` and `setup_env.sh` but **no `.env`**. Keep the existing installation's private `.env`, Compose overrides, database volumes, certificates and backups.
 

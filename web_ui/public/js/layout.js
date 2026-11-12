@@ -92,6 +92,12 @@ function hasPermission(perms, module) {
   return !!perms[module];
 }
 
+function profilePermissionLabel(isSuperAdmin, tenants) {
+  if (isSuperAdmin === true) return 'Platform administrator';
+  if (!Array.isArray(tenants) || tenants.length === 0) return 'Permissions unavailable';
+  return tenants.length > 1 ? 'Multi-tenant administrator' : 'Tenant administrator';
+}
+
 function showAccessDenied() {
   const el = document.createElement('div');
   el.id = 'accessDeniedBanner';
@@ -322,6 +328,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         <h2 class="text-xl font-bold mb-4 text-gray-800">My Profile</h2>
         <p class="text-sm mb-4">Username: <strong id="profileUsername"></strong></p>
         <p id="profileVersion" class="text-sm mb-4 text-gray-600" role="status">Version unavailable</p>
+        <p class="text-sm mb-4 text-gray-600">My permissions: <strong id="profilePermissions"></strong></p>
         <form id="profileThemeForm" class="space-y-3 mb-6">
           <label class="block text-sm font-bold text-gray-700" for="profileTheme">My appearance</label>
           <select id="profileTheme" class="w-full border p-2 rounded-lg">
@@ -352,6 +359,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   `);
 
   document.getElementById('profileUsername').textContent = window.currentAdmin || '';
+  document.getElementById('profilePermissions').textContent = profilePermissionLabel(window.currentAdminSuper, window.availableTenants);
   loadAppVersion().then(version => { if (version) void checkForUpdates(version); });
   RSTheme?.fillSelector(document.getElementById('profileTheme'), true);
   document.getElementById('profileTheme').value = personalTheme || '';
