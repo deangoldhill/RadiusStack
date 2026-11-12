@@ -1,4 +1,5 @@
 const net = require('net');
+const {vendorForMac, UNKNOWN} = require('../mac_vendor');
 
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
@@ -64,7 +65,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const joinParams = req.tenantScope.enabled ? [req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId] : [];
             const clause = `WHERE ${where.join(' AND ')}${scoped.sql}`;
             const params = [...joinParams, ...values, ...scoped.params];
-            const fields = `m.mac_id, m.mac_address, g.groupname AS profile, up.plan_id, p.name AS plan_name, EXISTS(SELECT 1 FROM radcheck disabled_check WHERE disabled_check.username = m.mac_address AND disabled_check.tenant_id <=> m.tenant_id AND disabled_check.attribute = 'Auth-Type' AND disabled_check.op = ':=' AND disabled_check.value = 'Reject') AS disabled, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id) AS last_online, sr.value AS static_ip`;
+            const fields = `m.mac_id, m.mac_address, COALESCE(m.vendor_name, '${UNKNOWN}') AS vendor_name, COALESCE((SELECT ts.setting_value FROM tenant_settings ts WHERE ts.tenant_id = m.tenant_id AND ts.setting_key = 'show_mac_auth_vendor_names'), 'true') AS show_mac_auth_vendor_names, g.groupname AS profile, up.plan_id, p.name AS plan_name, EXISTS(SELECT 1 FROM radcheck disabled_check WHERE disabled_check.username = m.mac_address AND disabled_check.tenant_id <=> m.tenant_id AND disabled_check.attribute = 'Auth-Type' AND disabled_check.op = ':=' AND disabled_check.value = 'Reject') AS disabled, COALESCE((SELECT SUM(a.acctinputoctets + a.acctoutputoctets) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS data_30d, COALESCE((SELECT SUM(a.acctsessiontime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS time_30d, COALESCE((SELECT COUNT(*) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id AND a.acctstarttime >= DATE_SUB(NOW(), INTERVAL 30 DAY)), 0) AS sessions_30d, (SELECT MAX(acctstarttime) FROM radacct a WHERE a.username = m.mac_address AND a.tenant_id <=> m.tenant_id) AS last_online, sr.value AS static_ip`;
             if (!paginated) { const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY m.mac_id ASC`, params); return res.json(rows); }
             const [[count]] = await pool.query(`SELECT COUNT(*) AS total ${joins} ${clause}`, params);
             const [rows] = await pool.query(`SELECT ${fields} ${joins} ${clause} ORDER BY ${sort} ${order}, m.mac_address ASC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
@@ -81,7 +82,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
-            await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id, tenant_id) VALUES (?, ?, ?)', [address, mac_id, selectedTenantId(req)]);
+            await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id, vendor_name, tenant_id) VALUES (?, ?, ?, ?)', [address, mac_id, vendorForMac(address), selectedTenantId(req)]);
             await replaceMacRelations(conn, req, address, profile, plan_id, staticIp);
             if (req.body.disabled !== undefined) await setDisabled(conn, req, address, req.body.disabled);
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Created MAC device: ${mac_id}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC authenticated device created' });
@@ -97,7 +98,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
                 const { mac_id, profile, plan_id } = req.body[i]; const address = macAddress(req.body[i].mac_address);
                 if (!mac_id || !address) { errors.push(`Row ${i + 1}: Missing MAC ID or Address`); continue; }
                 if (!validMac(address)) { errors.push(`Row ${i + 1}: Invalid MAC address format (${address})`); continue; }
-                try { await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id, tenant_id) VALUES (?, ?, ?)', [address, mac_id, selectedTenantId(req)]); await replaceMacRelations(conn, req, address, profile, plan_id); successCount++; }
+                try { await conn.query('INSERT INTO mac_auth_devices (mac_address, mac_id, vendor_name, tenant_id) VALUES (?, ?, ?, ?)', [address, mac_id, vendorForMac(address), selectedTenantId(req)]); await replaceMacRelations(conn, req, address, profile, plan_id); successCount++; }
                 catch (err) { errors.push(`Row ${i + 1} (${address}): ${err.code === 'ER_DUP_ENTRY' ? 'MAC ID or Address already exists' : err.message}`); }
             }
             await conn.commit(); await auditLog(req.admin.username, req.origin, `Imported ${successCount} MAC devices`, 'success', JSON.stringify({ errors }), req.ip, req.tenantScope); res.json({ message: `Imported ${successCount} MAC devices.`, errors });

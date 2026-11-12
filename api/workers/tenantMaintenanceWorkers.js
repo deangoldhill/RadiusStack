@@ -1,4 +1,5 @@
 'use strict';
+const {vendorForMac} = require('../mac_vendor');
 
 const MAC_SETTING_KEYS = ['mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval'];
 const STALE_SETTING_KEYS = ['clear_stale_sessions', 'stale_session_threshold', 'stale_session_interval'];
@@ -45,6 +46,23 @@ async function loadScopes(pool) {
 function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}, notify = () => {}, logger = console, now = () => Date.now() }) {
   const lastAutoCreateRuns = new Map();
   const lastStaleSessionRuns = new Map();
+  let backfillRunning = false;
+
+  async function backfillMacVendors() {
+    if (backfillRunning) return 0;
+    backfillRunning = true;
+    try {
+      const [rows] = await pool.query('SELECT tenant_id, mac_address FROM mac_auth_devices WHERE vendor_name IS NULL ORDER BY tenant_id, mac_address LIMIT 100');
+      for (const row of rows) {
+        // NULL-safe tenant comparison prevents another tenant's identically named MAC being changed.
+        await pool.query('UPDATE mac_auth_devices SET vendor_name = ? WHERE mac_address = ? AND tenant_id <=> ? AND vendor_name IS NULL', [vendorForMac(row.mac_address), row.mac_address, row.tenant_id]);
+      }
+      return rows.length;
+    } catch (error) {
+      logger.error('[MAC Vendor Backfill] Error:', error);
+      return 0;
+    } finally { backfillRunning = false; }
+  }
 
   async function processAutoCreateMacs() {
     try {
@@ -74,7 +92,7 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
           try {
             await conn.beginTransaction();
             if (multiTenant) {
-              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, tenant_id) VALUES (?, ?, ?)', [macAddress, macAddress, tenantId]);
+              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name, tenant_id) VALUES (?, ?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress), tenantId]);
               await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' AND tenant_id = ?", [macAddress, tenantId]);
               await conn.query("INSERT INTO radcheck (username, attribute, op, value, tenant_id) VALUES (?, 'Cleartext-Password', ':=', ?, ?)", [macAddress, macAddress, tenantId]);
               await conn.query('DELETE FROM radusergroup WHERE username = ? AND tenant_id = ?', [macAddress, tenantId]);
@@ -82,7 +100,7 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
               await conn.query('DELETE FROM user_plans WHERE username = ? AND tenant_id = ?', [macAddress, tenantId]);
               if (config.mac_auth_autocreate_plan) await conn.query('INSERT INTO user_plans (username, plan_id, tenant_id) VALUES (?, ?, ?)', [macAddress, config.mac_auth_autocreate_plan, tenantId]);
             } else {
-              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id) VALUES (?, ?)', [macAddress, macAddress]);
+              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name) VALUES (?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress)]);
               await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' AND tenant_id IS NULL", [macAddress]);
               await conn.query("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)", [macAddress, macAddress]);
               await conn.query('DELETE FROM radusergroup WHERE username = ? AND tenant_id IS NULL', [macAddress]);
@@ -140,7 +158,7 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
     }
   }
 
-  return { processAutoCreateMacs, processStaleSessions };
+  return { processAutoCreateMacs, processStaleSessions, backfillMacVendors };
 }
 
 module.exports = { ALL_SETTING_KEYS, createTenantMaintenanceWorkers, loadScopes };

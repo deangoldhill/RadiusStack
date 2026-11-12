@@ -1,6 +1,6 @@
 const TENANT_SETTING_KEYS = new Set([
   'enforce_2fa', 'mask_user_passwords',
-  'mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval',
+  'mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval', 'show_mac_auth_vendor_names',
   'clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes', 'stale_session_interval',
   'custom_reply_attributes', 'radsec_enabled'
 ]);
@@ -26,7 +26,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     try {
       if (req.tenantScope.enabled) {
         const [rows] = await pool.query('SELECT setting_key, setting_value FROM tenant_settings WHERE tenant_id = ?', [req.tenantScope.tenantId]);
-        return res.json(asMap(rows));
+        return res.json({ show_mac_auth_vendor_names: 'true', ...asMap(rows) });
       }
       if (req.tenantScope.globalContext && Number(req.admin.is_super_admin) !== 1) return res.status(403).json({ error: 'Global settings require a super administrator' });
       const [rows] = await pool.query('SELECT setting_key, setting_value FROM settings');

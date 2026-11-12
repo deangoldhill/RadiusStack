@@ -1179,6 +1179,10 @@ app.listen(3000, '0.0.0.0', () => {
 
 const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog, notify: sendNotification });
 setInterval(() => maintenanceWorkers.processAutoCreateMacs(), 1000);
+setTimeout(() => maintenanceWorkers.backfillMacVendors(), 5000);
+setInterval(() => maintenanceWorkers.backfillMacVendors(), 60000);
+const {refreshRegistry} = require('./mac_vendor');
+setInterval(() => refreshRegistry().then(count => console.log(`[MAC Vendor] Refreshed ${count} manufacturer prefixes`)).catch(error => console.error('[MAC Vendor] Retaining bundled registry:', error.message)), 7 * 24 * 60 * 60 * 1000);
 
 const planPodEnforcementWorker = createPlanPodEnforcementWorker({ pool });
 setInterval(() => planPodEnforcementWorker.process(), 30000);
