@@ -15,9 +15,11 @@ const { normalizeHaSqlValues } = require('./ha_admin_json');
 const { includeHaCertificate } = require('./ha_certificate_bundle');
 const { createCertificateReconciler, needsRadsecCertificateSync, applySyncedWrite, createCertificateInstaller, secondaryRadiusReady } = require('./ha_radsec_sync');
 const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canProduceHaSync} = require('./ha_batch');
+const {createHaWriteCapture} = require('./ha_write_capture');
 const {createHaPauseControl} = require('./ha_pause');
 const {createHaLogReconciler} = require('./ha_log_reconcile');
 const {createPrimaryHaLogReconciler} = require('./ha_log_reconcile_primary');
+const {reverseReplayAllowed} = require('./ha_reconcile_gate');
 const {validateReverseLogBatch,checkReverseLogOwnership} = require('./ha_reverse_logs');
 const { loadTenantScope } = require('./tenant');
 const { summarizeRequest } = require('./debug_request');
@@ -178,23 +180,14 @@ async function pushToHaQueue(queryStr, valuesStr, insertId = null) {
 }
 
 const originalPoolQuery = pool.query;
-pool.query = async function() {
-    const args = Array.from(arguments);
-    const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
-    const isWrite = sqlQuery.startsWith('INSERT') || sqlQuery.startsWith('UPDATE') || sqlQuery.startsWith('DELETE') || sqlQuery.startsWith('REPLACE');
-    const options = args[2] || {};
-    const isSync = options.isSync === true;
-
-    const result = await originalPoolQuery.apply(this, args);
-    const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
-
-    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
-        await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
-    }
-    return result;
-};
-
 const originalGetConnection = pool.getConnection;
+const originalPoolExecute = pool.execute;
+const haWriteCapture = createHaWriteCapture({
+    pool, getConnection: originalGetConnection, query: originalPoolQuery, execute: originalPoolExecute,
+    isPrimary: () => process.env.HA_ENABLED === 'true' && global.haRole === 'primary'
+});
+pool.query = async function() { return haWriteCapture.query(...arguments); };
+
 pool.getConnection = async function() {
     const conn = await originalGetConnection.apply(this, arguments);
     const originalConnQuery = conn.query;
@@ -216,22 +209,7 @@ pool.getConnection = async function() {
     return conn;
 };
 
-const originalPoolExecute = pool.execute;
-pool.execute = async function() {
-    const args = Array.from(arguments);
-    const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
-    const isWrite = sqlQuery.startsWith('INSERT') || sqlQuery.startsWith('UPDATE') || sqlQuery.startsWith('DELETE') || sqlQuery.startsWith('REPLACE');
-    const options = args[2] || {};
-    const isSync = options.isSync === true;
-
-    const result = await originalPoolExecute.apply(this, args);
-    const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
-
-    if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
-        await pushToHaQueue(args[0], JSON.stringify(args[1] || []), insertId);
-    }
-    return result;
-};
+pool.execute = async function() { return haWriteCapture.execute(...arguments); };
 
 const haPause = createHaPauseControl({
     query: (sql, values, options) => originalPoolQuery.call(pool, sql, values, options),
@@ -242,7 +220,9 @@ async function processHaQueue() {
     if(global.haRole==='secondary')return processHaQueueUnpaused();
     return haPause.runDelivery(processHaQueueUnpaused);
 }
-async function processHaQueueUnpaused() {
+async function processHaQueueUnpaused(throughId = null) {
+    if (throughId !== null && (global.haRole !== 'primary' || !Number.isSafeInteger(throughId) || throughId < 0))
+        throw new Error('Invalid primary HA catch-up fence');
     if (!haTransport.enabled || !['primary','secondary'].includes(global.haRole) || haQueueInFlight) return;
     haQueueInFlight = true;
 
@@ -254,7 +234,8 @@ async function processHaQueueUnpaused() {
         const deadline=Date.now()+20000;
         for(let batchNumber=0;batchNumber<20 && Date.now()<deadline;batchNumber++) {
             const [rows]=await originalPoolQuery.call(pool,
-                `SELECT id, query, values_json, insert_id FROM ha_queue ${global.haRole==='secondary' ? "WHERE query LIKE 'INSERT INTO radacct (%' OR query LIKE 'INSERT INTO radpostauth (%' " : ''}ORDER BY id ASC LIMIT ${MAX_BATCH_ITEMS}`,[],{isSync:true});
+                `SELECT id, query, values_json, insert_id FROM ha_queue ${global.haRole==='secondary' ? "WHERE query LIKE 'INSERT INTO radacct (%' OR query LIKE 'INSERT INTO radpostauth (%' " : throughId !== null ? 'WHERE id <= ? ' : ''}ORDER BY id ASC LIMIT ${MAX_BATCH_ITEMS}`,
+                throughId === null ? [] : [throughId],{isSync:true});
             if(!rows.length)break;
             const delivered=await deliverHaBatch({
                 rows,
@@ -428,7 +409,7 @@ app.post('/api/ha/resume', requireHaAdmin('read-write'), async (req, res) => {
         return res.status(403).json({error:'Enabled primary and Global super-admin context required'});
     try {
         const [jobs] = await originalPoolQuery.call(pool, 'SELECT status FROM ha_log_reconcile_state WHERE id=1', [], {isSync:true});
-        if (!jobs.length || !['idle','completed','partial'].includes(jobs[0].status))
+        if (!jobs.length || !['idle','completed','partial','failed-pre-drain'].includes(jobs[0].status))
             return res.status(409).json({error:'Review or finish log reconciliation before resuming HA delivery'});
         res.json({success:true,pause:await haPause.resume()});
     }
@@ -451,11 +432,17 @@ const haPrimaryReconciler=createPrimaryHaLogReconciler({
     getConnection:()=>originalGetConnection.call(pool),
     pauseStatus:()=>haPause.status(),
     queueDrainable:async()=>haTransport.enabled && global.haRole==='primary',
-    drainQueue:async()=>{
+    queueFence:async()=>{
+        const [rows]=await originalPoolQuery.call(pool,'SELECT COALESCE(MAX(id),0) AS id FROM ha_queue',[],{isSync:true});
+        const id=Number(rows[0]?.id);
+        if(!Number.isSafeInteger(id)||id<0)throw new Error('HA queue ID exceeds supported range');
+        return id;
+    },
+    drainQueue:async throughId=>{
         for (let pass=0;pass<20;pass++) {
-            const [rows]=await originalPoolQuery.call(pool,'SELECT COUNT(*) AS n FROM ha_queue',[],{isSync:true});
-            if (Number(rows[0].n)===0) return {drained:true};
-            await processHaQueueUnpaused(); // Internal catch-up is allowed only inside reconciliation.
+            const [rows]=await originalPoolQuery.call(pool,'SELECT COUNT(*) AS n FROM ha_queue WHERE id <= ?',[throughId],{isSync:true});
+            if(Number(rows[0].n)===0) return {drained:true};
+            await processHaQueueUnpaused(throughId); // Bound this run; later writes remain queued for ordinary delivery.
         }
         return {drained:false};
     },
@@ -465,7 +452,7 @@ const haPrimaryReconciler=createPrimaryHaLogReconciler({
             : [value.table||'',Number.isSafeInteger(value.sent)?`${value.sent}/${value.expected}`:''].filter(Boolean).join(' ');
         const [result]=await originalPoolQuery.call(pool,
             'UPDATE ha_log_reconcile_state SET run_id=?, status=?, detail=?, error=? WHERE id=1 AND (run_id=? OR status=?)',
-            [value.runId,value.status,detail,value.status==='failed'?'Reconciliation failed; inspect restricted API logs':null,value.runId,'starting'],{isSync:true});
+            [value.runId,value.status,detail,value.status.startsWith('failed')?'Reconciliation failed; inspect restricted API logs':null,value.runId,'starting'],{isSync:true});
         if (result.affectedRows!==1) throw new Error('Reconciliation progress state changed');
     }
 });
@@ -476,9 +463,8 @@ app.post('/api/ha/log-reconcile', requireHaAdmin('read-write'), async (req,res)=
     try {
         const pauseState=await haPause.status();
         if (!pauseState.paused) return res.status(409).json({error:'Pause HA delivery first'});
-        if (pauseState.queueDepth!==0) return res.status(409).json({error:'Drain the HA queue before pausing and reconciling; existing queued log writes could undo the snapshot'});
         const [result]=await originalPoolQuery.call(pool,
-            "UPDATE ha_log_reconcile_state SET status='starting',run_id=NULL,detail=NULL,error=NULL WHERE id=1 AND status IN ('idle','completed','partial')",[],{isSync:true});
+            "UPDATE ha_log_reconcile_state SET status='starting',run_id=NULL,detail=NULL,error=NULL WHERE id=1 AND status IN ('idle','completed','partial','failed-pre-drain')",[],{isSync:true});
         if (result.affectedRows!==1) return res.status(409).json({error:'A reconciliation is already in progress or state requires review'});
         haPrimaryReconciler.run().catch(error=>console.error('[HA Log Reconciliation]',error.message));
         res.status(202).json({success:true,message:'Online log reconciliation started; monitor HA status'});
@@ -595,22 +581,23 @@ app.post('/api/sync/log-reconcile', async (req,res)=>{
     if (!haTransport.enabled || global.haRole!=='secondary') return res.status(403).json({error:'Enabled secondary required'});
     const age=Date.now()-payload._ts;
     if (!Number.isFinite(age) || age>60000 || age < -5000) return res.status(401).json({error:'Payload expired'});
-    const methods={prepare:'prepare',stage:'stageChunk',seal:'sealTable',finalizeStep:'finalizeStep',finalize:'finalize',verify:'verify'};
+    const methods={prepare:'prepare',stage:'stageChunk',seal:'sealTable',finalizeStep:'finalizeStep',finalize:'finalize',verify:'verify',cleanup:'cleanup'};
     if (!Object.hasOwn(methods,payload.action)) return res.status(400).json({error:'Unsupported reconciliation action'});
     try {
         if (payload.action==='prepare') {
             if (!/^[0-9a-f]{32}$/.test(payload.runId)) return res.status(400).json({error:'Invalid run ID'});
             const [started]=await originalPoolQuery.call(pool,
-                "UPDATE ha_log_reconcile_state SET run_id=?, status='new', detail=NULL,error=NULL,expected_radacct=NULL,expected_radpostauth=NULL,expected_admin_audit_log=NULL WHERE id=1 AND status IN ('idle','finalized')",
+                "UPDATE ha_log_reconcile_state SET run_id=?, status='new', detail=NULL,error=NULL,expected_radacct=NULL,expected_radpostauth=NULL,expected_admin_audit_log=NULL WHERE id=1 AND status IN ('idle','finalized','cleaned')",
                 [payload.runId],{isSync:true});
             if (started.affectedRows!==1) return res.status(409).json({error:'Secondary reconciliation requires operator review'});
         }
         const output=await secondaryLogReconciler[methods[payload.action]](payload);
         res.json({success:true,...output});
-    } catch(error) { console.error('[HA Secondary Reconciliation]',error.message);res.status(409).json({error:'Reconciliation step failed; backup retained, review job status'}); }
+    } catch(error) { console.error('[HA Secondary Reconciliation]',error.message);res.status(409).json({error:'Reconciliation step failed; inspect job and cleanup status'}); }
 });
 
 app.post('/api/sync/logs',async(req,res)=>{
+    class ReconciliationBusy extends Error {}
     let payload;
     try {payload=decryptHaPayload(req.body);}catch{return res.status(401).json({error:'Decryption failed'});}
     if(!haTransport.enabled || global.haRole!=='primary')return res.status(403).json({error:'Enabled primary required'});
@@ -620,8 +607,8 @@ app.post('/api/sync/logs',async(req,res)=>{
         let replayResult;
         const delivered=await haPause.runDelivery(async()=>{
             const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
-            if(!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
-                throw new Error('HA log reconciliation in progress');
+            if(!maintenance.length || !reverseReplayAllowed(maintenance[0].status))
+                throw new ReconciliationBusy('HA log reconciliation in progress');
             const [offsetRows]=await originalPoolQuery.call(pool,"SHOW VARIABLES LIKE 'auto_increment_offset'",[],{isSync:true});
             const localOffset=Number(offsetRows[0]?.Value);
             if(localOffset!==1 && localOffset!==2)throw new Error('Invalid local HA database offset');
@@ -632,7 +619,11 @@ app.post('/api/sync/logs',async(req,res)=>{
         });
         if(!delivered)return res.status(409).json({error:'HA delivery paused or busy'});
         res.json({success:true,...replayResult});
-    }catch(error){console.error('[HA Reverse Log Replay]',error.message);res.status(503).json({error:'HA reverse log replay failed'});}
+    }catch(error){
+        if(error instanceof ReconciliationBusy)return res.status(409).json({error:'HA log reconciliation in progress'});
+        console.error('[HA Reverse Log Replay]',error.message);
+        res.status(503).json({error:'HA reverse log replay failed'});
+    }
 });
 
 app.post('/api/sync/batch',async(req,res)=>{
@@ -643,7 +634,7 @@ app.post('/api/sync/batch',async(req,res)=>{
     if(!Number.isFinite(age)||age>60000||age < -5000)return res.status(401).json({error:'Payload expired'});
     try {
         const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
-        if(!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
+        if(!maintenance.length || !['idle','finalized','cleaned'].includes(maintenance[0].status))
             return res.status(409).json({error:'HA log reconciliation staging is in progress'});
         const result=await applyHaBatch({entries:payload.entries,sourcePeer:haTransport.peer,
             getConnection:()=>originalGetConnection.call(pool),restart:restartRadiusForHa,ready:verifySyncedRadiusReady});
@@ -667,7 +658,7 @@ app.post('/api/sync/execute', async (req, res) => {
     }
     try {
         const [maintenance]=await originalPoolQuery.call(pool,'SELECT status FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
-        if (!maintenance.length || !['idle','finalized'].includes(maintenance[0].status))
+        if (!maintenance.length || !['idle','finalized','cleaned'].includes(maintenance[0].status))
             return res.status(409).json({error:'HA log reconciliation staging is in progress'});
     } catch(error) { return res.status(503).json({error:'HA reconciliation state unavailable'}); }
 
@@ -1181,6 +1172,8 @@ const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiD
 setInterval(() => maintenanceWorkers.processAutoCreateMacs(), 1000);
 setTimeout(() => maintenanceWorkers.backfillMacVendors(), 5000);
 setInterval(() => maintenanceWorkers.backfillMacVendors(), 60000);
+setTimeout(() => maintenanceWorkers.pruneDownstreamStats(), 30000);
+setInterval(() => maintenanceWorkers.pruneDownstreamStats(), 60 * 60 * 1000);
 const {refreshRegistry} = require('./mac_vendor');
 setInterval(() => refreshRegistry().then(count => console.log(`[MAC Vendor] Refreshed ${count} manufacturer prefixes`)).catch(error => console.error('[MAC Vendor] Retaining bundled registry:', error.message)), 7 * 24 * 60 * 60 * 1000);
 
@@ -1191,38 +1184,11 @@ setTimeout(() => planPodEnforcementWorker.process(), 30000);
     apiDebugLog('Stale session worker initialized');
 let lastStaleSessionRun = 0;
 
-let lastAuthLogPurgeRun = 0;
 let lastAutoCreateMacRun = 0;
 
-async function processAuthLogPurge() {
-    try {
-        const [settings] = await pool.query(
-            "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('authlogs_purge_enabled', 'authlogs_purge_days', 'authlogs_purge_interval')"
-        );
-        let purgeEnabled = false;
-        let purgeDays = 30;
-        let intervalMinutes = 60;
-        settings.forEach(s => {
-            if (s.setting_key === 'authlogs_purge_enabled') purgeEnabled = (s.setting_value === 'true' || s.setting_value === '1');
-            if (s.setting_key === 'authlogs_purge_days') purgeDays = parseInt(s.setting_value) || 30;
-            if (s.setting_key === 'authlogs_purge_interval') intervalMinutes = parseInt(s.setting_value) || 60;
-        });
-        if (!purgeEnabled) return;
-        const now = Date.now();
-        if (now - lastAuthLogPurgeRun < intervalMinutes * 60 * 1000) return;
-        lastAuthLogPurgeRun = now;
-        const [result] = await pool.query(
-            'DELETE FROM radpostauth WHERE authdate < DATE_SUB(NOW(), INTERVAL ? DAY)',
-            [purgeDays]
-        );
-        if (result.affectedRows > 0) {
-            await auditLog('system', 'system', `Auto-purged ${result.affectedRows} auth log entries older than ${purgeDays} days`, 'success', 'Background process auth log purge', '127.0.0.1');
-            console.log(`[Background Task] Auto-purged ${result.affectedRows} auth log entries.`);
-        }
-    } catch (error) {
-        console.error('[Background Task] Error auto-purging auth logs:', error);
-    }
-}
+const {createAuthLogPurgeWorker} = require('./workers/authLogPurgeWorker');
+const authLogPurgeWorker = createAuthLogPurgeWorker({pool, auditLog});
+const processAuthLogPurge = () => authLogPurgeWorker.process();
 
 async function processStaleSessions() {
     try {

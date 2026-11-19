@@ -48,6 +48,36 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
     const handle = fn => async (req, res) => { try { await fn(req, res); } catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'Downstream destination operation failed', ...(err.saved ? {saved:true,radius_reloaded:false} : {}) }); } };
     app.get(endpoint, requireApiAuth('nas','read-only'), handle(async (req,res) => { const s=scoped(req); const [rows]=await pool.query(fields+s.sql+' ORDER BY name',s.params); res.json(rows); }));
     app.get(endpoint+'/:id', requireApiAuth('nas','read-only'), handle(async (req,res) => { const s=scoped(req); const [rows]=await pool.query(fields+' AND id=?'+s.sql,[req.params.id,...s.params]); if (!rows.length) return res.status(404).json({error:'Destination not found'}); res.json(rows[0]); }));
+    // Minute counters begin when telemetry is enabled; prior RADIUS history has no destination identifier.
+    app.get(endpoint+'/:id/stats', requireApiAuth('nas','read-only'), handle(async (req,res) => {
+        const windows = {
+            hour: {interval:'1 HOUR', seconds:3600, bucket:"DATE_FORMAT(bucket_start, '%Y-%m-%d %H:%i:00')"},
+            day: {interval:'1 DAY', seconds:86400, bucket:"DATE_FORMAT(bucket_start, '%Y-%m-%d %H:00:00')"},
+            week: {interval:'7 DAY', seconds:604800, bucket:"DATE_FORMAT(bucket_start, '%Y-%m-%d')"},
+            month: {interval:'30 DAY', seconds:2592000, bucket:"DATE_FORMAT(bucket_start, '%Y-%m-%d')"},
+            year: {interval:'365 DAY', seconds:31536000, bucket:"DATE_FORMAT(bucket_start, '%Y-%m-01')"}
+        };
+        const windowName = req.query?.window || 'hour';
+        if (!Object.hasOwn(windows,windowName) || !validId(req.params.id) || String(Number(req.params.id)) !== String(req.params.id)) return res.status(400).json({error:'Invalid destination or time window'});
+        const id=Number(req.params.id), s=scoped(req), chosen=windows[windowName];
+        const [destinations]=await pool.query(fields+' AND id=?'+s.sql,[id,...s.params]);
+        if (!destinations.length) return res.status(404).json({error:'Destination not found'});
+        const restriction=' WHERE destination_id=?'+s.sql+' AND bucket_start >= UTC_TIMESTAMP() - INTERVAL '+chosen.interval;
+        const args=[id,...s.params];
+        const [modes]=await pool.query('SELECT route_mode, COALESCE(SUM(auth_requests),0) AS auth_requests, COALESCE(SUM(accounting_requests),0) AS accounting_requests FROM downstream_proxy_stats_minutes'+restriction+' GROUP BY route_mode',args);
+        const [series]=await pool.query('SELECT '+chosen.bucket+' AS series_bucket, SUM(auth_requests) AS auth_requests, SUM(accounting_requests) AS accounting_requests FROM downstream_proxy_stats_minutes'+restriction+' GROUP BY series_bucket ORDER BY series_bucket',args);
+        const [peaks]=await pool.query('SELECT COALESCE(MAX(requests_in_minute/60),0) AS peak_minute_rps FROM (SELECT SUM(auth_requests+accounting_requests) AS requests_in_minute FROM downstream_proxy_stats_minutes'+restriction+' GROUP BY bucket_start) AS minute_totals',args);
+        const totals={auth:0,accounting:0}, breakdown=Object.fromEntries(['proxy-only','duplicate','validated'].map(mode=>[mode,{auth:0,accounting:0}]));
+        for (const row of modes) {
+            if (!Object.hasOwn(breakdown,row.route_mode)) continue;
+            const auth=Number(row.auth_requests)||0, accounting=Number(row.accounting_requests)||0;
+            breakdown[row.route_mode]={auth,accounting}; totals.auth+=auth;totals.accounting+=accounting;
+        }
+        res.json({destination:destinations[0], window:windowName, duration_seconds:chosen.seconds, as_of:new Date().toISOString(),
+            since:'telemetry activation', source:'this RadiusStack node', metric:'routed attempts (not confirmed downstream replies)', totals, modes:breakdown,
+            average_rps:Number(((totals.auth+totals.accounting)/chosen.seconds).toFixed(4)), peak_minute_rps:Number(peaks[0]?.peak_minute_rps)||0,
+            series:series.map(row=>({bucket:String(row.series_bucket),auth:Number(row.auth_requests)||0,accounting:Number(row.accounting_requests)||0}))});
+    }));
     app.post(endpoint, requireApiAuth('nas','read-write'), handle(async (req,res) => {
         try { validate(req.body,true); } catch (err) { return res.status(400).json({error:err.message}); }
         const {name,ipv4,auth_port,accounting_port,shared_secret}=req.body;

@@ -241,6 +241,28 @@ function createHaLogReconciler({getConnection, role}) {
       return {runId, status: 'finalized', ...await inspect(conn, runId)};
     } finally { conn.release(); }
   }
-  return {prepare, stageChunk, sealTable, finalizeStep, finalize, verify};
+  // DDL auto-commits. Persist a retryable state before dropping only this run's
+  // tables; never use a prefix wildcard or touch an in-progress snapshot.
+  async function cleanup({runId}) {
+    tableNames('radacct', runId); await guard();
+    const conn = await getConnection();
+    try {
+      const s = await state(conn, runId);
+      if (s.status === 'cleaned') return {runId, status: 'cleaned'};
+      if (s.status === 'finalized') {
+        const [changed] = await conn.query("UPDATE ha_log_reconcile_state SET status='cleaning' WHERE id=1 AND run_id=? AND status='finalized'", [runId]);
+        if (changed.affectedRows !== 1) throw new Error('Reconciliation cleanup state changed');
+      } else if (s.status !== 'cleaning') throw new Error('Reconciliation must be finalized before cleanup');
+      for (const table of Object.keys(TABLES)) {
+        const {stage, backup} = tableNames(table, runId);
+        await conn.query(`DROP TABLE IF EXISTS ${quote(backup)}`);
+        await conn.query(`DROP TABLE IF EXISTS ${quote(stage)}`);
+      }
+      const [done] = await conn.query("UPDATE ha_log_reconcile_state SET status='cleaned' WHERE id=1 AND run_id=? AND status='cleaning'", [runId]);
+      if (done.affectedRows !== 1) throw new Error('Reconciliation cleanup state changed');
+      return {runId, status: 'cleaned'};
+    } finally { conn.release(); }
+  }
+  return {prepare, stageChunk, sealTable, finalizeStep, finalize, verify, cleanup};
 }
 module.exports = {createHaLogReconciler, tableNames, MAX_ROWS, MAX_BYTES};

@@ -4,6 +4,8 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { DEFAULT_DYNAMIC_AUTH_ATTRIBUTES, DYNAMIC_AUTH_ATTRIBUTES } = require('../dynamic_auth');
     const { normalizeCustomReplyAttributes } = require('../custom_attributes');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
+    require('./nas_stats')(app,pool,requireApiAuth);
+
     const reloadRadiusClients = () => new Promise((resolve, reject) => exec('docker restart radius_server', error => error ? reject(error) : resolve()));
     const nasScope = (req, column = 'tenant_id') => req.tenantScope.enabled ? scope(req.tenantScope, column) : { sql: ` AND ${column} IS NULL`, params: [] };
 

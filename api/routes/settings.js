@@ -2,7 +2,8 @@ const TENANT_SETTING_KEYS = new Set([
   'enforce_2fa', 'mask_user_passwords',
   'mac_auth_autocreate', 'mac_auth_autocreate_plan', 'mac_auth_autocreate_profile', 'mac_auth_autocreate_interval', 'show_mac_auth_vendor_names',
   'clear_stale_sessions', 'stale_session_threshold', 'stale_session_interim_threshold_minutes', 'stale_session_interval',
-  'custom_reply_attributes', 'radsec_enabled'
+  'custom_reply_attributes', 'radsec_enabled',
+  'authlogs_purge_enabled', 'authlogs_purge_days', 'authlogs_purge_interval'
 ]);
 const GLOBAL_SETTING_KEYS = new Set([
   'multi_tenant_enabled', 'radius_debug', 'api_debug', 'ui_theme', 'totp_enrollment_hours',

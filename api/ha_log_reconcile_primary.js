@@ -30,12 +30,12 @@ function cursorValue(value) {
 // getConnection must yield a dedicated MySQL connection with dateStrings enabled:
 // Date objects and Buffers are rejected, not silently converted. pauseStatus must
 // report {paused:true, queueDepth:<integer>}; queueDrainable must prove the existing
-// ha_queue can be delivered after replacement. drainQueue must actually deliver it
-// despite normal HA delivery being paused, then return {drained:true}. Neither the
-// pause flag nor queueDepth alone is an atomic primary-writer quiescence barrier.
-function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDrainable, drainQueue, onProgress = () => {}}) {
-  if ([post, getConnection, pauseStatus, queueDrainable, drainQueue, onProgress].some(fn => typeof fn !== 'function'))
-    throw new TypeError('Reconciliation requires peer post, snapshot connection, pause status, queue drainability, drain and progress callbacks');
+// ha_queue can be delivered after replacement. drainQueue(fence) must deliver
+// through a fixed queue ID while normal delivery is paused. This does not repair
+// the separate nontransactional source-write/outbox gap.
+function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDrainable, queueFence, drainQueue, onProgress = () => {}}) {
+  if ([post, getConnection, pauseStatus, queueDrainable, queueFence, drainQueue, onProgress].some(fn => typeof fn !== 'function'))
+    throw new TypeError('Reconciliation requires peer post, snapshot connection, pause status, queue drainability, queue fence, drain and progress callbacks');
   let active = false;
   async function guard() {
     const status = await pauseStatus();
@@ -50,15 +50,28 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
     return response;
   }
   async function progress(value) { await onProgress(value); }
+  async function fence() {
+    const id=await queueFence();
+    if (!Number.isSafeInteger(id) || id<0) throw new Error('Invalid HA queue fence');
+    return id;
+  }
   async function run() {
     if (active) throw new Error('Reconciliation already running');
     active = true;
     const runId = crypto.randomBytes(16).toString('hex');
-    let conn, transactionOpen = false;
+    let conn, transactionOpen = false, peerPreparationAttempted = false;
     const counts = {};
     try {
-      if ((await guard()).queueDepth !== 0) throw new Error('Cannot reconcile with a pre-existing HA queue');
+      await guard();
+      const before=await fence();
+      if (before) {
+        await progress({runId,status:'pre-draining',queueFence:before});
+        const drained=await drainQueue(before);
+        if (drained?.drained!==true) throw new Error('HA queue pre-drain incomplete');
+      }
+      await guard();
       await progress({runId, status: 'preparing'});
+      peerPreparationAttempted = true;
       await request('prepare', {runId}, r => r.runId === runId && r.status === 'staging');
       conn = await getConnection();
       // All three tables must be read on the same connection, in one RR snapshot.
@@ -126,12 +139,18 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
         (r.reconciliation !== 'applied' || (r.radacct === counts.radacct && r.radpostauth === counts.radpostauth && r.admin_audit_log === counts.admin_audit_log)));
       await verify();
       await guard();
-      await progress({runId, status: 'catching-up'});
-      const drained = await drainQueue();
-      if (drained?.drained !== true || (await guard()).queueDepth !== 0) throw new Error('HA queue catchup incomplete');
+      const target=await fence();
+      await progress({runId, status: 'catching-up',queueFence:target});
+      const drained = await drainQueue(target);
+      if (drained?.drained !== true) throw new Error('HA queue catchup incomplete');
+      await guard();
       const verified = await verify();
       const status = verified.reconciliation === 'applied' ? 'completed' : 'partial';
       const result = {runId, status, counts, secondary: verified};
+      // Cleanup is idempotent on the secondary. A lost acknowledgement may mean
+      // the tables were already dropped, so retry once with the same run ID.
+      try { await request('cleanup', {runId}, r => r.runId === runId && r.status === 'cleaned'); }
+      catch (_) { await request('cleanup', {runId}, r => r.runId === runId && r.status === 'cleaned'); }
       await progress(result);
       return result;
     } catch (error) {
@@ -139,7 +158,10 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
         try { await conn.rollback(); } catch (rollbackError) { error.rollbackError = rollbackError; }
       }
       // No success is ever emitted on failure, including after remote finalization.
-      try { await progress({runId, status: 'failed', error: error.message}); } catch (_) { /* preserve cause */ }
+      // Before prepare, the secondary has not been touched and retry is safe.
+      // A timed-out prepare may have succeeded remotely, so every later failure
+      // stays blocked pending explicit review.
+      try { await progress({runId, status: peerPreparationAttempted ? 'failed' : 'failed-pre-drain', error: error.message}); } catch (_) { /* preserve cause */ }
       throw error;
     } finally {
       if (conn) conn.release();

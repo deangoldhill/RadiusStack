@@ -158,7 +158,17 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
     }
   }
 
-  return { processAutoCreateMacs, processStaleSessions, backfillMacVendors };
+  async function pruneDownstreamStats() {
+    try {
+      const [result] = await pool.query('DELETE FROM downstream_proxy_stats_minutes WHERE bucket_start < UTC_TIMESTAMP() - INTERVAL 366 DAY ORDER BY bucket_start LIMIT 5000');
+      return result.affectedRows || 0;
+    } catch (error) {
+      logger.error('[Downstream stats retention] Error:', error);
+      return 0;
+    }
+  }
+
+  return { processAutoCreateMacs, processStaleSessions, backfillMacVendors, pruneDownstreamStats };
 }
 
 module.exports = { ALL_SETTING_KEYS, createTenantMaintenanceWorkers, loadScopes };
