@@ -1,0 +1,10 @@
+# RadiusStack 6.1.3
+
+Changes since the complete 6.1.2 source archive:
+
+- **Downstream RADIUS destination statistics.** Click a destination's bold name to open tenant-scoped authentication and accounting totals for Hour, Day, Week, Month, and Year. See average requests/sec, peak minute requests/sec, a routing-mode breakdown, and a compact traffic chart showing the latest seven UTC minutes, hours, days, or months as appropriate. The modal has Refresh and default-on 30-second Auto-refresh, which stops when closed or the tenant context changes.
+- **Persistent counters.** Selected downstream proxy attempts are aggregated by destination, tenant, routing mode, and UTC minute. Existing installations receive the additive `20261113_downstream_proxy_stats.sql` migration; fresh installations get the same table in `db-init/01-schema.sql`. A bounded maintenance task removes buckets older than 366 days. Statistics begin after activation; previous traffic cannot be backfilled per destination. These are routed attempts on the local node, not confirmed downstream responses or HA-aggregated totals.
+
+The archive preserves all prior release source and migrations, including the 6.1.2 MAC vendor feature. This is a **candidate from an isolated source snapshot**, not a Git tag or a published GitHub Release. Dean will publish manually. Its archive contains `.env.example` and `setup_env.sh`, **not** a private `.env`.
+
+The installed updater is `./upgrade.sh`, not `update.sh`. It downloads the exact `6.1.3` GitHub Release asset named `radiusstack-source.tar.gz` and requires GitHub Release metadata with a `sha256:` digest matching the uploaded bytes. The local `/opt/radiusstack-releases/6.1.3/` folder is for manual publication; it is not an updater source. Do not run an asset-based upgrade before publishing the tag, archive, and digest. Preserve private `.env`, Compose overrides, database, generated configuration, and certificate volumes. Source rollback does not undo additive database DDL. See [UPGRADE.md](UPGRADE.md).

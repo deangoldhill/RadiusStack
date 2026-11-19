@@ -6,6 +6,7 @@
   <p id="destinationStatus" class="text-sm mb-4" role="status" aria-live="polite"></p>
   <div class="bg-white p-4 rounded-xl shadow-lg overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="bg-gray-50"><th class="p-3">Name</th><th class="p-3">IPv4</th><th class="p-3">Auth port</th><th class="p-3">Accounting port</th><th class="p-3">Traffic</th><th class="p-3 text-right">Actions</th></tr></thead><tbody id="destinationRows"></tbody></table></div>
 </main>
+<div id="statsModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="statsTitle"><div class="bg-white p-6 rounded-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto"><div class="flex justify-between items-center gap-4"><div><h2 id="statsTitle" class="text-2xl font-bold text-gray-800"></h2><p id="statsEndpoint" class="text-sm text-gray-600"></p></div><button id="closeStats" type="button" class="rounded bg-gray-200 px-4 py-2 font-semibold">Close</button></div><div class="flex flex-wrap items-center justify-between gap-3 my-4"><div id="statsWindows" class="flex flex-wrap gap-2" aria-label="Statistics time window"><button type="button" data-window="hour">Hour</button><button type="button" data-window="day">Day</button><button type="button" data-window="week">Week</button><button type="button" data-window="month">Month</button><button type="button" data-window="year">Year</button></div><div class="flex items-center gap-3"><button id="refreshStats" type="button" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold">Refresh</button><label class="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer"><input id="autoRefreshStats" type="checkbox" checked class="h-4 w-4 accent-blue-600">Auto-refresh</label></div></div><p id="statsStatus" role="status" aria-live="polite" class="text-sm mb-3"></p><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="bg-blue-50 rounded-lg p-3"><div class="text-sm">Auth requests</div><strong id="statsAuth" class="text-2xl">0</strong></div><div class="bg-cyan-50 rounded-lg p-3"><div class="text-sm">Accounting requests</div><strong id="statsAccounting" class="text-2xl">0</strong></div><div class="bg-gray-50 rounded-lg p-3"><div class="text-sm">Average requests/sec</div><strong id="statsAverage" class="text-2xl">0</strong></div><div class="bg-gray-50 rounded-lg p-3"><div class="text-sm">Peak minute requests/sec</div><strong id="statsPeak" class="text-2xl">0</strong></div></div><h3 class="font-bold text-lg mt-5 mb-2">By routing mode</h3><div id="statsModes" class="grid md:grid-cols-3 gap-3"></div><h3 class="font-bold text-lg mt-5 mb-2">Traffic over time</h3><div class="flex gap-4 text-sm mb-2"><span class="text-blue-700">■ Auth</span><span class="text-cyan-700">■ Accounting</span></div><div id="statsChart" class="space-y-2 max-h-96 overflow-y-auto" aria-label="Routed attempts over time"></div></div></div>
 <div id="destinationModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50"><div class="bg-white p-6 rounded-xl max-w-md w-full"><h2 id="destinationTitle" class="text-xl font-bold mb-4">Add destination</h2><form id="destinationForm" class="space-y-4"><input type="hidden" id="destinationId"><label class="block text-sm font-bold">Name<input id="destinationName" required maxlength="100" class="w-full border p-2 rounded-lg" autocomplete="off"></label><label class="block text-sm font-bold">Canonical IPv4 address<input id="destinationIpv4" required inputmode="decimal" placeholder="192.0.2.10" class="w-full border p-2 rounded-lg"></label><label class="block text-sm font-bold">Authentication port<input id="destinationAuthPort" type="number" min="1" max="65535" required value="1812" class="w-full border p-2 rounded-lg"></label><label class="block text-sm font-bold">Accounting port<input id="destinationAcctPort" type="number" min="1" max="65535" required value="1813" class="w-full border p-2 rounded-lg"></label><label class="block text-sm font-bold">Proxy traffic<select id="destinationTraffic" class="w-full border p-2 rounded-lg"><option value="both">Authentication and Accounting</option><option value="auth">Authentication only</option><option value="accounting">Accounting only</option></select></label><label class="block text-sm font-bold">Shared secret<input id="destinationSecret" type="password" maxlength="253" autocomplete="new-password" class="w-full border p-2 rounded-lg"><span id="destinationSecretHint" class="block font-normal text-gray-500 mt-1">Required when creating. Never displayed after saving.</span></label><p id="destinationFormStatus" role="alert" class="text-sm"></p><div class="flex justify-end gap-3"><button id="cancelDestination" type="button" class="bg-gray-200 px-4 py-2 rounded-lg font-bold">Cancel</button><button id="saveDestination" type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold">Save and activate</button></div></form></div></div>
 <script src="/js/layout.js"></script><script>
 let destinations = [];
@@ -22,12 +23,93 @@ async function loadDestinations() {
     if (!destinations.length) { const row = body.insertRow(); const cell = row.insertCell(); cell.colSpan = 6; cell.className = 'p-4 text-gray-500'; cell.textContent = 'No downstream destinations in this scope.'; }
     for (const item of destinations) {
       const row = body.insertRow(); row.className = 'border-b';
-      for (const value of [item.name, item.ipv4, item.auth_port, item.accounting_port, {auth:'Auth only',accounting:'Accounting only',both:'Auth + Accounting'}[item.proxy_traffic] || 'Auth + Accounting']) { const cell = row.insertCell(); cell.className = 'p-3'; cell.textContent = value; }
+      const nameCell = row.insertCell(); nameCell.className = 'p-3'; const details = document.createElement('button'); details.type='button'; details.className='text-blue-700 font-bold'; details.textContent=item.name; details.onclick=()=>showDestinationStats(item.id); nameCell.appendChild(details);
+      for (const value of [item.ipv4, item.auth_port, item.accounting_port, {auth:'Auth only',accounting:'Accounting only',both:'Auth + Accounting'}[item.proxy_traffic] || 'Auth + Accounting']) { const cell = row.insertCell(); cell.className = 'p-3'; cell.textContent = value; }
       const actions = row.insertCell(); actions.className = 'p-3 text-right';
       for (const [label, action] of [['Edit', () => openDestination(item.id)], ['Delete', () => deleteDestination(item.id)]]) { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.className = label === 'Delete' ? 'text-red-700 px-3 py-1 font-bold' : 'text-blue-700 px-3 py-1 font-bold'; button.onclick = action; actions.appendChild(button); }
     }
   } catch (error) { status(error.message, true); }
 }
+let selectedStatsId = null, selectedStatsWindow = 'hour', statsRequest = 0, statsRefreshTimer = null;
+function stopStatsRefresh() { if (statsRefreshTimer !== null) { clearInterval(statsRefreshTimer); statsRefreshTimer = null; } }
+function syncStatsRefresh() {
+  stopStatsRefresh();
+  if (selectedStatsId !== null && $('autoRefreshStats').checked) {
+    statsRefreshTimer = setInterval(() => { if (selectedStatsId !== null) showDestinationStats(selectedStatsId, selectedStatsWindow); }, 30000);
+  }
+}
+function chartPoints(data, windowName) {
+  const measured = new Map(data.series.map(point => [point.bucket, point]));
+  const asOf = new Date(data.as_of);
+  if (Number.isNaN(asOf.getTime())) return data.series.slice(-7);
+  const points=[];
+  for (let offset=6; offset>=0; offset--) {
+    const time=new Date(asOf);
+    if (windowName === 'year') { time.setUTCDate(1); time.setUTCMonth(time.getUTCMonth()-offset); }
+    else if (windowName === 'week' || windowName === 'month') time.setUTCDate(time.getUTCDate()-offset);
+    else if (windowName === 'day') time.setUTCHours(time.getUTCHours()-offset);
+    else time.setUTCMinutes(time.getUTCMinutes()-offset);
+    const iso=time.toISOString();
+    const bucket=windowName === 'year' ? iso.slice(0,7)+'-01' :
+      windowName === 'week' || windowName === 'month' ? iso.slice(0,10) :
+      windowName === 'day' ? iso.slice(0,13).replace('T',' ') + ':00:00' :
+      iso.slice(0,16).replace('T',' ') + ':00';
+    const point=measured.get(bucket);
+    points.push({bucket,auth:Number(point?.auth)||0,accounting:Number(point?.accounting)||0});
+  }
+  return points;
+}
+async function showDestinationStats(id, windowName = 'hour') {
+  const changed = selectedStatsId !== id;
+  selectedStatsId = id;
+  selectedStatsWindow = windowName;
+  if (changed) syncStatsRefresh();
+  const request = ++statsRequest;
+  $('statsModal').classList.remove('hidden');
+  for (const button of $('statsWindows').querySelectorAll('button[data-window]')) {
+    const active=button.dataset.window === windowName;
+    button.className=active ? 'bg-blue-600 text-white px-4 py-2 rounded-lg font-bold' : 'bg-gray-100 hover:bg-gray-200 text-blue-700 px-4 py-2 rounded-lg font-bold';
+    button.setAttribute('aria-pressed', String(active));
+  }
+  $('statsStatus').textContent = 'Loading statistics…';
+  try {
+    const response = await apiFetch(`/api/downstream-destinations/${id}/stats?window=${windowName}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Statistics unavailable');
+    if (request !== statsRequest) return;
+    $('statsTitle').textContent = data.destination.name;
+    $('statsEndpoint').textContent = `${data.destination.ipv4} · ${windowName} · ${selectedScope()}`;
+    $('statsAuth').textContent = String(data.totals.auth);
+    $('statsAccounting').textContent = String(data.totals.accounting);
+    $('statsAverage').textContent = String(data.average_rps);
+    $('statsPeak').textContent = String(data.peak_minute_rps);
+    const modes = $('statsModes'); modes.replaceChildren();
+    for (const [mode,label] of [['proxy-only','Proxy only'],['duplicate','Duplicate'],['validated','Validated duplicate']]) {
+      const card=document.createElement('div'); card.className='rounded-lg border p-3 text-sm';
+      const heading=document.createElement('strong'); heading.textContent=label; card.appendChild(heading);
+      const counts=document.createElement('p'); counts.textContent=`Auth ${data.modes[mode]?.auth || 0} · Accounting ${data.modes[mode]?.accounting || 0}`; card.appendChild(counts);
+      modes.appendChild(card);
+    }
+    const chart=$('statsChart'); chart.replaceChildren();
+    const points=chartPoints(data,windowName);
+    const max=Math.max(1,...points.map(point=>point.auth+point.accounting));
+    for (const point of points) {
+      const row=document.createElement('div'); row.className='grid grid-cols-[8rem_1fr_6rem] items-center gap-2 text-xs';
+      const label=document.createElement('span'); label.textContent=point.bucket; row.appendChild(label);
+      const bars=document.createElement('div'); bars.className='flex h-4 rounded bg-gray-100 overflow-hidden';
+      for (const [count,color] of [[point.auth,'#1d4ed8'],[point.accounting,'#0891b2']]) {
+        const bar=document.createElement('span'); bar.style.width=`${Math.max(0,Math.min(100,Number(count)/max*100))}%`; bar.style.backgroundColor=color; bars.appendChild(bar);
+      }
+      row.appendChild(bars);
+      const value=document.createElement('span'); value.textContent=`${point.auth} / ${point.accounting}`; row.appendChild(value); chart.appendChild(row);
+    }
+    $('statsStatus').textContent = `Updated ${new Date(data.as_of).toLocaleTimeString('en-GB',{timeZone:'UTC',hour12:false})} UTC`;
+  } catch (error) { if (request === statsRequest) $('statsStatus').textContent = error.message; }
+}
+$('closeStats').onclick = () => { statsRequest++; selectedStatsId=null; stopStatsRefresh(); $('statsModal').classList.add('hidden'); };
+$('refreshStats').onclick = () => { if (selectedStatsId !== null) showDestinationStats(selectedStatsId,selectedStatsWindow); };
+$('autoRefreshStats').onchange = syncStatsRefresh;
+$('statsWindows').onclick = event => { const windowName=event.target?.dataset?.window; if (selectedStatsId !== null && ['hour','day','week','month','year'].includes(windowName)) showDestinationStats(selectedStatsId,windowName); };
 function openDestination(id = null) {
   const item = destinations.find(d => d.id === id);
   $('destinationForm').reset(); $('destinationId').value = id || '';
@@ -71,5 +153,5 @@ $('destinationForm').onsubmit = async event => {
 };
 $('addDestination').onclick = () => openDestination(); $('cancelDestination').onclick = () => { $('destinationSecret').value = ''; $('destinationModal').classList.add('hidden'); };
 let booted = false; function bootstrap() { if (booted || !window.radiusstackContext || !hasPermission(window.currentPermissions, 'nas')) return; booted = true; document.querySelector('main').hidden = false; loadDestinations(); }
-document.addEventListener('radiusstack:tenant-context-ready', bootstrap); window.addEventListener('load', bootstrap);
+document.addEventListener('radiusstack:tenant-context-ready', () => { const wasBooted=booted; statsRequest++; selectedStatsId=null; stopStatsRefresh(); $('statsModal').classList.add('hidden'); bootstrap(); if (wasBooted) loadDestinations(); }); window.addEventListener('load', bootstrap);
 </script><script src="/js/field-help.js"></script></body></html>

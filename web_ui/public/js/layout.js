@@ -71,6 +71,7 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 </style>`);
 
 const GLOBAL_CONTEXT_BLOCKED_PAGES = new Set(['users.html', 'profiles.html', 'plans.html', 'mac-auth.html', 'nas.html', 'downstream-destinations.html']);
+const TENANT_SWITCH_PENDING = 'radiusstack:tenant-switch-pending';
 
 const PAGE_PERMISSIONS = {
   'index.html': null, 'users.html': 'users', 'mac-auth.html': 'users',
@@ -90,6 +91,11 @@ function hasPermission(perms, module) {
   if (!module) return true;
   if (!perms || Object.keys(perms).length === 0) return true; // fail open if perms unavailable
   return !!perms[module];
+}
+
+function tenantSwitchNeedsDashboard(page, tenantId, multiTenantEnabled, isSuperAdmin, perms) {
+  return (multiTenantEnabled && isSuperAdmin && tenantId === 'global' && GLOBAL_CONTEXT_BLOCKED_PAGES.has(page)) ||
+    !!(PAGE_PERMISSIONS[page] && !hasPermission(perms, PAGE_PERMISSIONS[page]));
 }
 
 function profilePermissionLabel(isSuperAdmin, tenants) {
@@ -191,6 +197,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let personalTheme = null;
   let platformTheme = 'blue';
   let perms = {};
+  let contextResolved = false;
 
   try {
     const [meRes, contextRes] = await Promise.all([apiFetch('/api/auth/me'), apiFetch('/api/auth/context', { withoutTenantContext: true })]);
@@ -213,6 +220,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else {
       localStorage.removeItem('activeTenantId');
     }
+    contextResolved = true;
 
     const themeRes = await apiFetch('/api/admins/me/theme', { withoutTenantContext: true });
     if (themeRes.ok) {
@@ -222,6 +230,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       themeColor = RSTheme ? RSTheme.resolve(personalTheme, platformTheme) : 'blue';
     }
   } catch(e) { console.warn('RadiusStack layout: permission/context fetch failed', e); }
+
+  // Only a switch initiated in this tab redirects; direct URLs retain their denied banner.
+  let pendingSwitch = null;
+  try {
+    pendingSwitch = JSON.parse(sessionStorage.getItem(TENANT_SWITCH_PENDING) || 'null');
+    sessionStorage.removeItem(TENANT_SWITCH_PENDING);
+  } catch (_) { /* storage disabled or invalid */ }
+  const requestedPage = window.location.pathname.split('/').pop() || 'index.html';
+  if (contextResolved && pendingSwitch?.page === requestedPage &&
+      pendingSwitch.tenant === localStorage.getItem('activeTenantId') &&
+      tenantSwitchNeedsDashboard(requestedPage, pendingSwitch.tenant, window.multiTenantEnabled, window.currentAdminSuper, perms)) {
+    window.location.href = 'index.html';
+    return;
+  }
 
   RSTheme?.apply(themeColor);
   const theme = { bg: 'bg-blue-600', shadow: 'shadow-blue-500/40' };
@@ -293,7 +315,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.className = "flex bg-gray-100 font-sans h-screen text-gray-800 antialiased";
 
   if (!window.currentAdminSuper) document.getElementById('tenantManagementNav')?.remove();
-  if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${layoutHtml(t.id)}">${layoutHtml(t.name)}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{localStorage.setItem('activeTenantId',select.value);window.location.reload()}; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
+  if (window.multiTenantEnabled) { const wrap=document.getElementById('tenantSwitcherWrap'), select=document.getElementById('tenantSwitcher'), tenants=window.availableTenants||[]; if(tenants.length){ wrap.hidden=false; select.innerHTML=(window.currentAdminSuper ? '<option value="global">Global</option>' : '')+tenants.map(t=>`<option value="${layoutHtml(t.id)}">${layoutHtml(t.name)}</option>`).join(''); select.value=localStorage.getItem('activeTenantId'); select.onchange=()=>{
+    const page = window.location.pathname.split('/').pop() || 'index.html';
+    localStorage.setItem('activeTenantId', select.value);
+    try { sessionStorage.setItem(TENANT_SWITCH_PENDING, JSON.stringify({page, tenant: select.value})); } catch (_) { /* storage disabled */ }
+    // Permissions returned for the old tenant cannot decide the new tenant's menu.
+    // Only the fixed Global-only exclusion is safe to decide before reloading.
+    if (select.value === 'global' && window.currentAdminSuper && GLOBAL_CONTEXT_BLOCKED_PAGES.has(page)) {
+      try { sessionStorage.removeItem(TENANT_SWITCH_PENDING); } catch (_) { /* storage disabled */ }
+      window.location.href = 'index.html';
+    } else window.location.reload();
+  }; } } document.dispatchEvent(new Event('radiusstack:tenant-context-ready'));
 
   if (window.multiTenantEnabled && window.currentAdminSuper && localStorage.getItem('activeTenantId') === 'global') { GLOBAL_CONTEXT_BLOCKED_PAGES.forEach(href => document.querySelector(`.nav-link[href="${href}"]`)?.classList.add('nav-hidden')); }
   document.querySelectorAll('.nav-link').forEach(link => {

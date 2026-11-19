@@ -1,3 +1,31 @@
+# RadiusStack 6.2.0 source candidate
+
+**Known HA data-integrity risk:** do not enable HA on unvalidated pairs. See [RELEASE_6.2.0.md](RELEASE_6.2.0.md) for the committed-write ordering, scanner, and restart limitations. The local 192.168.4.37 installation was marked 6.1.1; preserve its full source and database before replacing files. This source candidate has not been published to GitHub.
+
+Fresh installation: extract the verified `radiusstack-source.tar.gz`, run `bash setup_env.sh` to generate a private `.env`, validate `docker compose config -q`, then build and start. The source archive must include all `db-init` and `db-migrations` SQL and must not contain `.env`.
+
+Before GitHub publication, the installed updater's remote-download mode will not find 6.2.0. The bundled updater also supports `--to 6.2.0 --archive /absolute/path/radiusstack-source.tar.gz`; it requires an adjacent, matching `SHA256SUMS` and checks the archive before downtime. Use that bundled script from the installation directory, **not** an older installed updater that has no `--archive` option. It backs up code and dumps the whole database, then applies pending migrations and starts services. It does not roll back database DDL if a later step fails. Preserve `.env`, Compose overrides and certificate volumes. For published upgrades, use `./upgrade.sh --to 6.2.0` only after the exact GitHub asset and `sha256:` Release digest have been published and verified.
+
+---
+
+# RadiusStack 6.1.3 source candidate
+
+This candidate is not yet a published GitHub Release or project tag. The installed updater is `upgrade.sh` (not `update.sh`). It fetches the named `radiusstack-source.tar.gz` asset from the GitHub Release tagged `6.1.3` and requires its published SHA-256 digest. The local release directory is not its download source. **Do not run `./upgrade.sh --to 6.1.3` before Dean publishes and verifies that exact asset.** Rehearse on a copy of the installation and preserve the private `.env`, database, certificates, Compose overrides, and generated RADIUS configuration.
+
+## Changes since 6.1.2
+
+The downstream destination modal has Hour, Day, Week, Month and Year totals, per-second rates, a seven-unit chart, manual Refresh and default-on Auto-refresh. Names are bold and clickable. See [RELEASE_6.1.3.md](RELEASE_6.1.3.md). The complete archive retains the 6.1.2 vendor feature and all earlier migrations.
+
+## Fresh installation (after publication)
+
+Extract `radiusstack-6.1.3/` and run `bash setup_env.sh` (or copy `.env.example` to a mode-0600 private `.env` and configure it), then validate Compose. The initialization schema includes both `mac_auth_devices.vendor_name` and `downstream_proxy_stats_minutes`.
+
+## Upgrade from 6.1.1 or 6.1.2 (after publication)
+
+From the **existing installation**, run `./upgrade.sh --to 6.1.3` only after the GitHub Release asset and digest have been published and verified. The migration runner applies pending vendor and downstream-statistics migrations in order, preserving existing data; an existing instance already on 6.1.2 receives only the new statistics table. The currently installed updater runs first; a fixed updater inside the new archive cannot repair an older updater before it starts. Schema changes are not rolled back with source.
+
+## Historical 6.1.2 guidance
+
 # RadiusStack 6.1.2 source candidate
 
 This is a declared **candidate**, not a published GitHub Release or a project tag. **Do not run `./upgrade.sh --to 6.1.2` until Dean has published the exact `6.1.2` tag and `radiusstack-source.tar.gz`, independently verified its SHA-256 digest, and rehearsed the upgrade on a copy of the installation.** The installed 6.1.1 updater is the script that runs first; do not assume a fixed script inside this archive can repair an earlier updater before it starts. Preserve the existing private `.env`, database, certificates, generated configuration, and Compose overrides. The archive contains `.env.example` and `setup_env.sh`, but no `.env`.

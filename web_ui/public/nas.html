@@ -14,6 +14,14 @@
     </div>
   </main>
 
+  <div id="nasStatsModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="nasStatsTitle"><div class="bg-white p-6 rounded-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-center gap-4"><div><h2 id="nasStatsTitle" class="text-2xl font-bold text-gray-800">NAS statistics</h2><p id="nasStatsEndpoint" class="text-sm text-gray-600"></p></div><button type="button" id="nasStatsClose" class="rounded bg-gray-200 px-4 py-2 font-semibold">Close</button></div>
+    <div class="flex flex-wrap items-center justify-between gap-3 my-4"><div id="nasStatsWindows" class="flex flex-wrap gap-2" aria-label="Statistics time window"><button type="button" data-window="hour">Hour</button><button type="button" data-window="day">Day</button><button type="button" data-window="week">Week</button><button type="button" data-window="month">Month</button><button type="button" data-window="year">Year</button></div><div class="flex items-center gap-3"><button id="nasStatsRefresh" type="button" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold">Refresh</button><label class="flex items-center gap-2 text-sm"><input id="nasStatsAutoRefresh" type="checkbox" checked> Auto-refresh</label></div></div>
+    <p id="nasStatsStatus" role="status" aria-live="polite" class="text-sm mb-3"></p><p class="text-xs text-gray-500 mb-3">Counts reflect recorded authentication log rows and accounting sessions on this RadiusStack node, not all wire packets. History is limited by log retention.</p>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"><div class="bg-blue-50 p-3 rounded"><div>Auth attempts</div><strong id="nasStatsAuth" class="text-2xl">0</strong></div><div class="bg-green-50 p-3 rounded"><div>Accepts</div><strong id="nasStatsAccept" class="text-2xl">0</strong></div><div class="bg-red-50 p-3 rounded"><div>Rejects</div><strong id="nasStatsReject" class="text-2xl">0</strong></div><div class="bg-gray-50 p-3 rounded"><div>Other replies</div><strong id="nasStatsOther" class="text-2xl">0</strong></div><div class="bg-cyan-50 p-3 rounded"><div>Sessions started</div><strong id="nasStatsSessions" class="text-2xl">0</strong></div><div class="bg-cyan-50 p-3 rounded"><div>Still active (started in window)</div><strong id="nasStatsActive" class="text-2xl">0</strong></div><div class="bg-gray-50 p-3 rounded"><div>Avg auth/sec</div><strong id="nasStatsAverage" class="text-2xl">0</strong></div><div class="bg-gray-50 p-3 rounded"><div>Peak auth/sec (minute)</div><strong id="nasStatsPeak" class="text-2xl">0</strong></div></div>
+    <p id="nasStatsTraffic" class="text-sm text-gray-700 mb-4"></p><h3 class="font-bold mb-2">Authentication and sessions started over time</h3><div id="nasStatsChart" class="space-y-2" aria-label="NAS authentication and accounting trend"></div>
+  </div></div>
+
   <div id="nasModal" class="fixed inset-0 bg-black bg-opacity-60 hidden flex items-center justify-center p-4 z-50 backdrop-blur-sm">
     <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border border-gray-100">
       <h2 class="text-xl font-bold mb-4 text-gray-800" id="modalTitle">Add NAS Client</h2>
@@ -60,7 +68,7 @@
         nasList = await res.json();
         document.querySelector('#nasTable tbody').innerHTML = nasList.map(n => `
         <tr class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-          <td class="p-3 font-bold text-gray-800">${xssHtml(n.nasname)}</td>
+          <td class="p-3 font-bold text-gray-800"><button type="button" onclick="showNasStats(${Number(n.id)})" class="text-blue-700 hover:underline font-bold" title="View NAS statistics">${xssHtml(n.nasname)}</button></td>
           <td class="p-3 text-gray-600">${xssHtml(n.shortname)}</td><td class="p-3 text-gray-600">${xssHtml(n.tenant_name||'Global')}</td>
           <td class="p-3 font-mono text-gray-500 text-xs">••••••••</td>
           <td class="p-3 text-gray-500 text-xs">${xssHtml(n.description || '')}</td><td class="p-3">${n.radsec_enabled ? '<span class="text-green-700 font-bold">TLS (RadSec)</span>' : '—'}</td>
@@ -71,6 +79,47 @@
         </tr>`).join('');
       }
     }
+
+    let nasStatsId=null, nasStatsWindow='hour', nasStatsRequest=0, nasStatsRefreshTimer=null;
+    function stopNasStatsRefresh(){if(nasStatsRefreshTimer!==null){clearInterval(nasStatsRefreshTimer);nasStatsRefreshTimer=null;}}
+    function syncNasStatsRefresh(){stopNasStatsRefresh();if(nasStatsId!==null && document.getElementById('nasStatsAutoRefresh').checked)nasStatsRefreshTimer=setInterval(()=>showNasStats(nasStatsId,nasStatsWindow),30000);}
+    function closeNasStats(){nasStatsRequest++;nasStatsId=null;stopNasStatsRefresh();document.getElementById('nasStatsModal').classList.add('hidden');}
+    function bytesLabel(value){const n=Number(value)||0;return n>=1073741824?(n/1073741824).toFixed(2)+' GiB':n>=1048576?(n/1048576).toFixed(2)+' MiB':n>=1024?(n/1024).toFixed(2)+' KiB':n+' B';}
+    window.showNasStats=async function(id,windowName='hour'){
+      if(nasStatsId!==id){nasStatsId=id;syncNasStatsRefresh();}
+      nasStatsWindow=windowName;
+      const request=++nasStatsRequest,$=key=>document.getElementById('nasStats'+key);
+      $('Modal').classList.remove('hidden');$('Status').textContent='Loading statistics…';
+      for(const button of $('Windows').querySelectorAll('button[data-window]')){
+        const active=button.dataset.window===windowName;
+        button.className=active?'bg-blue-600 text-white px-4 py-2 rounded-lg font-bold':'bg-gray-100 hover:bg-gray-200 text-blue-700 px-4 py-2 rounded-lg font-bold';
+        button.setAttribute('aria-pressed',String(active));
+      }
+      try{
+        const response=await apiFetch(`/api/nas/${id}/stats?window=${windowName}`);
+        const data=await response.json();if(!response.ok)throw Error(data.error||'NAS statistics unavailable');
+        if(request!==nasStatsRequest)return;
+        $('Title').textContent=data.nas.shortname;
+        $('Endpoint').textContent=`${data.nas.nasname} · ${windowName} · ${data.source}`;
+        for(const [field,key] of [['Auth','auth'],['Accept','accept'],['Reject','reject'],['Other','other'],['Sessions','sessions'],['Active','active']])$(field).textContent=String(data.totals[key]);
+        $('Average').textContent=String(data.average_rps);$('Peak').textContent=String(data.peak_minute_rps);
+        $('Traffic').textContent=`Accounting traffic: in ${bytesLabel(data.totals.input_bytes)} · out ${bytesLabel(data.totals.output_bytes)}`;
+        const chart=$('Chart');chart.replaceChildren();const points=data.series.slice(-30),max=Math.max(1,...points.map(p=>Number(p.auth)+Number(p.sessions)));
+        if(!points.length){chart.textContent='No recorded activity in this window.';}
+        for(const point of points){
+          const row=document.createElement('div');row.className='grid grid-cols-[8rem_1fr_6rem] items-center gap-2 text-xs';
+          const label=document.createElement('span');label.textContent=point.bucket;row.appendChild(label);
+          const bars=document.createElement('div');bars.className='flex h-4 rounded bg-gray-100 overflow-hidden';
+          for(const [value,color] of [[point.auth,'#1d4ed8'],[point.sessions,'#0891b2']]){const bar=document.createElement('span');bar.style.width=`${Math.max(0,Math.min(100,Number(value)/max*100))}%`;bar.style.backgroundColor=color;bars.appendChild(bar);}
+          row.appendChild(bars);const numbers=document.createElement('span');numbers.textContent=`${point.auth} / ${point.sessions}`;row.appendChild(numbers);chart.appendChild(row);
+        }
+        $('Status').textContent=`Updated ${new Date(data.as_of).toLocaleTimeString('en-GB',{timeZone:'UTC',hour12:false})} UTC`;
+      }catch(error){if(request===nasStatsRequest)$('Status').textContent=error.message;}
+    };
+    document.getElementById('nasStatsClose').onclick=closeNasStats;
+    document.getElementById('nasStatsRefresh').onclick=()=>{if(nasStatsId!==null)showNasStats(nasStatsId,nasStatsWindow);};
+    document.getElementById('nasStatsAutoRefresh').onchange=syncNasStatsRefresh;
+    document.getElementById('nasStatsWindows').onclick=event=>{const value=event.target?.dataset?.window;if(nasStatsId!==null && ['hour','day','week','month','year'].includes(value))showNasStats(nasStatsId,value);};
 
 window.openModal = function(id = null) {
       document.getElementById('nasModal').classList.remove('hidden');
@@ -134,9 +183,8 @@ window.openModal = function(id = null) {
     async function loadNasRadsecPassphrase(id){const target=document.getElementById('radsecPassphrase');target.textContent='';const response=await apiFetch(`/api/nas/${id}/radsec/passphrase`);if(!response.ok){target.textContent='Passphrase unavailable. Regenerate the RadSec certificate.';return;}const result=await response.json();target.textContent=result.status==='available'?`Certificate passphrase: ${result.passphrase}`:'Passphrase unavailable. Regenerate the RadSec certificate.';}
     async function generateNasRadsecClient(){const id=document.getElementById("nasId").value;if(!id)return alert("Save this NAS before generating its certificate.");const format=document.querySelector("input[name=radsecDelivery]:checked").value;const r=await apiFetch(`/api/nas/${id}/radsec/client`,{method:"POST",body:JSON.stringify({format})});const x=await r.json();if(!r.ok)return alert(x.error||"Certificate generation failed");document.getElementById("radsecPassphrase").textContent="Certificate passphrase is available whenever this NAS is opened.";document.getElementById("p12Password").textContent=(format==="pem"?"Private-key password (shown once): ":"P12 password (shown once): ")+x.password;const actions=document.getElementById("radsecDownloadActions");actions.innerHTML="";for(const item of x.downloads){const b=document.createElement("button");b.type="button";b.className="bg-blue-700 text-white px-3 py-2 rounded font-bold";b.textContent=item.name.endsWith(".p12")?"Download P12":item.name.includes("private-key")?"Download private key":"Download certificate";b.onclick=async()=>{b.disabled=true;const d=await apiFetch(`/api/nas/${id}/radsec/download/${item.token}`);if(!d.ok){b.disabled=false;return alert("Download token failed or expired");}const a=document.createElement("a");a.href=URL.createObjectURL(await d.blob());a.download=item.name;a.click();URL.revokeObjectURL(a.href);b.remove();};actions.appendChild(b);}}
     let nasRouteBooted = false;
-    function bootstrapNasRoutes() { if (nasRouteBooted || !window.radiusstackContext || !hasPermission(window.currentPermissions, 'nas')) return; nasRouteBooted = true; document.getElementById('nasRouteControls').hidden = false; DownstreamRouteControls.load('nas'); }
-    document.addEventListener('radiusstack:tenant-context-ready', bootstrapNasRoutes); window.addEventListener('load', bootstrapNasRoutes);
-    loadCustomDynamicAuthAttributes().then(loadData);
+    function bootstrapNasRoutes() { if (!window.radiusstackContext || !hasPermission(window.currentPermissions, 'nas')) return; if(nasRouteBooted){closeNasStats();loadCustomDynamicAuthAttributes().then(loadData);return;} nasRouteBooted = true; document.getElementById('nasRouteControls').hidden = false; DownstreamRouteControls.load('nas'); loadCustomDynamicAuthAttributes().then(loadData); }
+    document.addEventListener('radiusstack:tenant-context-ready', bootstrapNasRoutes); window.addEventListener('load', () => { if(!nasRouteBooted)bootstrapNasRoutes(); });
   </script>
   <script src="/js/field-help.js"></script>
 </body></html>

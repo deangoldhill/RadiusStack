@@ -18,6 +18,32 @@ native_proxy_select_acct {
     native_proxy_select
 }
 
+# Store one minute-bucketed routed attempt per selected destination. Only the
+# internally produced P/D/V + numeric ID enters SQL; no NAS-supplied field,
+# password, session ID, or shared secret is recorded. A stats write must not
+# turn a valid auth/accounting route into a rejection.
+native_proxy_count_auth {
+    if (&control:Tmp-String-7 =~ /^[PDV]:([0-9]+)$/) {
+        update control {
+            &Tmp-String-8 := "%{sql:INSERT INTO downstream_proxy_stats_minutes (destination_id,tenant_id,bucket_start,route_mode,auth_requests,accounting_requests) SELECT id,tenant_id,UTC_TIMESTAMP() - INTERVAL SECOND(UTC_TIMESTAMP()) SECOND,CASE LEFT('%{control:Tmp-String-7}',1) WHEN 'P' THEN 'proxy-only' WHEN 'D' THEN 'duplicate' ELSE 'validated' END,1,0 FROM downstream_radius_destinations WHERE id=%{1} ON DUPLICATE KEY UPDATE auth_requests=auth_requests+1}"
+        }
+        if (fail) {
+            noop
+        }
+    }
+}
+
+native_proxy_count_acct {
+    if (&control:Tmp-String-7 =~ /^[PDV]:([0-9]+)$/) {
+        update control {
+            &Tmp-String-8 := "%{sql:INSERT INTO downstream_proxy_stats_minutes (destination_id,tenant_id,bucket_start,route_mode,auth_requests,accounting_requests) SELECT id,tenant_id,UTC_TIMESTAMP() - INTERVAL SECOND(UTC_TIMESTAMP()) SECOND,CASE LEFT('%{control:Tmp-String-7}',1) WHEN 'P' THEN 'proxy-only' WHEN 'D' THEN 'duplicate' ELSE 'validated' END,0,1 FROM downstream_radius_destinations WHERE id=%{1} ON DUPLICATE KEY UPDATE accounting_requests=accounting_requests+1}"
+        }
+        if (fail) {
+            noop
+        }
+    }
+}
+
 native_proxy_auth {
     native_proxy_select_auth
     if (fail || reject) {
@@ -29,6 +55,7 @@ native_proxy_auth {
     if (&control:Tmp-String-7 == "N") {
         noop
     }
+    native_proxy_count_auth
     if (&control:Tmp-String-7 =~ /^P:([0-9]+)$/) {
         update control { &Proxy-To-Realm := "downstream_%{1}" }
         return
@@ -60,6 +87,7 @@ native_proxy_acct {
     if (&control:Tmp-String-7 == "N") {
         noop
     }
+    native_proxy_count_acct
     if (&control:Tmp-String-7 =~ /^P:([0-9]+)$/) {
         # Require downstream accounting ACK before recording local plan usage.
         update request { &Tmp-String-0 := "%{Packet-Src-IP-Address}" }

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Run from the installation directory. Requires bash, Python 3, curl and Docker Compose v2.
+# Run from the installation directory. Requires bash, Python 3 and Docker Compose v2; remote-download mode also needs curl.
 set -Eeuo pipefail
 umask 077
-if [[ $# != 2 || $1 != --to || ! $2 =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-  echo 'Usage: ./upgrade.sh --to x.y[.z] (invalid version)' >&2
+if [[ ( $# != 2 && $# != 4 ) || $1 != --to || ! $2 =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ || ( $# == 4 && $3 != --archive ) ]]; then
+  echo 'Usage: ./upgrade.sh --to x.y[.z] [--archive /absolute/path/radiusstack-source.tar.gz]' >&2
   exit 2
 fi
 version=$2
+local_archive=''
+if [[ $# == 4 ]]; then
+  [[ $4 == /* && -f $4 && $(basename -- "$4") == radiusstack-source.tar.gz ]] || { echo 'Local archive must be an absolute radiusstack-source.tar.gz file' >&2; exit 2; }
+  local_archive=$4
+fi
 # Bash reads scripts incrementally. An older updater overwrote its own path and
 # later parsed bytes from the replacement. Always execute a separate private copy.
 if [[ ${RADIUS_UPGRADE_RUNNING_COPY:-} != 1 ]]; then
@@ -46,7 +51,9 @@ if parts(target) <= parts(current):
     raise SystemExit('Refusing same-version install or downgrade')
 PY
 fi
-for cmd in python3 curl docker; do log "check command available: $cmd"; command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }; done
+required_commands=(python3 docker)
+if [[ -z $local_archive ]]; then required_commands+=(curl); fi
+for cmd in "${required_commands[@]}"; do log "check command available: $cmd"; command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }; done
 # Never interpolate secrets from .env: Compose injects MYSQL_ROOT_PASSWORD into mariadb.
 # Match the actual deployment; a merely present optional override is not active.
 compose=(docker compose -f docker-compose.yml)
@@ -115,11 +122,27 @@ cleanup() {
 }
 trap cleanup EXIT
 console '[+] Checking release and building images (details in log)'
-log "download release metadata: https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version -> $work/release.json"
-curl -fsSL -o "$work/release.json" "https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version"
-log "downloaded release metadata bytes=$(wc -c < "$work/release.json") sha256=$(sha256sum "$work/release.json" | cut -d' ' -f1)"
-# Require exactly one named release asset with a GitHub-published SHA-256 digest.
-python3 - "$work/release.json" "$version" > "$work/asset" <<'PY'
+if [[ -n $local_archive ]]; then
+  log "verify local release archive path=$local_archive against adjacent SHA256SUMS"
+  python3 - "$local_archive" "$(dirname -- "$local_archive")/SHA256SUMS" > "$work/asset" <<'PY'
+import pathlib, re, sys
+archive = pathlib.Path(sys.argv[1])
+checksums = pathlib.Path(sys.argv[2])
+if archive.is_symlink() or not archive.is_file() or not checksums.is_file() or checksums.is_symlink():
+    raise SystemExit('Local release archive and checksum must be regular files')
+lines = checksums.read_text().splitlines()
+if len(lines) != 1 or not re.fullmatch(r'[0-9a-fA-F]{64}  radiusstack-source\.tar\.gz', lines[0]):
+    raise SystemExit('Local SHA256SUMS must contain one exact archive digest')
+print(lines[0][:64].lower())
+PY
+  cp -- "$local_archive" "$work/source.tar.gz"
+  log "copied local archive bytes=$(wc -c < "$work/source.tar.gz") expected_sha256=$(<"$work/asset")"
+else
+  log "download release metadata: https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version -> $work/release.json"
+  curl -fsSL -o "$work/release.json" "https://api.github.com/repos/deangoldhill/RadiusStack/releases/tags/$version"
+  log "downloaded release metadata bytes=$(wc -c < "$work/release.json") sha256=$(sha256sum "$work/release.json" | cut -d' ' -f1)"
+  # Require exactly one named release asset with a GitHub-published SHA-256 digest.
+  python3 - "$work/release.json" "$version" > "$work/asset" <<'PY'
 import json, re, sys
 obj = json.load(open(sys.argv[1]))
 v = sys.argv[2]
@@ -133,9 +156,10 @@ if a.get('browser_download_url') != url or not re.fullmatch(r'sha256:[0-9a-fA-F]
     raise SystemExit('Missing trusted release asset digest or unexpected URL')
 print(a['digest'][7:].lower())
 PY
-log "download release archive: https://github.com/deangoldhill/RadiusStack/releases/download/$version/radiusstack-source.tar.gz -> $work/source.tar.gz expected_sha256=$(<"$work/asset")"
-curl -fsSL -o "$work/source.tar.gz" "https://github.com/deangoldhill/RadiusStack/releases/download/$version/radiusstack-source.tar.gz"
-log "downloaded archive bytes=$(wc -c < "$work/source.tar.gz") sha256=$(sha256sum "$work/source.tar.gz" | cut -d' ' -f1)"
+  log "download release archive: https://github.com/deangoldhill/RadiusStack/releases/download/$version/radiusstack-source.tar.gz -> $work/source.tar.gz expected_sha256=$(<"$work/asset")"
+  curl -fsSL -o "$work/source.tar.gz" "https://github.com/deangoldhill/RadiusStack/releases/download/$version/radiusstack-source.tar.gz"
+  log "downloaded archive bytes=$(wc -c < "$work/source.tar.gz") sha256=$(sha256sum "$work/source.tar.gz" | cut -d' ' -f1)"
+fi
 python3 - "$work/source.tar.gz" "$work/asset" "$work/stage" "$version" <<'PY'
 import hashlib, pathlib, shutil, sys, tarfile
 archive, expected_file, destination, version = sys.argv[1:]

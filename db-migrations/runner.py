@@ -145,6 +145,12 @@ POSTCONDITIONS = {
         {('downstream_radius_destinations', 'proxy_traffic')}, set()),
     '20261103_authlog_origin_node': (set(), {('radpostauth', 'origin_node')}, set()),
     '20261112_mac_vendor': (set(), {('mac_auth_devices', 'vendor_name')}, set()),
+    '20261113_downstream_proxy_stats': (
+        {'downstream_proxy_stats_minutes'},
+        {('downstream_proxy_stats_minutes', field) for field in
+         ('destination_id', 'tenant_id', 'bucket_start', 'route_mode', 'auth_requests', 'accounting_requests')},
+        {('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_tenant_time'),
+         ('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_retention')}),
 }
 
 

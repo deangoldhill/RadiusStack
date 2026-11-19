@@ -207,3 +207,18 @@ CREATE TABLE IF NOT EXISTS profile_downstream_routes (
   FOREIGN KEY (destination_id) REFERENCES downstream_radius_destinations(id) ON DELETE CASCADE,
   FOREIGN KEY (tenant_id,destination_id) REFERENCES downstream_radius_destinations(tenant_id,id) ON DELETE CASCADE
 );
+
+-- Per-destination minute buckets; legacy databases receive the matching migration.
+CREATE TABLE IF NOT EXISTS downstream_proxy_stats_minutes (
+  destination_id INT NOT NULL,
+  tenant_id INT NULL,
+  bucket_start DATETIME NOT NULL,
+  route_mode ENUM('proxy-only','duplicate','validated') NOT NULL,
+  auth_requests BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  accounting_requests BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (destination_id,bucket_start,route_mode),
+  KEY idx_downstream_proxy_stats_tenant_time (tenant_id,destination_id,bucket_start),
+  KEY idx_downstream_proxy_stats_retention (bucket_start),
+  CONSTRAINT fk_downstream_proxy_stats_destination FOREIGN KEY (destination_id)
+    REFERENCES downstream_radius_destinations(id) ON DELETE CASCADE
+);
