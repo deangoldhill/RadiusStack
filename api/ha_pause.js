@@ -6,6 +6,7 @@ function createHaPauseControl({ query, role, queueWarningThreshold = 1000 }) {
   if (!Number.isSafeInteger(queueWarningThreshold) || queueWarningThreshold < 1) throw new TypeError('Invalid HA queue warning threshold');
   let blocked = false;
   let active = null;
+  let activeProducer = null;
   let transition = null;
   function serial(work) {
     const result = transition ? transition.then(work) : work();
@@ -30,6 +31,7 @@ function createHaPauseControl({ query, role, queueWarningThreshold = 1000 }) {
       // An active network callback cannot be cancelled. Acknowledge pause only
       // once it settles; no new callback starts once blocked is set.
       if (active) await active.catch(() => {});
+      if (activeProducer) await activeProducer.catch(() => {});
       return readState();
     });
   }
@@ -69,7 +71,20 @@ function createHaPauseControl({ query, role, queueWarningThreshold = 1000 }) {
     try { return await work; }
     finally { if (active === work) active = null; }
   }
-  return { pause, resume, status, runDelivery };
+  async function runProducer(produce) {
+    requirePrimary();
+    if (typeof produce !== 'function') throw new TypeError('HA producer callback required');
+    if (blocked || activeProducer) return false;
+    const work = (async () => {
+      if (Boolean((await readState()).paused) || blocked) return false;
+      await produce();
+      return true;
+    })();
+    activeProducer = work;
+    try { return await work; }
+    finally { if (activeProducer === work) activeProducer = null; }
+  }
+  return { pause, resume, status, runDelivery, runProducer };
 }
 
 module.exports = { createHaPauseControl };

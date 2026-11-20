@@ -18,6 +18,8 @@ const {MAX_BATCH_ITEMS, deliverHaBatch, applyHaBatch, shouldFullSyncTable, canPr
 const {createHaWriteCapture} = require('./ha_write_capture');
 const {createHaPauseControl} = require('./ha_pause');
 const {createHaLogReconciler} = require('./ha_log_reconcile');
+const {withSecondaryRadiusMaintenance,recoverSecondaryRadiusMaintenance} = require('./ha_secondary_maintenance');
+const {createSecondaryLogWriteFence} = require('./ha_secondary_log_fence');
 const {createPrimaryHaLogReconciler} = require('./ha_log_reconcile_primary');
 const {reverseReplayAllowed} = require('./ha_reconcile_gate');
 const {validateReverseLogBatch,checkReverseLogOwnership} = require('./ha_reverse_logs');
@@ -164,7 +166,11 @@ app.use((req, res, next) => {
         const isWrite = ['POST', 'PUT', 'DELETE'].includes(req.method);
         const isHaEndpoint = req.path.startsWith('/api/ha') || req.path.startsWith('/api/sync') || req.path.startsWith('/auth');
         const isRestart = req.path.startsWith('/api/system/restart');
-        if (isWrite && !isHaEndpoint && !isRestart) {
+        // EAP certificate material is node-local. Keep every other secondary write blocked;
+        // the matching routes still enforce settings write permission and Global super-admin.
+        const isLocalEapCertificateWrite = req.method === 'POST' &&
+            (req.path === '/api/certs/generate' || req.path === '/api/certs/upload');
+        if (isWrite && !isHaEndpoint && !isRestart && !isLocalEapCertificateWrite) {
             return res.status(403).json({ error: 'Secondary node is read-only. Please promote to primary to make changes.' });
         }
     }
@@ -182,15 +188,17 @@ async function pushToHaQueue(queryStr, valuesStr, insertId = null) {
 const originalPoolQuery = pool.query;
 const originalGetConnection = pool.getConnection;
 const originalPoolExecute = pool.execute;
+const haSecondaryLogFence = createSecondaryLogWriteFence({isSecondary:()=>global.haRole==='secondary' && process.env.HA_ENABLED==='true'});
 const haWriteCapture = createHaWriteCapture({
     pool, getConnection: originalGetConnection, query: originalPoolQuery, execute: originalPoolExecute,
     isPrimary: () => process.env.HA_ENABLED === 'true' && global.haRole === 'primary'
 });
-pool.query = async function() { return haWriteCapture.query(...arguments); };
+pool.query = async function() { return haSecondaryLogFence.run(arguments[0],()=>haWriteCapture.query(...arguments)); };
 
 pool.getConnection = async function() {
     const conn = await originalGetConnection.apply(this, arguments);
     const originalConnQuery = conn.query;
+    const originalConnExecute = conn.execute;
     conn.query = async function() {
         const args = Array.from(arguments);
         const sqlQuery = args[0] ? args[0].toString().trim().toUpperCase() : '';
@@ -198,7 +206,7 @@ pool.getConnection = async function() {
         const options = args[2] || {};
         const isSync = options.isSync === true;
 
-        const result = await originalConnQuery.apply(this, args);
+        const result = await haSecondaryLogFence.runConnection(conn,args[0],()=>originalConnQuery.apply(this,args));
         const insertId = (result && result[0] && result[0].insertId) ? result[0].insertId : null;
 
         if (process.env.HA_ENABLED === 'true' && global.haRole === 'primary' && isWrite && !isSync && !sqlQuery.includes('HA_QUEUE') && !sqlQuery.includes('HA_SYNC_STATE') && !(sqlQuery.includes('INTO RADIUS_STATS') || sqlQuery.includes('UPDATE RADIUS_STATS') || sqlQuery.includes('FROM RADIUS_STATS'))) {
@@ -206,10 +214,14 @@ pool.getConnection = async function() {
         }
         return result;
     };
+    conn.execute = async function() {
+        const args=Array.from(arguments);
+        return haSecondaryLogFence.runConnection(conn,args[0],()=>originalConnExecute.apply(this,args));
+    };
     return conn;
 };
 
-pool.execute = async function() { return haWriteCapture.execute(...arguments); };
+pool.execute = async function() { return haSecondaryLogFence.run(arguments[0],()=>haWriteCapture.execute(...arguments)); };
 
 const haPause = createHaPauseControl({
     query: (sql, values, options) => originalPoolQuery.call(pool, sql, values, options),
@@ -265,6 +277,10 @@ async function processHaQueueUnpaused(throughId = null) {
 
 let haAccountingInFlight = false;
 async function syncRadiusTables() {
+    if (global.haRole === 'primary') return haPause.runProducer(syncRadiusTablesUnpaused);
+    return syncRadiusTablesUnpaused();
+}
+async function syncRadiusTablesUnpaused() {
     if (!haTransport.enabled || !['primary','secondary'].includes(global.haRole) || haAccountingInFlight) return;
     haAccountingInFlight = true;
     try {
@@ -467,7 +483,7 @@ app.post('/api/ha/log-reconcile', requireHaAdmin('read-write'), async (req,res)=
             "UPDATE ha_log_reconcile_state SET status='starting',run_id=NULL,detail=NULL,error=NULL WHERE id=1 AND status IN ('idle','completed','partial','failed-pre-drain')",[],{isSync:true});
         if (result.affectedRows!==1) return res.status(409).json({error:'A reconciliation is already in progress or state requires review'});
         haPrimaryReconciler.run().catch(error=>console.error('[HA Log Reconciliation]',error.message));
-        res.status(202).json({success:true,message:'Online log reconciliation started; monitor HA status'});
+        res.status(202).json({success:true,message:'Log reconciliation started; monitor HA status'});
     } catch(error) { console.error('[HA Reconciliation Start]',error.message);res.status(503).json({error:'Unable to start reconciliation'}); }
 });
 
@@ -482,6 +498,14 @@ app.post('/api/ha/demote', requireHaAdmin('read-write'), (req, res) => {
     res.json({ success: true, message: 'Demoted to secondary. Node is now read-only.' });
 });
 
+// Display-only, process-local counters. Never reset HA cursors, queue, or pause state.
+app.post('/api/ha/reset-stats', requireHaAdmin('read-write'), async (req, res) => {
+    if (req.header('X-Tenant-ID') !== 'global') return res.status(403).json({error:'Global context required'});
+    if (!haTransport.enabled) return res.status(409).json({error:'HA is disabled'});
+    global.haStats = { success: 0, failed: 0, lastSync: null };
+    return res.json({success:true,message:'Reset this node’s local HA sync statistics'});
+});
+
 app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
     if (!canProduceHaSync(haTransport.enabled,global.haRole)) return res.status(403).json({error:'Sync can only be triggered from an enabled primary'});
     try {
@@ -493,7 +517,7 @@ app.post('/api/ha/sync-now', requireHaAdmin('read-write'), async (req, res) => {
 });
 
 
-const HA_CERT_ROOTS = ['/certs_radsec', '/certs_shared'];
+const HA_CERT_ROOTS = ['/certs_radsec'];
 async function readHaCertificateBundle() { const files=[]; async function walk(root,dir=root){for(const entry of await fs.readdir(dir,{withFileTypes:true})){const full=`${dir}/${entry.name}`;if(entry.isDirectory())await walk(root,full);else if(entry.isFile()&&includeHaCertificate(root,full.slice(root.length+1))){const data=await fs.readFile(full);if(data.length>1048576)throw new Error('Certificate artifact too large');files.push({path:full.slice(root.length+1),root,data:data.toString('base64')});}}} for(const root of HA_CERT_ROOTS)await walk(root);return {version:Date.now(),files}; }
 const reconcileHaCertificates = createCertificateReconciler({
   readBundle: readHaCertificateBundle,
@@ -575,23 +599,44 @@ app.post('/api/ha/full-sync', requireHaAdmin('read-write'), async (req, res) => 
     }
 });
 
+const SECONDARY_RADIUS_RECOVERY='secondary-radius-maintenance';
+async function markSecondaryRadiusForRecovery(runId){
+    const [result]=await originalPoolQuery.call(pool,"UPDATE ha_log_reconcile_state SET error=? WHERE id=1 AND run_id=? AND status='ready' AND error IS NULL",[SECONDARY_RADIUS_RECOVERY,runId],{isSync:true});
+    if(result.affectedRows!==1)throw new Error('Secondary reconciliation is not ready for Radius maintenance');
+}
+async function clearSecondaryRadiusRecovery(runId){
+    const [result]=await originalPoolQuery.call(pool,'UPDATE ha_log_reconcile_state SET error=NULL WHERE id=1 AND run_id=? AND error=?',[runId,SECONDARY_RADIUS_RECOVERY],{isSync:true});
+    if(result.affectedRows!==1)throw new Error('Secondary Radius recovery marker could not be cleared');
+}
+async function recoverMarkedSecondaryRadius(){
+    if(process.env.HA_ENABLED!=='true'||global.haRole!=='secondary')return;
+    const [[state]]=await originalPoolQuery.call(pool,'SELECT run_id,error FROM ha_log_reconcile_state WHERE id=1',[],{isSync:true});
+    if(!state)throw new Error('Missing secondary HA reconciliation state');
+    await recoverSecondaryRadiusMaintenance({marker:async()=>state.error===SECONDARY_RADIUS_RECOVERY,
+        clearStopped:()=>clearSecondaryRadiusRecovery(state.run_id)});
+}
 app.post('/api/sync/log-reconcile', async (req,res)=>{
     let payload;
     try { payload=decryptHaPayload(req.body); } catch { return res.status(401).json({error:'Decryption failed'}); }
     if (!haTransport.enabled || global.haRole!=='secondary') return res.status(403).json({error:'Enabled secondary required'});
     const age=Date.now()-payload._ts;
     if (!Number.isFinite(age) || age>60000 || age < -5000) return res.status(401).json({error:'Payload expired'});
-    const methods={prepare:'prepare',stage:'stageChunk',seal:'sealTable',finalizeStep:'finalizeStep',finalize:'finalize',verify:'verify',cleanup:'cleanup'};
+    const methods={prepare:'prepare',stage:'stageChunk',seal:'sealTable',replace:'replaceAll',finalizeStep:'finalizeStep',finalize:'finalize',verify:'verify',cleanup:'cleanup'};
     if (!Object.hasOwn(methods,payload.action)) return res.status(400).json({error:'Unsupported reconciliation action'});
     try {
         if (payload.action==='prepare') {
             if (!/^[0-9a-f]{32}$/.test(payload.runId)) return res.status(400).json({error:'Invalid run ID'});
             const [started]=await originalPoolQuery.call(pool,
-                "UPDATE ha_log_reconcile_state SET run_id=?, status='new', detail=NULL,error=NULL,expected_radacct=NULL,expected_radpostauth=NULL,expected_admin_audit_log=NULL WHERE id=1 AND status IN ('idle','finalized','cleaned')",
+                "UPDATE ha_log_reconcile_state SET run_id=?, status='new', detail=NULL,error=NULL,expected_radacct=NULL,expected_radpostauth=NULL,expected_admin_audit_log=NULL,expected_plan_pod_enforcements=NULL WHERE id=1 AND status IN ('idle','finalized','cleaned')",
                 [payload.runId],{isSync:true});
             if (started.affectedRows!==1) return res.status(409).json({error:'Secondary reconciliation requires operator review'});
         }
-        const output=await secondaryLogReconciler[methods[payload.action]](payload);
+        const output=payload.action==='replace'
+            ? await haSecondaryLogFence.withFence(()=>withSecondaryRadiusMaintenance({
+                recordStopped:()=>markSecondaryRadiusForRecovery(payload.runId),
+                clearStopped:()=>clearSecondaryRadiusRecovery(payload.runId),
+                replace:()=>secondaryLogReconciler.replaceAll(payload)}))
+            : await secondaryLogReconciler[methods[payload.action]](payload);
         res.json({success:true,...output});
     } catch(error) { console.error('[HA Secondary Reconciliation]',error.message);res.status(409).json({error:'Reconciliation step failed; inspect job and cleanup status'}); }
 });
@@ -781,7 +826,7 @@ async function initDb() {
         await auditLog('system', 'system', 'Created default admin account', 'success', 'Initial setup');
     }
 }
-initDb();
+const dbReady=initDb();
 
 const { resolveLoginAuditScope } = require('./routes/auth_self');
 const trustedLoginProxies = (process.env.TRUSTED_LOGIN_PROXY_IPS || '').split(',').map(ip => ip.trim()).filter(Boolean);
@@ -973,7 +1018,7 @@ function setApiDebugMode(enabled) {
 }
 
 const routeDependencies = {
-    bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer,
+    bcrypt, jwt, crypto, exec, execFile, fs, qrcode, authenticator, upload, multer,
     JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusCredential, snapshotUserPlanUsage,
     calculateRadiusStats, calculateTrendHourly, calculateTrendDaily,
     signTotpEnrollmentToken, verifyTotpEnrollmentToken,
@@ -1163,9 +1208,9 @@ app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), requireGlob
     }
 });
 
-app.listen(3000, '0.0.0.0', () => {
+dbReady.then(recoverMarkedSecondaryRadius).then(()=>app.listen(3000, '0.0.0.0', () => {
     console.log('Radius UI Server listening on port 3000');
-});
+})).catch(error=>{console.error('[Startup] Database or secondary Radius recovery failed:',error);process.exit(1);});
 
 
 const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog, notify: sendNotification });
@@ -1178,8 +1223,10 @@ const {refreshRegistry} = require('./mac_vendor');
 setInterval(() => refreshRegistry().then(count => console.log(`[MAC Vendor] Refreshed ${count} manufacturer prefixes`)).catch(error => console.error('[MAC Vendor] Retaining bundled registry:', error.message)), 7 * 24 * 60 * 60 * 1000);
 
 const planPodEnforcementWorker = createPlanPodEnforcementWorker({ pool });
-setInterval(() => planPodEnforcementWorker.process(), 30000);
-setTimeout(() => planPodEnforcementWorker.process(), 30000);
+const runPlanPodEnforcement = () => haSecondaryLogFence.runTask(() => planPodEnforcementWorker.process())
+    .catch(error => { if (!/Secondary log writes paused for reconciliation maintenance/.test(error.message)) console.error('[Plan PoD enforcement] worker failed:', error); });
+setInterval(runPlanPodEnforcement, 30000);
+setTimeout(runPlanPodEnforcement, 30000);
 
     apiDebugLog('Stale session worker initialized');
 let lastStaleSessionRun = 0;

@@ -3,8 +3,9 @@
 // Database contract: ha_log_reconcile_state singleton id=1, run_id CHAR(32),
 // status ('new','staging','ready','finalized'), and nullable BIGINT
 // expected_radacct, expected_radpostauth, expected_admin_audit_log.
-// Caller authenticates the peer. Secondary Radius writers remain online.
-const TABLES = Object.freeze({radacct: 'radacctid', radpostauth: 'id', admin_audit_log: 'id'});
+// Caller authenticates the peer. A short secondary writer fence is required
+// for replaceAll; staged transfer and inspection remain online.
+const TABLES = Object.freeze({radacct: 'radacctid', radpostauth: 'id', admin_audit_log: 'id', plan_pod_enforcements: 'radacctid'});
 const MAX_ROWS = 200;
 const MAX_BYTES = 1024 * 1024;
 function tableNames(table, runId) {
@@ -27,7 +28,7 @@ function createHaLogReconciler({getConnection, role}) {
     if (await role() !== 'secondary') throw new Error('Reconciliation is secondary-only');
   }
   async function state(conn, runId, lock = false) {
-    const [rows] = await conn.query(`SELECT run_id, status, detail, expected_radacct, expected_radpostauth, expected_admin_audit_log FROM ha_log_reconcile_state WHERE id=1${lock ? ' FOR UPDATE' : ''}`);
+    const [rows] = await conn.query(`SELECT run_id, status, detail, expected_radacct, expected_radpostauth, expected_admin_audit_log, expected_plan_pod_enforcements FROM ha_log_reconcile_state WHERE id=1${lock ? ' FOR UPDATE' : ''}`);
     if (rows.length !== 1 || rows[0].run_id !== runId) throw new Error('Missing or mismatched reconciliation singleton');
     return rows[0];
   }
@@ -205,6 +206,38 @@ function createHaLogReconciler({getConnection, role}) {
       return {runId, status: 'finalized', ...outcome};
     } finally { conn.release(); }
   }
+  // Atomic primary-authoritative replacement includes linked enforcement rows.
+  // Child records are cleared before parents and restored after all parents.
+  async function replaceAll({runId}) {
+    tableNames('radacct', runId); await guard();
+    const conn = await getConnection();
+    try {
+      await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      return await transaction(conn, async () => {
+        const s = await state(conn, runId, true);
+        if (s.status !== 'ready' || s.detail) throw new Error('Reconciliation transfer not ready for replacement');
+        await validateStages(conn, s, runId);
+        await conn.query('DELETE FROM plan_pod_enforcements');
+        for (const table of ['radacct','radpostauth','admin_audit_log']) {
+          await guard();
+          await conn.query(`DELETE FROM ${quote(table)}`);
+          const expected = Number(s[`expected_${table}`]);
+          const [inserted] = await conn.query(`INSERT INTO ${quote(table)} SELECT * FROM ${quote(tableNames(table, runId).stage)}`);
+          if (inserted.affectedRows !== expected || await count(conn, table) !== expected)
+            throw new Error('Incomplete primary log replacement');
+        }
+        const [children] = await conn.query(`INSERT INTO plan_pod_enforcements SELECT * FROM ${quote(tableNames('plan_pod_enforcements', runId).stage)}`);
+        if (children.affectedRows !== Number(s.expected_plan_pod_enforcements) || await count(conn, 'plan_pod_enforcements') !== Number(s.expected_plan_pod_enforcements))
+          throw new Error('Incomplete primary enforcement replacement');
+        const verification=await inspectExact(conn,runId);
+        if(verification.reconciliation!=='applied' || Object.keys(TABLES).some(t=>verification[t]!==Number(s[`expected_${t}`])))
+          throw new Error('Primary log replacement failed exact-content verification');
+        const [updated] = await conn.query("UPDATE ha_log_reconcile_state SET status='finalized',detail=? WHERE id=1 AND run_id=? AND status='ready' AND detail IS NULL", [JSON.stringify({table:null,phase:'done',pk:null}),runId]);
+        if (updated.affectedRows !== 1) throw new Error('Reconciliation state changed');
+        return {runId,status:'finalized',verification};
+      });
+    } finally { conn.release(); }
+  }
   async function inspect(conn, runId) {
     const result = {reconciliation: 'applied', conflicts: {}, preserved: {}};
     for (const table of Object.keys(TABLES)) {
@@ -226,6 +259,24 @@ function createHaLogReconciler({getConnection, role}) {
     }
     return result;
   }
+  async function inspectExact(conn, runId) {
+    const result={reconciliation:'applied', conflicts:{}, preserved:{}};
+    for (const table of Object.keys(TABLES)) {
+      const {stage}=tableNames(table,runId), pk=TABLES[table];
+      const names=await columns(conn,table);
+      const keys=table==='plan_pod_enforcements'?[pk,'reason']:[pk];
+      const join=keys.map(k=>`live.${quote(k)}=stage.${quote(k)}`).join(' AND ');
+      const match=names.map(n=>`live.${quote(n)}<=>stage.${quote(n)}`).join(' AND ');
+      const [missing]=await conn.query(`SELECT COUNT(*) AS n FROM ${quote(stage)} stage LEFT JOIN ${quote(table)} live ON ${join} WHERE live.${quote(pk)} IS NULL OR NOT (${match})`);
+      const [extra]=await conn.query(`SELECT COUNT(*) AS n FROM ${quote(table)} live LEFT JOIN ${quote(stage)} stage ON ${join} WHERE stage.${quote(pk)} IS NULL`);
+      const differences=countValue(missing)+countValue(extra);
+      result[table]=await count(conn,table);
+      result.conflicts[table]=differences;
+      result.preserved[table]=countValue(extra);
+      if(differences)result.reconciliation='conflict';
+    }
+    return result;
+  }
   async function verify({runId}) {
     tableNames('radacct', runId); await guard(); const conn = await getConnection();
     try {
@@ -238,7 +289,7 @@ function createHaLogReconciler({getConnection, role}) {
         const expected = Number(s[`expected_${table}`]);
         if (s[`expected_${table}`] === null || !Number.isSafeInteger(expected) || expected < 0 || await count(conn, stage) !== expected) throw new Error('Staged transfer count mismatch');
       }
-      return {runId, status: 'finalized', ...await inspect(conn, runId)};
+      return {runId, status: 'finalized', ...await (progress(s).phase === 'done' ? inspectExact(conn, runId) : inspect(conn, runId))};
     } finally { conn.release(); }
   }
   // DDL auto-commits. Persist a retryable state before dropping only this run's
@@ -263,6 +314,6 @@ function createHaLogReconciler({getConnection, role}) {
       return {runId, status: 'cleaned'};
     } finally { conn.release(); }
   }
-  return {prepare, stageChunk, sealTable, finalizeStep, finalize, verify, cleanup};
+  return {prepare, stageChunk, sealTable, finalizeStep, finalize, replaceAll, verify, cleanup};
 }
 module.exports = {createHaLogReconciler, tableNames, MAX_ROWS, MAX_BYTES};

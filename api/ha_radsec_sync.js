@@ -73,6 +73,9 @@ function createCertificateInstaller({roots,enabledTenants,restart,isRadiusRunnin
     if (!Array.isArray(bundle?.files)) throw new Error('Invalid certificate bundle');
     let changed = false;
     for (const file of bundle.files) {
+      // Older primaries may still send EAP files. Ignore those rather than
+      // letting a peer overwrite this node's locally managed certificate.
+      if (file?.root === '/certs_shared') continue;
       const root = roots[file.root];
       if (!root || !includeHaCertificate(file.root,file.path)) throw new Error('Invalid certificate path');
       if (typeof file.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(file.data)) throw new Error('Invalid certificate data');

@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const {MAX_ROWS, MAX_BYTES} = require('./ha_log_reconcile');
 
-const TABLES = Object.freeze({radacct: 'radacctid', radpostauth: 'id', admin_audit_log: 'id'});
+const TABLES = Object.freeze({radacct: 'radacctid', radpostauth: 'id', admin_audit_log: 'id', plan_pod_enforcements: 'radacctid'});
 const PREFIX = '/api/sync/log-reconcile';
 function countFrom(rows) {
   const value = rows?.[0]?.n;
@@ -82,7 +82,8 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
         await guard();
         const [countRows] = await conn.query(`SELECT COUNT(*) AS n FROM \`${table}\``);
         const expected = countFrom(countRows);
-        let cursor = 0n, sent = 0, pending = [], bytes = 2;
+        let cursor = 0n, reasonCursor = '', sent = 0, pending = [], bytes = 2;
+        const composite = table === 'plan_pod_enforcements';
         const send = async () => {
           if (!pending.length) return;
           await guard();
@@ -94,13 +95,19 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
         };
         for (;;) {
           await guard();
-          const [page] = await conn.query(`SELECT * FROM \`${table}\` WHERE \`${pk}\` > ? ORDER BY \`${pk}\` LIMIT ${MAX_ROWS}`, [cursor.toString()]);
+          const [page] = composite
+            ? await conn.query(`SELECT * FROM \`plan_pod_enforcements\` WHERE (\`radacctid\` > ? OR (\`radacctid\` = ? AND \`reason\` > ?)) ORDER BY \`radacctid\`, \`reason\` LIMIT ${MAX_ROWS}`, [cursor.toString(), cursor.toString(), reasonCursor])
+            : await conn.query(`SELECT * FROM \`${table}\` WHERE \`${pk}\` > ? ORDER BY \`${pk}\` LIMIT ${MAX_ROWS}`, [cursor.toString()]);
           if (!Array.isArray(page) || page.length > MAX_ROWS) throw new Error('Invalid snapshot page');
           if (!page.length) break;
           for (const raw of page) {
             const row = encodeRow(raw), id = cursorValue(row[pk]);
-            if (id <= cursor) throw new Error('Snapshot primary keys are not strictly increasing');
+            if (id < cursor || (id === cursor && (!composite || typeof row.reason !== 'string' || row.reason <= reasonCursor))) throw new Error('Snapshot primary keys are not strictly increasing');
             cursor = id;
+            if (composite) {
+              if (!['data','time'].includes(row.reason)) throw new Error('Invalid enforcement reason');
+              reasonCursor = row.reason;
+            }
             const text = JSON.stringify(row), size = Buffer.byteLength(text);
             if (size + 2 > MAX_BYTES) throw new Error('Snapshot row exceeds reconciliation chunk limit');
             if (pending.length === MAX_ROWS || bytes + size + (pending.length ? 1 : 0) > MAX_BYTES) await send();
@@ -119,34 +126,19 @@ function createPrimaryHaLogReconciler({post, getConnection, pauseStatus, queueDr
       conn.release(); conn = null;
       await guard();
       await progress({runId, status: 'finalizing'});
-      for (const table of Object.keys(TABLES)) {
-        let cursor = null;
-        for (;;) {
-          await guard();
-          const step = await request('finalizeStep', {runId, table, cursor}, r =>
-            typeof r.done === 'boolean' && (r.done || (r.nextCursor &&
-              ['backup','stage'].includes(r.nextCursor.phase) &&
-              (r.nextCursor.pk === null || /^[0-9]+$/.test(String(r.nextCursor.pk))))));
-          if (step.done) break;
-          if (JSON.stringify(step.nextCursor) === JSON.stringify(cursor)) throw new Error('Reconciliation cursor did not advance');
-          cursor = step.nextCursor;
-        }
-      }
-      await request('finalize', {runId}, r => r.runId === runId && r.status === 'finalized');
-      const verify = () => request('verify', {runId}, r => r.runId === runId && r.status === 'finalized' &&
-        ['applied','preserved','conflict'].includes(r.reconciliation) &&
-        ['radacct','radpostauth','admin_audit_log'].every(t => Number.isSafeInteger(r.conflicts?.[t]) && r.conflicts[t] >= 0 && Number.isSafeInteger(r.preserved?.[t]) && r.preserved[t] >= 0) &&
-        (r.reconciliation !== 'applied' || (r.radacct === counts.radacct && r.radpostauth === counts.radpostauth && r.admin_audit_log === counts.admin_audit_log)));
-      await verify();
+      const replaced=await request('replace', {runId}, r => r.runId === runId && r.status === 'finalized' &&
+        r.verification?.reconciliation === 'applied' &&
+        Object.keys(TABLES).every(t=>r.verification.conflicts?.[t]===0 && r.verification.preserved?.[t]===0 && r.verification[t]===counts[t]));
+      const verified=replaced.verification;
       await guard();
       const target=await fence();
       await progress({runId, status: 'catching-up',queueFence:target});
       const drained = await drainQueue(target);
       if (drained?.drained !== true) throw new Error('HA queue catchup incomplete');
       await guard();
-      const verified = await verify();
-      const status = verified.reconciliation === 'applied' ? 'completed' : 'partial';
-      const result = {runId, status, counts, secondary: verified};
+      // Catch-up replays legitimate post-snapshot writes. Do not compare their
+      // resulting live rows against the earlier snapshot a second time.
+      const result = {runId, status: 'completed', counts, secondary: verified};
       // Cleanup is idempotent on the secondary. A lost acknowledgement may mean
       // the tables were already dropped, so retry once with the same run ID.
       try { await request('cleanup', {runId}, r => r.runId === runId && r.status === 'cleaned'); }
