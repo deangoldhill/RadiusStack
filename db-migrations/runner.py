@@ -151,6 +151,7 @@ POSTCONDITIONS = {
          ('destination_id', 'tenant_id', 'bucket_start', 'route_mode', 'auth_requests', 'accounting_requests')},
         {('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_tenant_time'),
          ('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_retention')}),
+    '20261120_ha_enforcement_reconcile': (set(), {('ha_log_reconcile_state', 'expected_plan_pod_enforcements')}, set()),
 }
 
 

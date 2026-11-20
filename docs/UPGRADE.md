@@ -1,8 +1,27 @@
+# RadiusStack 6.2.1 source candidate
+
+**Not yet published.** This is a manually staged source candidate. Do not use the remote-download upgrade command until Dean publishes the exact 6.2.1 GitHub tag, asset, and verifiable digest. HA remains unvalidated for lossless two-node operation; see [RELEASE_6.2.1.md](RELEASE_6.2.1.md).
+
+Fresh install: verify and extract `radiusstack-source.tar.gz`, run `bash setup_env.sh` to create a private `.env`, then validate with `docker compose config -q` and build the migrator, RADIUS and API images before starting services. The initialization schema includes `expected_plan_pod_enforcements` on the HA reconcile state table.
+
+Upgrade: retain the existing private `.env`, Compose overrides, database and certificates. The 6.2.1 migration adds `expected_plan_pod_enforcements` without deleting existing data. The bundled updater supports `--to 6.2.1 --archive /absolute/path/radiusstack-source.tar.gz` with an adjacent matching `SHA256SUMS`; run it only on a **disposable copy** first, after confirming the already-installed updater supports `--archive`. A source rollback does not undo database migrations. Never substitute the staged candidate path for a published GitHub Release asset.
+
+---
+
 # RadiusStack 6.2.0 source candidate
 
 **Known HA data-integrity risk:** do not enable HA on unvalidated pairs. See [RELEASE_6.2.0.md](RELEASE_6.2.0.md) for the committed-write ordering, scanner, and restart limitations. The local 192.168.4.37 installation was marked 6.1.1; preserve its full source and database before replacing files. This source candidate has not been published to GitHub.
 
-Fresh installation: extract the verified `radiusstack-source.tar.gz`, run `bash setup_env.sh` to generate a private `.env`, validate `docker compose config -q`, then build and start. The source archive must include all `db-init` and `db-migrations` SQL and must not contain `.env`.
+Fresh installation: extract the verified `radiusstack-source.tar.gz`, run `bash setup_env.sh` to generate a private `.env`, then from that directory validate, refresh images and build explicitly:
+
+```sh
+docker compose config -q
+docker compose pull --ignore-buildable mariadb web_ui phpmyadmin
+docker compose build --pull db-migrate radius api
+docker compose up -d
+```
+
+The source archive must include all `db-init` and `db-migrations` SQL and must not contain `.env`. `--pull` checks for newer patched images within the selected tag; it does not change a runtime major version or update an already-running container on its own. During an upgrade, this **new** updater checks fresh bases and pulls registry-hosted images **before downtime**, but an existing installation executes its **already-installed older updater first**; the new behavior takes effect only after that updater has been installed for subsequent upgrades. For the first upgrade using an older updater, release engineering must separately preflight `docker build --pull` and the staged images without changing production containers. The registry-hosted image pull uses the existing Compose configuration; if a release changes an image tag, independently pre-pull and validate that new tag before downtime. Refresh and test the pinned major/minor lines at every release, including Node, FreeRADIUS, MariaDB, Python, Nginx and phpMyAdmin; do not use an untested `latest` runtime tag. The Node API now targets Node 24 LTS instead of end-of-life Node 18. Rehearse container builds and application/RADIUS behavior on a disposable copy before deploying this candidate; a fresh base or major runtime can break dependencies/configuration. A failed registry pull stops the upgrade preflight rather than silently using a cached base. Node dependencies are installed by `npm install` (no lockfile), so image refresh alone does not guarantee reproducible dependency versions or fix dependency-level vulnerabilities. Existing installations remain unchanged until rebuilt/recreated from a verified release. The updater does **not** recreate MariaDB automatically: a fresh pull alone leaves the currently running database image untouched; update it separately with a database backup, MariaDB version-compatibility review and a verified restart.
 
 Before GitHub publication, the installed updater's remote-download mode will not find 6.2.0. The bundled updater also supports `--to 6.2.0 --archive /absolute/path/radiusstack-source.tar.gz`; it requires an adjacent, matching `SHA256SUMS` and checks the archive before downtime. Use that bundled script from the installation directory, **not** an older installed updater that has no `--archive` option. It backs up code and dumps the whole database, then applies pending migrations and starts services. It does not roll back database DDL if a later step fails. Preserve `.env`, Compose overrides and certificate volumes. For published upgrades, use `./upgrade.sh --to 6.2.0` only after the exact GitHub asset and `sha256:` Release digest have been published and verified.
 

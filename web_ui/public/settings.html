@@ -145,7 +145,7 @@
 
     <div id="settingsTenantToolsRow" class="grid grid-cols-1 md:grid-cols-2 gap-6">
     <details id="replyAttributeCatalogueCard" data-settings-scope="tenant" class="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden" hidden>
-      <summary class="settings-toggle px-6 py-4 border-b border-blue-100 flex items-center gap-3"><div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center"><svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16M8 4v16"/></svg></div><h2 class="text-base font-bold text-slate-800">Reply Attribute Catalogue</h2><span class="text-[11px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Non-VLAN</span></summary>
+      <summary class="settings-toggle px-6 py-4 border-b border-blue-100 flex items-center gap-3"><div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center"><svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16M8 4v16"/></svg></div><h2 class="text-base font-bold text-slate-800">Reply Attribute Catalogue</h2></summary>
       <div class="p-6 space-y-3"><div><input id="attributeCatalogueSearch" type="search" oninput="renderAttributeCatalogue()" placeholder="Search standard or vendor attributes" class="w-full border border-blue-200 p-2.5 rounded-lg text-sm bg-white shadow-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"><p class="text-xs text-slate-500 mt-1.5">VLAN is controlled only by the Profile VLAN control. Add a standard or vendor reply attribute for profiles and NAS selection.</p></div><div id="attributeCatalogueResults" class="max-h-56 overflow-y-auto text-sm space-y-2 pr-1"></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 border-t pt-3"><input id="manualVsaVendorLabel" placeholder="Vendor label (optional)" class="border p-2 rounded-lg text-sm"><input id="manualVsaVendorCode" type="number" min="1" max="4294967295" placeholder="Vendor code" class="border p-2 rounded-lg text-sm"><input id="manualVsaAttributeNumber" type="number" min="1" max="255" placeholder="Vendor attribute number" class="border p-2 rounded-lg text-sm"><input id="manualVsaName" placeholder="Attribute name" class="border p-2 rounded-lg text-sm"><select id="manualVsaValueType" class="border p-2 rounded-lg text-sm"><option value="string">string</option><option value="integer">integer</option><option value="ipv4">ipv4</option><option value="octets">octets</option></select><button type="button" onclick="addManualVsa()" class="bg-gradient-to-r from-slate-700 to-slate-900 hover:from-slate-800 hover:to-slate-950 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow transition-all focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Add custom VSA</button></div><div id="savedReplyAttributes" class="text-sm space-y-1"></div></div>
     </details>
 
@@ -318,9 +318,16 @@
 
       </details>
 
-      <details id="authLogPurgeCard" data-settings-scope="both" hidden class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-4">
-        <summary class="settings-toggle text-sm font-semibold text-gray-700 mb-4">Auth Log Maintenance</summary>
-        <div>
+      <details id="authLogPurgeCard" data-settings-scope="both" hidden class="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden mt-6">
+        <summary class="settings-toggle px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+            <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4h8l4 4v12H4V4h4zm8 0v4h4M8 12h8M8 16h6"/>
+            </svg>
+          </div>
+          <h2 class="text-base font-bold text-gray-800">Auth Log Maintenance</h2>
+        </summary>
+        <div class="p-6">
           <div class="flex items-center gap-3 mb-4">
             <input type="checkbox" id="authlogsPurgeEnabled" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
             <span class="text-sm font-semibold text-gray-700 block">Auto-Purge Auth Logs (Background Process)</span>
@@ -574,7 +581,7 @@
             <div class="mt-4 flex flex-wrap gap-2">
                 <button id="btnPromote" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 hidden">Promote to Primary</button>
                 <button id="btnDemote" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 hidden">Demote to Secondary</button>
-                <button id="btnSyncNow" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Force Sync Now</button>
+                <button id="btnResetHaStats" type="button" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Reset HA Sync Stats</button>
                 <button id="btnFullSync" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 hidden">Perform Full Sync</button>
                 <button id="btnHaPause" type="button" class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 hidden">Pause HA Sync</button>
                 <button id="btnHaResume" type="button" class="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800 hidden">Resume HA Sync</button>
@@ -582,7 +589,7 @@
             <p id="haPausedStatus" role="status" class="mt-3 text-sm font-semibold"></p>
             <div id="haReconcilePanel" class="mt-4 border-t pt-4 hidden">
                 <button id="btnHaReconcile" type="button" class="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800">Reconcile Log Data</button>
-                <p class="text-sm text-red-800 mt-2">Online reconciliation backs up secondary logs and reconciles audit, authentication and accounting rows from a consistent primary snapshot without stopping secondary RADIUS. Secondary rows written or changed during the copy, including open sessions, are preserved and reported; this may not yield an exact mirror. The primary delivers the finite pre-existing HA queue before taking its snapshot and catches up only to a bounded queue ID afterward; later writes remain queued for normal delivery when resumed. If delivery fails, reconciliation stops without discarding queued work. Backups and staging tables for this run are removed automatically after final verification, including a partial result; unmatched secondary-only rows or conflicts can become unrecoverable. Keep HA disabled unless independently validated for your two-node deployment: this release does not guarantee lossless write capture, queue ordering, or crash recovery.</p>
+                <p class="text-sm text-red-800 mt-2">Authlog, Auditlog and accounting records on the secondary will be deleted and re-synced from the primary.</p>
                 <p id="haReconcileStatus" role="status" class="text-sm mt-2 font-semibold"></p>
             </div>
             <p id="haActionMsg" role="status" class="mt-2 text-sm font-semibold"></p>
@@ -611,7 +618,7 @@
 
                         if (!data.enabled) {
                             container.innerHTML = '<p class="text-gray-500 italic">High Availability is disabled in the environment variables.</p>';
-                            document.getElementById('btnSyncNow').classList.add('hidden');
+                            document.getElementById('btnResetHaStats').classList.add('hidden');
                             return;
                         }
 
@@ -644,7 +651,7 @@
                         pauseBtn.classList.toggle('hidden', !primary || paused);
                         resumeBtn.classList.toggle('hidden', !primary || !paused);
                         reconcilePanel.classList.toggle('hidden', !primary);
-                        document.getElementById('btnSyncNow').disabled = paused;
+                        document.getElementById('btnResetHaStats').classList.remove('hidden');
                         fullSyncBtn.disabled = paused;
                         document.getElementById('haPausedStatus').textContent = primary
                             ? (paused ? `HA delivery PAUSED since ${data.pause.since ? new Date(data.pause.since).toLocaleString() : 'unknown'}; ${data.pause.queueDepth} queued${data.pause.oldestQueuedAt ? ` (oldest ${new Date(data.pause.oldestQueuedAt).toLocaleString()})` : ''}. ${data.pause.queueWarning || ''}`
@@ -654,7 +661,7 @@
                         document.getElementById('haReconcileStatus').textContent = job?.phase
                             ? `Reconciliation: ${job.phase}; ${job.detail || ''}${job.error ? `; ERROR: ${job.error}` : ''}`
                             : 'No reconciliation running.';
-                        document.getElementById('btnHaReconcile').disabled = !paused || (data.pause?.queueDepth ?? 1) !== 0 || (job?.phase && !['idle','completed','partial'].includes(job.phase));
+                        document.getElementById('btnHaReconcile').disabled = !paused || (job?.phase && !['idle','completed','partial','failed-pre-drain'].includes(job.phase));
                     } catch (e) {
                         console.error('Failed to load HA stats', e);
                         document.getElementById('haPeerIndicator').textContent = '● HA status unavailable';
@@ -688,7 +695,7 @@
                     catch (error) { displayMsg(`Resume failed: ${error.message}`, true); }
                 });
                 document.getElementById('btnHaReconcile').addEventListener('click', async () => {
-                    if (!confirm('Run online log reconciliation? Existing secondary logs are backed up; rows written during the operation are preserved and any conflicts reported. Secondary RADIUS keeps serving.')) return;
+                    if (!confirm('Replace secondary Authlog, Auditlog and accounting records from the primary? Secondary RADIUS will stop briefly. Secondary-only log rows will be deleted. Plan enforcement records will also be replaced from the primary.')) return;
                     try { await haAction('/api/ha/log-reconcile', { confirm: 'RECONCILE_LOG_DATA' }); displayMsg('Log reconciliation started. Monitor the status here; do not resume HA until it completes.'); }
                     catch (error) { displayMsg(`Reconciliation failed: ${error.message}`, true); }
                 });
@@ -705,9 +712,13 @@
                     location.reload();
                 });
 
-                document.getElementById('btnSyncNow').addEventListener('click', async () => {
-                    try { await haAction('/api/ha/sync-now'); displayMsg('Manual sync completed.'); }
-                    catch (error) { displayMsg(`Manual sync failed: ${error.message}`, true); }
+                document.getElementById('btnResetHaStats').addEventListener('click', async () => {
+                    if (!confirm('Reset this node\'s local HA sync statistics? This clears the displayed successful/failed counts and last sync time, not the HA queue, cursors, or delivery state.')) return;
+                    const button = document.getElementById('btnResetHaStats');
+                    button.disabled = true;
+                    try { await haAction('/api/ha/reset-stats'); displayMsg('This node\'s local HA sync statistics were reset.'); }
+                    catch (error) { displayMsg(`Reset HA sync stats failed: ${error.message}`, true); }
+                    finally { button.disabled = false; }
                 });
 
                 document.getElementById('btnFullSync').addEventListener('click', async () => {

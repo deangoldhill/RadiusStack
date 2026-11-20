@@ -213,14 +213,17 @@ log 'archive validated: all members extracted and required files checked'
 # Build all new code before downtime or touching the database.
 for service in api radius migrator; do
   case "$service" in
-    api) build=(docker build -q -t "radiusstack-preflight-api:$version" "$stage/api") ;;
-    radius) build=(docker build -q -t "radiusstack-preflight-radius:$version" "$stage/radius") ;;
-    migrator) build=(docker build -q -t "radiusstack-preflight-migrator:$version" -f "$stage/db-migrations/Dockerfile.migrator" "$stage/db-migrations") ;;
+    api) build=(docker build --pull -q -t "radiusstack-preflight-api:$version" "$stage/api") ;;
+    radius) build=(docker build --pull -q -t "radiusstack-preflight-radius:$version" "$stage/radius") ;;
+    migrator) build=(docker build --pull -q -t "radiusstack-preflight-migrator:$version" -f "$stage/db-migrations/Dockerfile.migrator" "$stage/db-migrations") ;;
   esac
   log "preflight docker command: ${build[*]}"
   "${build[@]}"
   log "preflight image built service=$service"
 done
+# Refresh registry-hosted images before stopping writers; fail closed on network errors.
+# This only downloads images. Containers are not recreated during preflight.
+compose_run pull --ignore-buildable mariadb web_ui phpmyadmin
 # Runtime-generated RADIUS dictionary is a customer-owned bind mount.
 rm -rf -- "$stage/radius/generated"
 # Source release bundles are built locally; there is no assumed image registry.
@@ -297,7 +300,7 @@ compose_run config -q
 log 'post-overlay Compose configuration valid'
 phase=build_and_migrate
 console '[+] Starting migration checks and service rebuild (details in log)'
-compose_run build db-migrate radius api
+compose_run build --pull db-migrate radius api
 # Explicit one-shot migration; never let `up` implicitly retry a failed migration.
 log 'migration START: detailed SQL operation metadata enabled; SQL literals/parameters withheld'
 compose_run run --rm --no-deps -e RADIUS_MIGRATION_DEBUG=1 db-migrate

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS ha_log_reconcile_state (
     expected_radacct BIGINT UNSIGNED NULL,
     expected_radpostauth BIGINT UNSIGNED NULL,
     expected_admin_audit_log BIGINT UNSIGNED NULL,
+    expected_plan_pod_enforcements BIGINT UNSIGNED NULL,
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 );
 INSERT IGNORE INTO ha_log_reconcile_state (id, status) VALUES (1, 'idle');
