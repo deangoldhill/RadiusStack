@@ -105,6 +105,7 @@ services:
     - /var/run/docker.sock:/var/run/docker.sock
     - certs_volume:/certs_shared
     - radsec_volume:/certs_radsec
+    - backups_volume:/backups
     networks:
     - radius_net
   web_ui:
@@ -142,5 +143,6 @@ volumes:
   mariadb_data: null
   certs_volume: null
   radsec_volume: null
+  backups_volume: null
 networks:
   radius_net: null

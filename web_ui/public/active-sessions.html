@@ -219,6 +219,7 @@
 
     <script src="/js/xss-render.js"></script>
 <script src="/js/layout.js"></script>
+    <script src="/js/plan-cycle.js"></script>
     <script>
 
         let currentSort = null;
@@ -456,18 +457,7 @@
 
             const cycleStart = s.cycle_started_at ? new Date(s.cycle_started_at) : null;
             const resetPeriod = plan.reset_period || 'never';
-            let nextReset = null;
-            if (cycleStart && resetPeriod !== 'never') {
-                nextReset = new Date(cycleStart);
-                if (resetPeriod === 'daily') nextReset.setDate(nextReset.getDate() + 1);
-                else if (resetPeriod === 'weekly') nextReset.setDate(nextReset.getDate() + 7);
-                else if (resetPeriod === 'monthly') nextReset.setMonth(nextReset.getMonth() + 1);
-            }
-            const now = new Date();
-            const msUntilReset = nextReset ? Math.max(0, nextReset - now) : null;
-            const daysUntil = msUntilReset !== null ? Math.floor(msUntilReset / 86400000) : null;
-            const hoursUntil = msUntilReset !== null ? Math.floor((msUntilReset % 86400000) / 3600000) : null;
-            const timeUntilStr = msUntilReset !== null ? (daysUntil > 0 ? `${daysUntil}d ${hoursUntil}h` : `${hoursUntil}h`) : null;
+            const {nextReset,resetPending,timeUntilStr} = planCycleStatus(cycleStart,resetPeriod);
 
             const barColor = (pct) => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
 
@@ -498,7 +488,7 @@
 
                 <div class="flex flex-wrap gap-4 text-xs text-gray-500 pt-1 border-t border-gray-200">
                   ${cycleStart ? `<span>Cycle started: <strong class="text-gray-700">${fmtDateShort(cycleStart)}</strong></span>` : ''}
-                  ${nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
+                  ${resetPending ? `<span class="text-amber-700">Reset pending since ${fmtDateShort(nextReset)}</span>` : nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
                 </div>
               </div>
             </div>
@@ -765,8 +755,8 @@
                 const [statsRes, reportRes, usersRes, macRes] = await Promise.all([
                     apiFetch(`/api/users/${encodeURIComponent(username)}/stats`),
                     apiFetch(`/api/reports/user/${encodeURIComponent(username)}`),
-                    apiFetch(`/api/users?username=${encodeURIComponent(username)}`),
-                    apiFetch(`/api/mac-auth`)
+                    apiFetch(`/api/users?exact=${encodeURIComponent(username)}`),
+                    apiFetch(`/api/mac-auth?exact=${encodeURIComponent(username)}`)
                 ]);
 
                 const stats = statsRes.ok ? await statsRes.json() : null;
@@ -812,7 +802,8 @@
 
                 // Route footer buttons to the correct management page
                 const targetPage = isMacDevice ? 'mac-auth.html' : 'users.html';
-                document.getElementById('dpEditBtn').onclick = () => { window.location.href = targetPage; };
+                const editIdentity = isMacDevice ? userData.mac_address : userData.username;
+                document.getElementById('dpEditBtn').onclick = () => { window.location.href = targetPage + '?edit=' + encodeURIComponent(editIdentity); };
                 document.getElementById('dpDeleteBtn').onclick = () => { window.location.href = targetPage; };
                 document.getElementById('dpResetPlanBtn').onclick = () => { window.location.href = targetPage; };
 

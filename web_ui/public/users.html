@@ -216,6 +216,7 @@
     <script src="/js/xss-render.js"></script>
 <script src="/js/layout.js"></script>
     <script src="/js/table-pagination.js"></script>
+    <script src="/js/plan-cycle.js"></script>
     <script>
 
         let currentSort = null;
@@ -225,6 +226,9 @@
         let usersTotal = 0;
         let usersTotalPages = 1;
         let usersLookupsLoaded = false;
+        let pendingSessionEdit = new URLSearchParams(window.location.search).get('edit');
+        if (pendingSessionEdit && pendingSessionEdit.length > 100) pendingSessionEdit = null;
+        if (pendingSessionEdit) document.getElementById('userSearch').value = pendingSessionEdit;
         function resetUsersPage() { usersPage = 1; }
         function setUsersPageSize(value) { usersPageSize = Number(value); usersPage = 1; loadData(); }
         function previousUsersPage() { usersPage -= 1; loadData(); }
@@ -647,18 +651,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
 
             const cycleStart = s.cycle_started_at ? new Date(s.cycle_started_at) : null;
             const resetPeriod = plan.reset_period || 'never';
-            let nextReset = null;
-            if (cycleStart && resetPeriod !== 'never') {
-                nextReset = new Date(cycleStart);
-                if (resetPeriod === 'daily') nextReset.setDate(nextReset.getDate() + 1);
-                else if (resetPeriod === 'weekly') nextReset.setDate(nextReset.getDate() + 7);
-                else if (resetPeriod === 'monthly') nextReset.setMonth(nextReset.getMonth() + 1);
-            }
-            const now = new Date();
-            const msUntilReset = nextReset ? Math.max(0, nextReset - now) : null;
-            const daysUntil = msUntilReset !== null ? Math.floor(msUntilReset / 86400000) : null;
-            const hoursUntil = msUntilReset !== null ? Math.floor((msUntilReset % 86400000) / 3600000) : null;
-            const timeUntilStr = msUntilReset !== null ? (daysUntil > 0 ? `${daysUntil}d ${hoursUntil}h` : `${hoursUntil}h`) : null;
+            const {nextReset,resetPending,timeUntilStr} = planCycleStatus(cycleStart,resetPeriod);
 
             const barColor = (pct) => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
 
@@ -689,7 +682,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
 
                 <div class="flex flex-wrap gap-4 text-xs text-gray-500 pt-1 border-t border-gray-200">
                   ${cycleStart ? `<span>Cycle started: <strong class="text-gray-700">${fmtDateShort(cycleStart)}</strong></span>` : ''}
-                  ${nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
+                  ${resetPending ? `<span class="text-amber-700">Reset pending since ${fmtDateShort(nextReset)}</span>` : nextReset ? `<span>Next reset: <strong class="text-gray-700">${fmtDateShort(nextReset)}</strong> (in ${timeUntilStr})</span>` : (resetPeriod === 'never' ? '<span>No automatic reset</span>' : '')}
                 </div>
               </div>
             </div>
@@ -796,6 +789,7 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
                 usersLookupsLoaded = true;
             }
             const params = new URLSearchParams({ page: usersPage, page_size: usersPageSize, sort: currentSort || 'username', order: currentOrder });
+            if (pendingSessionEdit) params.set('exact', pendingSessionEdit);
             const search = document.getElementById('userSearch').value.trim();
             const plan = document.getElementById('planFilter').value;
             const profile = document.getElementById('profileFilter').value;
@@ -813,6 +807,15 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             usersPageSize = payload.pageSize;
             usersTotalPages = payload.totalPages;
             renderUsers();
+            if (pendingSessionEdit) {
+                const target = pendingSessionEdit;
+                pendingSessionEdit = null; // Subsequent list refreshes use normal filters.
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('edit');
+                window.history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+                if (allUsers.some(u => u.username === target)) editUser(target);
+                else document.querySelector('#usersTable tbody').innerHTML = '<tr><td colspan="12" class="p-6 text-center text-amber-700">User not found in the selected tenant.</td></tr>';
+            }
         }
 
         async function resetPlan(username) {
@@ -890,7 +893,9 @@ document.querySelector('#usersTable tbody').innerHTML = pagination.rows.map(u =>
             if (el) el.addEventListener(id === 'userSearch' ? 'input' : 'change', () => { resetUsersPage(); loadData(); });
         });
 
-        loadData();
+        if (pendingSessionEdit && !window.radiusstackContext) {
+            document.addEventListener('radiusstack:tenant-context-ready', () => loadData(), { once: true });
+        } else loadData();
 
         function parseCSV(text) {
             const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');

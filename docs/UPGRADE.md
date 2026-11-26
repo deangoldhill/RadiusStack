@@ -1,3 +1,35 @@
+# RadiusStack 6.2.2
+
+Complete server source for fresh installations and upgrades, including all changes since 6.2.1. See [RELEASE_6.2.2.md](RELEASE_6.2.2.md) and [LOCAL_JSON_BACKUPS.md](LOCAL_JSON_BACKUPS.md).
+
+## Fresh installation
+
+Verify the archive against its adjacent SHA256SUMS, extract it, enter `radiusstack-6.2.2`, then:
+
+```sh
+bash setup_env.sh
+docker compose config -q
+docker compose up -d --build
+```
+
+The wizard creates a private mode-0600 `.env`; the package contains only `.env.example`. Review the host identity, ports and secrets before starting. For HA, reuse shared primary keys on the secondary. All initialization SQL and migrations are included, including the new local backup tables and persistent `/backups` volume.
+
+## Upgrade
+
+Keep the existing private `.env`, Compose overrides, database, generated RADIUS dictionary, certificates and backup volumes. Take an independent backup and rehearse on a copy first. The additive migration creates `backup_jobs` and `local_backups`; source rollback does not undo database DDL.
+
+**Do not run `./upgrade.sh --to 6.2.2` in GitHub-download mode until Dean publishes and verifies the exact 6.2.2 source asset and trusted digest.** This declaration stages files only; it does not publish or upgrade a running installation.
+
+For a local archive, first verify the adjacent SHA256SUMS. An installed updater with `--archive` support can be run from the existing installation directory:
+
+```sh
+./upgrade.sh --to 6.2.2 --archive /absolute/path/radiusstack-source.tar.gz
+```
+
+If the installed updater lacks this support, use the verified 6.2.2 bundled updater copied to a separate executable path, still invoked from the existing installation directory. Do not assume the new archive repairs an old updater before it starts. Do not run setup_env.sh over an existing customized `.env`. See BUILD_INFO.txt alongside the staged archive for actual fresh-install and local-upgrade validation. Published-download and lossless two-peer HA operation are not established by this package.
+
+## Previous release guidance
+
 # RadiusStack 6.2.1 source candidate
 
 **Not yet published.** This is a manually staged source candidate. Do not use the remote-download upgrade command until Dean publishes the exact 6.2.1 GitHub tag, asset, and verifiable digest. HA remains unvalidated for lossless two-node operation; see [RELEASE_6.2.1.md](RELEASE_6.2.1.md).

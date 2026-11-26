@@ -152,6 +152,11 @@ POSTCONDITIONS = {
         {('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_tenant_time'),
          ('downstream_proxy_stats_minutes', 'idx_downstream_proxy_stats_retention')}),
     '20261120_ha_enforcement_reconcile': (set(), {('ha_log_reconcile_state', 'expected_plan_pod_enforcements')}, set()),
+    '20261121_local_backups': (
+        {'backup_jobs', 'local_backups'},
+        {('backup_jobs', field) for field in ('frequency', 'interval_hours', 'next_run', 'last_run', 'last_error', 'lease_until', 'lease_token', 'keep_count', 'enabled')}
+        | {('local_backups', field) for field in ('id', 'job_id', 'size', 'checksum', 'created_at')},
+        {('backup_jobs', 'idx_backup_jobs_due'), ('local_backups', 'idx_local_backups_job_time')}),
 }
 
 

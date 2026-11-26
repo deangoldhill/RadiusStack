@@ -405,7 +405,7 @@
         <div class="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
           <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>
         </div>
-        <h2 class="text-base font-bold text-gray-800">Database Backup & Restore</h2>
+        <h2 class="text-base font-bold text-gray-800">JSON Backup & Restore</h2>
       </summary>
       <div class="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
 
@@ -421,8 +421,8 @@
                 onchange="document.getElementById('partialOptions').classList.add('opacity-50','pointer-events-none'); Array.from(document.querySelectorAll('#partialOptions input')).forEach(i=>i.disabled=true);"
                 class="mt-0.5 h-4 w-4 text-blue-600">
               <div>
-                <span class="text-sm font-semibold text-gray-800 block">Full Database Backup</span>
-                <span class="text-xs text-gray-500">Entire database — restore to same version only</span>
+                <span class="text-sm font-semibold text-gray-800 block">Full App JSON Export</span>
+                <span class="text-xs text-gray-500">Selected application tables, not a database dump, code/files, or an upgrade backup</span>
               </div>
             </label>
             <label class="flex items-start gap-3 cursor-pointer p-3 rounded-lg bg-white border border-gray-200 hover:border-blue-300 transition-colors has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
@@ -431,7 +431,7 @@
                 class="mt-0.5 h-4 w-4 text-blue-600">
               <div>
                 <span class="text-sm font-semibold text-gray-800 block">Objects & Logs Only</span>
-                <span class="text-xs text-gray-500">Data only — safe to restore to different versions</span>
+                <span class="text-xs text-gray-500">Selected objects and optional logs; restore compatibility depends on the running version</span>
               </div>
             </label>
             <div id="partialOptions" class="ml-4 pl-4 border-l-2 border-gray-200 space-y-2 opacity-50 pointer-events-none transition-opacity">
@@ -461,7 +461,7 @@
             <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
             <h3 class="font-bold text-sm text-gray-700">Import Restore</h3>
           </div>
-          <p class="text-xs text-gray-500 mb-4">Upload a previously generated <code class="bg-gray-200 px-1 rounded">.json</code> backup file. The system will auto-detect the backup type and map data safely into your current database.</p>
+          <p class="text-xs text-gray-500 mb-4">Upload a previously generated <code class="bg-gray-200 px-1 rounded">.json</code> backup file. Review compatibility with the running version before restoring; existing data may be overwritten.</p>
           <input type="file" id="restoreFile" accept=".json"
             class="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 mb-4 bg-white border border-gray-200 rounded-lg p-1.5 cursor-pointer">
           <button type="button" onclick="executeRestore()"
@@ -471,6 +471,28 @@
         </div>
 
       </div>
+      <section class="px-6 pb-6" aria-label="Automated local JSON backups">
+        <div class="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-4">
+          <div><h3 class="font-bold text-gray-800">Automated local JSON backups</h3>
+            <p class="text-xs text-gray-600">Scheduled app JSON exports of selected tables, stored locally. Full is not a database dump, application files, or an upgrade backup. Check version compatibility before restore. Local backups are not HA-synced.</p>
+            <p class="text-xs text-amber-800 mt-1">These backups may contain administrator/API and RADIUS/NAS secrets and auth logs. Keep downloads private; make a separate offsite copy as desired.</p></div>
+          <form id="backupJobForm" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <label class="text-sm">Job name <input id="backupJobName" required maxlength="100" class="block w-full border rounded p-2" placeholder="Nightly backup"></label>
+            <label class="text-sm">Frequency <select id="backupJobFrequency" class="block w-full border rounded p-2"><option value="daily">Daily</option><option value="hourly">Hourly</option><option value="weekly">Weekly</option></select><span class="text-xs text-gray-500">Runs on a UTC interval; the next run is shown below.</span></label>
+            <label class="text-sm">Type <select id="backupJobType" class="block w-full border rounded p-2"><option value="full">Full app JSON</option><option value="partial">Partial app JSON</option></select></label>
+            <label class="text-sm">Keep latest backups <input id="backupJobRetention" type="number" min="1" max="100" required value="7" class="block w-full border rounded p-2"></label>
+            <fieldset id="backupJobPartialOptions" disabled class="sm:col-span-2 lg:col-span-3 flex flex-wrap gap-3 text-sm"><legend class="font-semibold">Partial export options</legend>
+              <label><input id="backupJobAccounting" type="checkbox"> Accounting logs</label>
+              <label><input id="backupJobAuth" type="checkbox"> Auth logs</label>
+              <label><input id="backupJobAudit" type="checkbox"> Audit logs</label>
+            </fieldset>
+            <label class="text-sm self-end"><input id="backupJobEnabled" type="checkbox" checked> Enabled</label>
+            <div class="flex gap-2 sm:col-span-2 lg:col-span-4"><button id="backupJobSave" type="submit" class="bg-blue-600 text-white rounded px-3 py-2">Create job</button><button id="backupJobCancel" type="button" hidden class="border rounded px-3 py-2">Cancel edit</button><button id="backupJobRefresh" type="button" class="border rounded px-3 py-2">Refresh lists</button></div>
+          </form>
+          <p id="backupJobMessage" role="status" aria-live="polite" class="text-sm"></p>
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-4"><div><h4 class="font-bold text-sm mb-2">Scheduled jobs</h4><div id="backupJobList" class="space-y-2 text-sm"></div></div><div><h4 class="font-bold text-sm mb-2">Stored backups</h4><div id="localBackupList" class="space-y-2 text-sm"></div></div></div>
+        </div>
+      </section>
     </details>
 
     
@@ -802,6 +824,148 @@
     } catch (err) { alert('Restore failed: ' + err.message); }
     finally { btn.textContent = 'Upload & Restore'; btn.disabled = false; }
   }
+
+  // ─── AUTOMATED LOCAL BACKUPS ───
+  let editingBackupJobId = null;
+  const backupField = id => document.getElementById(id);
+  function backupMessage(message, failed = false) {
+    const el = backupField('backupJobMessage');
+    el.textContent = message;
+    el.className = `text-sm ${failed ? 'text-red-700' : 'text-green-700'}`;
+  }
+  async function backupJson(url, options) {
+    const res = await apiFetch(url, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (HTTP ${res.status})`);
+    return data;
+  }
+  function backupButton(label, action) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = label;
+    button.className = 'border rounded px-2 py-1 mr-2 mt-2 bg-white hover:bg-gray-100';
+    button.addEventListener('click', action);
+    return button;
+  }
+  function backupRow(container, description, buttons) {
+    const row = document.createElement('div');
+    row.className = 'border rounded bg-white p-3 break-words';
+    const label = document.createElement('div'); label.textContent = description;
+    row.appendChild(label);
+    buttons.forEach(button => row.appendChild(button));
+    container.appendChild(row);
+  }
+  function backupTimestamp(value) { return value ? new Date(value).toLocaleString() : 'Never'; }
+  function backupSize(bytes) { return Number.isFinite(Number(bytes)) ? `${Math.round(Number(bytes) / 1024)} KB` : 'Unknown size'; }
+  function renderBackupJobs(jobs) {
+    const list = backupField('backupJobList'); list.replaceChildren();
+    if (!jobs.length) { list.textContent = 'No scheduled jobs.'; return; }
+    jobs.forEach(job => backupRow(list,
+      `${job.name} — ${job.frequency} ${job.type} JSON · ${job.enabled ? 'Enabled' : 'Disabled'} · keep ${job.retention_count} · Last: ${backupTimestamp(job.last_run_at)} · Next: ${backupTimestamp(job.next_run_at)} · Status: ${job.status || 'Not run'}${job.last_error ? ` · ${job.last_error}` : ''}`,
+      [backupButton('Edit', () => editBackupJob(job)), backupButton('Run now', () => runBackupJob(job.id)), backupButton('Delete', () => deleteBackupJob(job.id))]));
+  }
+  function renderLocalBackups(backups) {
+    const list = backupField('localBackupList'); list.replaceChildren();
+    if (!backups.length) { list.textContent = 'No stored backups.'; return; }
+    backups.forEach(backup => backupRow(list,
+      `${backup.job_name || (backup.job_id != null ? `Job #${backup.job_id}` : 'Manual')} — ${backup.type} JSON · Created: ${backupTimestamp(backup.created_at)} · ${backupSize(backup.size_bytes)}`,
+      [backupButton('Download', () => downloadLocalBackup(backup)), backupButton('Restore', () => restoreLocalBackup(backup.id))]));
+  }
+  async function loadLocalBackupData() {
+    if (backupField('globalBackupRestore').hidden) return;
+    try {
+      const jobs = await backupJson('/api/system/backup-jobs');
+      renderBackupJobs(Array.isArray(jobs) ? jobs : jobs.jobs || []);
+      const backups = await backupJson('/api/system/local-backups');
+      renderLocalBackups(Array.isArray(backups) ? backups : backups.backups || []);
+    } catch (error) { backupMessage(`Unable to load backups: ${error.message}`, true); }
+  }
+  function syncBackupJobType() { backupField('backupJobPartialOptions').disabled = backupField('backupJobType').value !== 'partial'; }
+  function resetBackupJobForm() {
+    editingBackupJobId = null;
+    backupField('backupJobForm').reset();
+    backupField('backupJobSave').textContent = 'Create job';
+    backupField('backupJobCancel').hidden = true;
+    syncBackupJobType();
+  }
+  function editBackupJob(job) {
+    editingBackupJobId = job.id;
+    backupField('backupJobName').value = job.name;
+    backupField('backupJobFrequency').value = job.frequency;
+    backupField('backupJobType').value = job.type;
+    backupField('backupJobRetention').value = job.retention_count;
+    backupField('backupJobAccounting').checked = !!job.include_accounting;
+    backupField('backupJobAuth').checked = !!job.include_auth;
+    backupField('backupJobAudit').checked = !!job.include_audit;
+    backupField('backupJobEnabled').checked = !!job.enabled;
+    backupField('backupJobSave').textContent = 'Update job';
+    backupField('backupJobCancel').hidden = false;
+    syncBackupJobType();
+    backupField('backupJobName').focus();
+  }
+  async function saveBackupJob(event) {
+    event.preventDefault();
+    if (backupField('globalBackupRestore').hidden) return;
+    const name = backupField('backupJobName').value.trim();
+    const retention_count = Number(backupField('backupJobRetention').value);
+    if (!name || name.length > 100 || !Number.isInteger(retention_count) || retention_count < 1 || retention_count > 100) {
+      backupMessage('Enter a job name and a retention count from 1 to 100.', true); return;
+    }
+    const frequency = backupField('backupJobFrequency').value;
+    const type = backupField('backupJobType').value;
+    if (!['hourly', 'daily', 'weekly'].includes(frequency) || !['full', 'partial'].includes(type)) {
+      backupMessage('Choose a valid frequency and backup type.', true); return;
+    }
+    const payload = {name, frequency, type,
+      include_accounting: type === 'partial' && backupField('backupJobAccounting').checked,
+      include_auth: type === 'partial' && backupField('backupJobAuth').checked,
+      include_audit: type === 'partial' && backupField('backupJobAudit').checked,
+      retention_count, enabled: backupField('backupJobEnabled').checked};
+    const button = backupField('backupJobSave'); button.disabled = true;
+    try {
+      const editing = editingBackupJobId !== null;
+      await backupJson(editing ? `/api/system/backup-jobs/${encodeURIComponent(editingBackupJobId)}` : '/api/system/backup-jobs',
+        {method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload)});
+      resetBackupJobForm(); backupMessage(editing ? 'Job updated.' : 'Job created.');
+      await loadLocalBackupData();
+    } catch (error) { backupMessage(`Unable to save job: ${error.message}`, true); }
+    finally { button.disabled = false; }
+  }
+  async function runBackupJob(id) {
+    if (backupField('globalBackupRestore').hidden) return;
+    try { await backupJson(`/api/system/backup-jobs/${encodeURIComponent(id)}/run`, {method:'POST'}); backupMessage('Backup run requested.'); await loadLocalBackupData(); }
+    catch (error) { backupMessage(`Backup run failed: ${error.message}`, true); }
+  }
+  async function deleteBackupJob(id) {
+    if (backupField('globalBackupRestore').hidden || !confirm('Delete this scheduled backup job? Its existing backups will remain available for download or restore.')) return;
+    try { await backupJson(`/api/system/backup-jobs/${encodeURIComponent(id)}`, {method:'DELETE'}); backupMessage('Job deleted.'); await loadLocalBackupData(); }
+    catch (error) { backupMessage(`Unable to delete job: ${error.message}`, true); }
+  }
+  async function restoreLocalBackup(id) {
+    if (backupField('globalBackupRestore').hidden || prompt('Existing data may be overwritten. Check version compatibility and keep a separate copy. Type RESTORE_BACKUP to restore this selected backup:') !== 'RESTORE_BACKUP') return;
+    try {
+      const result = await backupJson(`/api/system/local-backups/${encodeURIComponent(id)}/restore`, {method:'POST', body: JSON.stringify({confirm:'RESTORE_BACKUP'})});
+      const warnings = [result.warning, ...(Array.isArray(result.warnings) ? result.warnings : [])].filter(Boolean);
+      backupMessage(warnings.length || result.partial ? `Restore completed with warning: ${warnings.join('; ') || 'Some data may not have been restored.'}` : 'Stored backup restored.', !!(warnings.length || result.partial));
+      await loadLocalBackupData();
+    }
+    catch (error) { backupMessage(`Restore failed: ${error.message}`, true); }
+  }
+  async function downloadLocalBackup(backup) {
+    if (backupField('globalBackupRestore').hidden) return;
+    try {
+      const res = await fetch(`/api/system/local-backups/${encodeURIComponent(backup.id)}/download`, {headers:{'X-API-Key':localStorage.getItem('apiKey')}});
+      if (!res.ok) { const error = await res.json().catch(() => ({})); throw new Error(error.error || `HTTP ${res.status}`); }
+      const url = window.URL.createObjectURL(await res.blob());
+      const link = document.createElement('a'); link.href = url; link.download = `local-backup-${encodeURIComponent(backup.id)}.json`;
+      document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url);
+      backupMessage('Download started.');
+    } catch (error) { backupMessage(`Download failed: ${error.message}`, true); }
+  }
+  backupField('backupJobForm').addEventListener('submit', saveBackupJob);
+  backupField('backupJobType').addEventListener('change', syncBackupJobType);
+  backupField('backupJobCancel').addEventListener('click', resetBackupJobForm);
+  backupField('backupJobRefresh').addEventListener('click', loadLocalBackupData);
+  backupField('globalBackupRestore').addEventListener('toggle', () => { if (backupField('globalBackupRestore').open) loadLocalBackupData(); });
 
   // ─── SETTINGS ────────────────────────────────────────────────────────────
   let catalogueAttributes = [], savedCustomAttributes = [];
