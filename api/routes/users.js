@@ -37,13 +37,18 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const paginated = req.query.page !== undefined;
         const page = Math.max(1, parseInt(req.query.page, 10) || 1);
         const pageSize = [25, 50, 100].includes(parseInt(req.query.page_size, 10)) ? parseInt(req.query.page_size, 10) : 25;
-        const sortColumns = { username: 'c.username', value: 'c.value', planName: 'p.name', profileName: 'u.groupname', totp: 'COALESCE(ut.enabled, 0)' };
+        const sortColumns = { username: 'c.username', value: 'c.value', planName: 'p.name', profileName: 'u.groupname', sessions: 'sessions_30d', data: 'data_30d', time: 'time_30d', lastOnline: 'last_online', totp: 'COALESCE(ut.enabled, 0)' };
         const sort = sortColumns[req.query.sort] || 'c.username';
         const order = req.query.order === 'desc' ? 'DESC' : 'ASC';
         const scoped = userScope(req, 'c.tenant_id');
         const tenantJoinParams = req.tenantScope.enabled ? [req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId, req.tenantScope.tenantId] : [];
         const where = ["c.attribute = 'Cleartext-Password'", 'm.mac_address IS NULL'];
         const values = [];
+        // Exact, tenant-scoped lookup for a session's edit deep link. Unlike LIKE,
+        // this remains unambiguous when usernames contain SQL wildcard characters.
+        if (req.query.exact !== undefined) {
+            where.push('c.username = ?'); values.push(String(req.query.exact).slice(0, 100));
+        }
         const search = String(req.query.search || '').trim().slice(0, 100);
         if (search) { const like = `%${search}%`; where.push('(c.username LIKE ? OR c.value LIKE ? OR p.name LIKE ? OR u.groupname LIKE ?)'); values.push(like, like, like, like); }
         const plan = String(req.query.plan || '');
@@ -88,10 +93,12 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         try {
             const [plans] = await pool.query('SELECT plan_id FROM user_plans WHERE username = ?' + scoped.sql, [username, ...scoped.params]);
             if (!plans.length) return res.status(404).json({ error: 'User has no plan assigned' });
+            const [devices] = await pool.query('SELECT mac_id FROM mac_auth_devices WHERE mac_address = ?' + scoped.sql + ' LIMIT 1', [username, ...scoped.params]);
             await snapshotUserPlanUsage(pool, username, selectedTenantId(req));
             const [result] = await pool.query('UPDATE user_plans SET manual_reset_date = NOW() WHERE username = ?' + scoped.sql, [username, ...scoped.params]);
             if (!result.affectedRows) return missingUser(res);
-            await auditLog(req.admin.username, req.origin, `Reset limits for user: ${username}`, 'success', '', req.ip, req.tenantScope); res.json({ success: true });
+            const action = devices.length ? `Reset limits for MAC device: ${devices[0].mac_id}` : `Reset limits for user: ${username}`;
+            await auditLog(req.admin.username, req.origin, action, 'success', '', req.ip, req.tenantScope); res.json({ success: true });
         } catch (err) { res.status(500).json({ error: err.message }); }
     });
 

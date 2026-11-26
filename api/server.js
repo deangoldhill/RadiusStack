@@ -31,6 +31,7 @@ const notificationConfig = require('./routes/notifications');
 const { publicClientIp, newPublicAdminIp } = require('./notification_events');
 const { createHaPeerHealth } = require('./ha_peer_health');
 const { createPlanPodEnforcementWorker } = require('./workers/planPodEnforcementWorker');
+const { createPlanCycleWorker } = require('./workers/planCycleWorker');
 require('./workers/radiusStatsWorker');
 
 const haTransport = createHaTransport(process.env);
@@ -1208,9 +1209,16 @@ app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), requireGlob
     }
 });
 
-dbReady.then(recoverMarkedSecondaryRadius).then(()=>app.listen(3000, '0.0.0.0', () => {
+const planCycleWorker = createPlanCycleWorker({pool,isPrimary:()=>global.haRole==='primary'});
+dbReady.then(recoverMarkedSecondaryRadius).then(()=>{
+    require('./routes/backup').startScheduler();
+    const refreshPlanCycles = () => planCycleWorker.process().catch(error => console.error('[Plan cycle] worker failed:',error));
+    setInterval(refreshPlanCycles, 30000);
+    setTimeout(refreshPlanCycles, 1000);
+    return app.listen(3000, '0.0.0.0', () => {
     console.log('Radius UI Server listening on port 3000');
-})).catch(error=>{console.error('[Startup] Database or secondary Radius recovery failed:',error);process.exit(1);});
+    });
+}).catch(error=>{console.error('[Startup] Database or secondary Radius recovery failed:',error);process.exit(1);});
 
 
 const maintenanceWorkers = createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog, notify: sendNotification });
@@ -1223,8 +1231,10 @@ const {refreshRegistry} = require('./mac_vendor');
 setInterval(() => refreshRegistry().then(count => console.log(`[MAC Vendor] Refreshed ${count} manufacturer prefixes`)).catch(error => console.error('[MAC Vendor] Retaining bundled registry:', error.message)), 7 * 24 * 60 * 60 * 1000);
 
 const planPodEnforcementWorker = createPlanPodEnforcementWorker({ pool });
-const runPlanPodEnforcement = () => haSecondaryLogFence.runTask(() => planPodEnforcementWorker.process())
-    .catch(error => { if (!/Secondary log writes paused for reconciliation maintenance/.test(error.message)) console.error('[Plan PoD enforcement] worker failed:', error); });
+const runPlanPodEnforcement = () => haSecondaryLogFence.runTask(async () => {
+    await planCycleWorker.process(); // On the primary, refresh cycle baselines before PoD checks.
+    return planPodEnforcementWorker.process();
+}).catch(error => { if (!/Secondary log writes paused for reconciliation maintenance/.test(error.message)) console.error('[Plan PoD enforcement] worker failed:', error); });
 setInterval(runPlanPodEnforcement, 30000);
 setTimeout(runPlanPodEnforcement, 30000);
 

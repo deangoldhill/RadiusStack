@@ -1,14 +1,21 @@
+const {createLocalBackups, createScheduler, validateJob, nextRun, utcMysql, jobView, backupView} = require('../local_backups');
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
-app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, async (req, res) => {
-    const type = req.query.type || 'full';
-    const include_accounting = req.query.acct === 'true' || type === 'full';
-    const include_authlogs = req.query.auth === 'true' || type === 'full';
-    const include_auditlogs = req.query.audit === 'true' || type === 'full';
-
+async function buildBackup(pool, job) {
+    let connection;
     try {
-        const safeQuery = async (q) => { try { const [r] = await pool.query(q); return r; } catch { return []; } };
+        if (job.strict) {
+            connection = await pool.getConnection();
+            await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+        }
+        const source = connection || pool;
+    const type = job.type;
+    const include_accounting = job.acct || type === 'full';
+    const include_authlogs = job.auth || type === 'full';
+    const include_auditlogs = job.audit || type === 'full';
+    const safeQuery = async (q) => { try { const [r] = await source.query(q); return r; } catch (error) { if (job.strict) throw error; return []; } };
 
         const admins = await safeQuery('SELECT * FROM admins');
         const tenants = await safeQuery('SELECT * FROM tenants');
@@ -68,6 +75,23 @@ app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireG
             backup.data.admin_audit_log = await safeQuery('SELECT * FROM admin_audit_log');
         }
 
+    return backup;
+    } finally {
+        if (connection) {
+            try { await connection.rollback(); }
+            finally { connection.release(); }
+        }
+    }
+}
+
+app.get('/api/system/backup', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, async (req, res) => {
+    const type = req.query.type || 'full';
+    const include_accounting = req.query.acct === 'true' || type === 'full';
+    const include_authlogs = req.query.auth === 'true' || type === 'full';
+    const include_auditlogs = req.query.audit === 'true' || type === 'full';
+
+    try {
+        const backup = await buildBackup(pool, {type, acct: include_accounting, auth: include_authlogs, audit: include_auditlogs});
         const filename = `radius_${type}_backup_${new Date().toISOString().slice(0, 10)}.json`;
         await auditLog(req.admin.username, req.origin, `Downloaded ${type} backup`, 'success', '', req.ip);
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -111,7 +135,7 @@ async function chunkInsert(pool, table, rows, chunkSize = 100) {
     return { inserted };
 }
 
-app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), async (req, res) => {
+const restoreHandler = async (req, res) => {
     const conn = await pool.getConnection();
     const results = {};
     const errors = [];
@@ -350,7 +374,61 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
     } finally {
         conn.release();
     }
-});
+};
+app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), restoreHandler);
 
 
+    const primary = dependencies.isPrimary || (() => process.env.HA_ENABLED !== 'true' || global.haRole === 'primary');
+    const local = dependencies.localBackups || createLocalBackups({pool,buildBackup:job=>buildBackup(pool,{...job,strict:true}),isPrimary:primary});
+    const scheduler = dependencies.scheduler || createScheduler({pool,local,isPrimary:primary});
+    module.exports.startScheduler = () => scheduler.start();
+    const guard = [requireApiAuth('settings','read-write'),requireGlobalSuperAdmin];
+    const auditAction=(req,action,result='success')=>auditLog(req.admin.username,req.origin,action,result,'',req.ip);
+    const fail = (res,e) => res.status(500).json({error:'Local backup operation failed'});
+    const idParam = req => {
+        const id=Number(req.params.id);
+        if(!Number.isSafeInteger(id) || id<1) throw Error('Invalid job ID');
+        return id;
+    };
+    const writeAllowed = res => {if(!primary()) {res.status(503).json({error:'Primary node required'});return false;}return true;};
+    app.get('/api/system/backup-jobs',...guard,async(req,res)=>{
+        try {const [rows]=await pool.query('SELECT id,name,frequency,interval_hours,type,acct,auth,audit,keep_count,enabled,next_run,last_run,last_error FROM backup_jobs ORDER BY id');res.setHeader('Cache-Control','no-store');res.json(rows.map(jobView));} catch(e){fail(res,e);}
+    });
+    app.post('/api/system/backup-jobs',...guard,async(req,res)=>{
+        if(!writeAllowed(res))return;
+        let job;try {job=validateJob(req.body); }catch(e){return res.status(400).json({error:e.message});}
+        try {const [result]=await pool.query('INSERT INTO backup_jobs (name,frequency,interval_hours,type,acct,auth,audit,keep_count,enabled,next_run) VALUES (?,?,?,?,?,?,?,?,?,?)',[job.name,job.frequency,job.interval_hours,job.type,+job.acct,+job.auth,+job.audit,job.keep_count,+job.enabled,utcMysql(nextRun(job,new Date()))]);await auditAction(req,`Created backup job ${result.insertId}`);res.status(201).json(jobView({id:result.insertId,...job,next_run:utcMysql(nextRun(job,new Date())),last_run:null}));}catch(e){fail(res,e);}
+    });
+    app.put?.('/api/system/backup-jobs/:id',...guard,async(req,res)=>{
+        if(!writeAllowed(res))return;
+        let job,id;try {id=idParam(req);job=validateJob(req.body);}catch(e){return res.status(400).json({error:e.message});}
+        try {const [result]=await pool.query('UPDATE backup_jobs SET name=?,frequency=?,interval_hours=?,type=?,acct=?,auth=?,audit=?,keep_count=?,enabled=?,next_run=? WHERE id=? AND (lease_until IS NULL OR lease_until < UTC_TIMESTAMP())',[job.name,job.frequency,job.interval_hours,job.type,+job.acct,+job.auth,+job.audit,job.keep_count,+job.enabled,utcMysql(nextRun(job,new Date())),id]);if(!result.affectedRows)return res.status(404).json({error:'Job not found or running'});await auditAction(req,`Updated backup job ${id}`);res.json(jobView({id,...job,next_run:utcMysql(nextRun(job,new Date())),last_run:null}));}catch(e){fail(res,e);}
+    });
+    app.delete?.('/api/system/backup-jobs/:id',...guard,async(req,res)=>{
+        if(!writeAllowed(res))return;
+        let id;try{id=idParam(req);}catch(e){return res.status(400).json({error:e.message});}
+        try {const [result]=await pool.query('DELETE FROM backup_jobs WHERE id=? AND (lease_until IS NULL OR lease_until < UTC_TIMESTAMP())',[id]);if(!result.affectedRows)return res.status(404).json({error:'Job not found or running'});await auditAction(req,`Deleted backup job ${id}`);res.json({success:true});}catch(e){fail(res,e);}
+    });
+    app.post('/api/system/backup-jobs/:id/run',...guard,async(req,res)=>{
+        if(!writeAllowed(res))return;
+        let id;try{id=idParam(req);}catch(e){return res.status(400).json({error:e.message});}
+        try {const [rows]=await pool.query('SELECT * FROM backup_jobs WHERE id=?',[id]);if(!rows.length)return res.status(404).json({error:'Job not found'});const backup=await scheduler.run(rows[0],true);await auditAction(req,`Ran backup job ${id}`);res.json(backupView(backup));}catch(e){fail(res,e);}
+    });
+    app.get('/api/system/local-backups',...guard,async(req,res)=>{
+        try {res.setHeader('Cache-Control','no-store');res.json((await local.list()).map(backupView));}catch(e){fail(res,e);}
+    });
+    app.get('/api/system/local-backups/:id/download',...guard,async(req,res)=>{
+        try {const content=await local.read(req.params.id);await auditAction(req,`Downloaded local backup ${req.params.id}`);res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');res.setHeader('Content-Disposition',`attachment; filename="radius_backup_${req.params.id}.json"`);res.send(content);}catch(e){res.status(404).json({error:'Local backup unavailable or corrupt'});}
+    });
+    app.post('/api/system/local-backups/:id/restore',...guard,async(req,res)=>{
+        if(!writeAllowed(res))return;
+        if(req.body?.confirm!=='RESTORE_BACKUP')return res.status(400).json({error:'Explicit RESTORE_BACKUP confirmation required'});
+        try {
+            // The existing restore handler is the only implementation of restore SQL.
+            const content=await local.read(req.params.id);
+            if(content.length>50*1024*1024)return res.status(413).json({error:'Backup exceeds 50 MiB restore limit'});
+            return restoreHandler({...req,file:{buffer:content}},res);
+        }catch(e){return res.status(404).json({error:'Local backup unavailable or corrupt'});}
+    });
+    module.exports.buildBackup = buildBackup;
 };

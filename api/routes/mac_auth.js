@@ -50,10 +50,14 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const paginated = req.query.page !== undefined;
             const page = Math.max(1, parseInt(req.query.page, 10) || 1);
             const pageSize = [25, 50, 100].includes(parseInt(req.query.page_size, 10)) ? parseInt(req.query.page_size, 10) : 25;
-            const sortColumns = { username: 'm.mac_id', callingstationid: 'm.mac_address', planName: 'p.name', profileName: 'g.groupname' };
+            const sortColumns = { username: 'm.mac_id', callingstationid: 'm.mac_address', planName: 'p.name', profileName: 'g.groupname', sessions: 'sessions_30d', data: 'data_30d', time: 'time_30d', lastOnline: 'last_online' };
             const sort = sortColumns[req.query.sort] || 'm.mac_id';
             const order = req.query.order === 'desc' ? 'DESC' : 'ASC';
             const where = ['1=1']; const values = [];
+            if (req.query.exact !== undefined) {
+                const exact = String(req.query.exact).slice(0, 100);
+                where.push('(m.mac_address = ? OR m.mac_id = ?)'); values.push(exact, exact);
+            }
             const search = String(req.query.search || '').trim().slice(0, 100);
             if (search) { const like = `%${search}%`; where.push('(m.mac_id LIKE ? OR m.mac_address LIKE ? OR p.name LIKE ? OR g.groupname LIKE ?)'); values.push(like, like, like, like); }
             const plan = String(req.query.plan || '');
@@ -117,7 +121,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             await conn.query('UPDATE mac_auth_devices SET mac_id = ? WHERE mac_address = ?' + scoped.sql, [mac_id, address, ...scoped.params]);
             if (staticIp === undefined) { const existingIp = await conn.query("SELECT value FROM radreply WHERE username = ? AND attribute = 'Framed-IP-Address'" + tenantScope(req).sql, [address, ...tenantScope(req).params]); await replaceMacRelations(conn, req, address, profile, plan_id, existingIp[0][0]?.value || null); } else await replaceMacRelations(conn, req, address, profile, plan_id, staticIp);
             if (req.body.disabled !== undefined) await setDisabled(conn, req, address, req.body.disabled);
-            await conn.commit(); await auditLog(req.admin.username, req.origin, `Updated MAC device: ${address}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC authenticated device updated' });
+            await conn.commit(); await auditLog(req.admin.username, req.origin, `Updated MAC device: ${mac_id}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC authenticated device updated' });
         } catch (err) { await conn.rollback(); res.status(err.code === 'ER_DUP_ENTRY' ? 400 : 500).json({ error: err.code === 'ER_DUP_ENTRY' ? 'MAC ID already exists' : err.message }); } finally { conn.release(); }
     });
 
@@ -125,12 +129,13 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         const address = macAddress(req.params.macAddress); const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
-            if (!await macExists(conn, req, address)) { await conn.rollback(); return res.status(404).json({ error: 'MAC device not found in selected tenant' }); }
             const scoped = tenantScope(req);
+            const [devices] = await conn.query('SELECT mac_id FROM mac_auth_devices WHERE mac_address = ?' + scoped.sql, [address, ...scoped.params]);
+            if (!devices.length) { await conn.rollback(); return res.status(404).json({ error: 'MAC device not found in selected tenant' }); }
             const radreplyScope = tenantScope(req, 'tenant_id');
             await conn.query('DELETE FROM radreply WHERE username = ?' + radreplyScope.sql, [address, ...radreplyScope.params]);
             for (const table of ['mac_auth_devices', 'radcheck', 'radusergroup', 'user_plans', 'user_plan_usage', 'user_totp']) await conn.query(`DELETE FROM ${table} WHERE ${table === 'mac_auth_devices' ? 'mac_address' : 'username'} = ?` + scoped.sql, [address, ...scoped.params]);
-            await conn.commit(); await auditLog(req.admin.username, req.origin, `Deleted MAC device: ${address}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC device deleted' });
+            await conn.commit(); await auditLog(req.admin.username, req.origin, `Deleted MAC device: ${devices[0].mac_id}`, 'success', '', req.ip, req.tenantScope); res.json({ message: 'MAC device deleted' });
         } catch (err) { await conn.rollback(); res.status(500).json({ error: err.message }); } finally { conn.release(); }
     });
 };
