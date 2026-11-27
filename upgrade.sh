@@ -37,6 +37,10 @@ log "upgrade preflight target=$version cwd=$PWD log=$debug_log pid=$$"
 trap 'status=$?; rm -f -- "${RADIUS_UPGRADE_COPY_PATH:-}"; if ((status)); then log "FAILED exit=$status phase=$phase before upgrade rollback; inspect $debug_log"; console "[!] Upgrade FAILED during $phase (exit $status). Detailed log: $debug_log"; fi' EXIT
 log 'check required installation files: docker-compose.yml .env (contents withheld)'
 [[ -f docker-compose.yml && -f .env ]] || { echo 'Run from an installation with docker-compose.yml and .env' >&2; exit 1; }
+# Newly managed files must not redirect overlays into private configuration/state.
+for managed_path in web_ui/nginx.conf docs README.md setup_env.sh .env.example; do
+  [[ ! -L "$managed_path" ]] || { echo "Refusing symlink-managed path: $managed_path" >&2; exit 1; }
+done
 if [[ -f .radiusstack-version ]]; then
   python3 - "$version" <<'PY'
 from pathlib import Path
@@ -92,7 +96,7 @@ cleanup() {
       chmod 600 "$diagnostic"
     done
     compose_run stop radius api web_ui phpmyadmin || true
-    for path in VERSION docker-compose.yml api radius web_ui/public db-migrations db-init upgrade.sh; do
+    for path in VERSION docker-compose.yml api radius web_ui/public web_ui/nginx.conf db-migrations db-init upgrade.sh docs README.md setup_env.sh .env.example; do
       log "rollback file=$path backed_up=$([[ -e "$backup/code/$path" ]] && printf yes || printf no)"
       rm -rf -- "$path"
       if [[ -e "$backup/code/$path" ]]; then
@@ -251,7 +255,7 @@ log "persistent backup directory=$backup separate debug transcript=$debug_log"
 phase=backup
 console '[+] Release verified; backing up code and database'
 mkdir -p "$backup/code"
-for path in VERSION docker-compose.yml api radius web_ui/public db-migrations db-init upgrade.sh; do
+for path in VERSION docker-compose.yml api radius web_ui/public web_ui/nginx.conf db-migrations db-init upgrade.sh docs README.md setup_env.sh .env.example; do
   if [[ -e "$path" ]]; then
     log "backup source path=$path"
     log_tree "$path"
@@ -274,7 +278,7 @@ log "docker command: ${compose[*]} exec -T mariadb [credential via container env
 "${compose[@]}" exec -T mariadb sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mariadb-dump --single-transaction --routines --triggers --events --databases radius -uroot' > "$backup/database.sql"
 log "database dump bytes=$(wc -c < "$backup/database.sql") sha256=$(sha256sum "$backup/database.sql" | cut -d' ' -f1)"
 [[ -s "$backup/database.sql" ]] || { echo 'Empty database backup; refusing upgrade' >&2; exit 1; }
-for path in VERSION docker-compose.yml api radius web_ui/public db-migrations db-init; do
+for path in VERSION docker-compose.yml api radius web_ui/public web_ui/nginx.conf db-migrations db-init docs README.md setup_env.sh .env.example; do
   if [[ -e "$stage/$path" ]]; then
     log "overlay release path=$path"
     log_tree "$stage/$path"

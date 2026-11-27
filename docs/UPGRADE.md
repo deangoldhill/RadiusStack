@@ -1,3 +1,37 @@
+# RadiusStack 6.2.3
+
+Complete server source for fresh installs and upgrades, including all changes since **6.2.2**. See [RELEASE_6.2.3.md](RELEASE_6.2.3.md), [LARGE_JSON_RESTORE.md](LARGE_JSON_RESTORE.md) and [AUDIT_COVERAGE.md](AUDIT_COVERAGE.md).
+
+## Fresh installation
+
+Verify `radiusstack-source.tar.gz` against its adjacent `SHA256SUMS`, extract it and enter `radiusstack-6.2.3`, then:
+
+```sh
+bash setup_env.sh
+docker compose config -q
+docker compose up -d --build
+```
+
+The archive has `.env.example` and the Bash wizard, **not .env**. The wizard creates a private mode-0600 file; review host identity, ports and secrets. Preserve shared primary keys/token when configuring an HA secondary; leave HA disabled on unvalidated pairs.
+
+## Upgrade from 6.2.2
+
+Keep the existing private `.env`, Compose overrides, database, generated RADIUS configuration, certificates and persistent backup volume. Take an independent backup and rehearse on a copy first. This release adds no new SQL migration relative to 6.2.2; the existing migration set is retained. A source rollback does not undo database DDL or restore changes.
+
+**Do not run `./upgrade.sh --to 6.2.3` in GitHub-download mode until Dean publishes and verifies the exact tag, source asset and trusted digest.** The staged directory is not a GitHub download source.
+
+**For the first upgrade from 6.2.2 or earlier, you must use the verified 6.2.3 bundled updater from a separate extracted directory. Do not invoke the older installed updater: it does not deploy web_ui/nginx.conf, so the new upload limits would remain inactive.** Verify the adjacent `SHA256SUMS`, extract the archive outside the existing installation, then run the command below with the **existing installation directory as the working directory**:
+
+```sh
+bash /absolute/path/radiusstack-6.2.3/upgrade.sh --to 6.2.3 --archive /absolute/path/radiusstack-source.tar.gz
+```
+
+The 6.2.3 updater backs up, deploys and restores Nginx configuration, documentation, README, wizard and public environment template alongside application code. It does not overwrite private `.env` or Compose overrides, and refuses symlinked newly managed targets. A failed upgrade leaves writers stopped for database/rollback review; recreate services after that review if any bind-mounted files/directories were replaced.
+
+Do not run setup_env.sh over an existing customized `.env`. See the adjacent BUILD_INFO.txt for the original-updater gap reproduction, fresh-install checks and verified bundled-updater rehearsal. The 700 MB restore limit is decimal bytes; allow staging/database disk headroom, and check any external proxy limits. The older manual backup-generation endpoint is unchanged.
+
+## Previous release guidance
+
 # RadiusStack 6.2.2
 
 Complete server source for fresh installations and upgrades, including all changes since 6.2.1. See [RELEASE_6.2.2.md](RELEASE_6.2.2.md) and [LOCAL_JSON_BACKUPS.md](LOCAL_JSON_BACKUPS.md).
