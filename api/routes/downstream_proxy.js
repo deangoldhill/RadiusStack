@@ -36,9 +36,12 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
         if (body.shared_secret !== undefined && (typeof body.shared_secret !== 'string' || !body.shared_secret.length || body.shared_secret.length > 253)) throw new Error('Invalid shared secret');
         if (body.proxy_traffic !== undefined && !['auth','accounting','both'].includes(body.proxy_traffic)) throw new Error('Select Auth, Accounting or Both traffic');
     };
-    const activate = async () => {
+    const activate = async (req, method, id) => {
         try { await activateRadius(); }
         catch (cause) {
+            // Mutation already persisted. Never expose activation errors or request secrets in audit/syslog.
+            const details = {method, ...(validId(id) ? {id:Number(id)} : {}), saved:true, radius_reloaded:false};
+            try { await auditLog(req.admin.username, req.origin, 'Downstream destination activation failed', 'failed', JSON.stringify(details), req.ip, req.tenantScope); } catch { /* Keep the partial-save response even if audit fails. */ }
             const err = new Error('Destination saved, but Radius activation failed; inspect the Radius service before retrying');
             err.status = 503;
             err.saved = true;
@@ -83,7 +86,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
         const {name,ipv4,auth_port,accounting_port,shared_secret}=req.body;
         const proxy_traffic=req.body.proxy_traffic ?? 'both';
         const [result]=await pool.query('INSERT INTO downstream_radius_destinations (tenant_id,name,ipv4,auth_port,accounting_port,shared_secret,proxy_traffic) VALUES (?,?,?,?,?,?,?)',[selected(req),name.trim(),ipv4,Number(auth_port),Number(accounting_port),shared_secret,proxy_traffic]);
-        await activate();
+        await activate(req, 'POST', result.insertId);
         await auditLog(req.admin.username,req.origin,'Created downstream destination','success',name.trim(),req.ip,req.tenantScope);
         res.status(201).json({id:result.insertId,tenant_id:selected(req),name:name.trim(),ipv4,auth_port:Number(auth_port),accounting_port:Number(accounting_port),proxy_traffic,radius_reloaded:true});
     }));
@@ -96,7 +99,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
         const sql='UPDATE downstream_radius_destinations SET name=?,ipv4=?,auth_port=?,accounting_port=?'+(hasSecret?',shared_secret=?':'')+(hasTraffic?',proxy_traffic=?':'')+' WHERE id=?'+s.sql;
         const [result]=await pool.query(sql,[name.trim(),ipv4,Number(auth_port),Number(accounting_port),...(hasSecret?[shared_secret]:[]),...(hasTraffic?[req.body.proxy_traffic]:[]),req.params.id,...s.params]);
         if (!result.affectedRows) return res.status(404).json({error:'Destination not found'});
-        await activate();
+        await activate(req, 'PUT', req.params.id);
         await auditLog(req.admin.username,req.origin,'Updated downstream destination','success',name.trim(),req.ip,req.tenantScope);
         res.json({success:true,radius_reloaded:true});
     }));
@@ -112,7 +115,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, activateRadius = 
             await conn.query('DELETE FROM downstream_radius_destinations WHERE id=?'+s.sql,[req.params.id,...s.params]);
             await conn.commit();
         } catch (err) { await conn.rollback(); throw err; } finally { conn.release(); }
-        await activate();
+        await activate(req, 'DELETE', req.params.id);
         await auditLog(req.admin.username,req.origin,'Deleted downstream destination','success','',req.ip,req.tenantScope);
         res.json({success:true,radius_reloaded:true});
     }));

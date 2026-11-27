@@ -91,8 +91,9 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
           const conn = await pool.getConnection();
           try {
             await conn.beginTransaction();
+            let deviceInsert;
             if (multiTenant) {
-              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name, tenant_id) VALUES (?, ?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress), tenantId]);
+              [deviceInsert] = await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name, tenant_id) VALUES (?, ?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress), tenantId]);
               await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' AND tenant_id = ?", [macAddress, tenantId]);
               await conn.query("INSERT INTO radcheck (username, attribute, op, value, tenant_id) VALUES (?, 'Cleartext-Password', ':=', ?, ?)", [macAddress, macAddress, tenantId]);
               await conn.query('DELETE FROM radusergroup WHERE username = ? AND tenant_id = ?', [macAddress, tenantId]);
@@ -100,7 +101,7 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
               await conn.query('DELETE FROM user_plans WHERE username = ? AND tenant_id = ?', [macAddress, tenantId]);
               if (config.mac_auth_autocreate_plan) await conn.query('INSERT INTO user_plans (username, plan_id, tenant_id) VALUES (?, ?, ?)', [macAddress, config.mac_auth_autocreate_plan, tenantId]);
             } else {
-              await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name) VALUES (?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress)]);
+              [deviceInsert] = await conn.query('INSERT IGNORE INTO mac_auth_devices (mac_address, mac_id, vendor_name) VALUES (?, ?, ?)', [macAddress, macAddress, vendorForMac(macAddress)]);
               await conn.query("DELETE FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' AND tenant_id IS NULL", [macAddress]);
               await conn.query("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)", [macAddress, macAddress]);
               await conn.query('DELETE FROM radusergroup WHERE username = ? AND tenant_id IS NULL', [macAddress]);
@@ -109,6 +110,15 @@ function createTenantMaintenanceWorkers({ pool, auditLog, apiDebugLog = () => {}
               if (config.mac_auth_autocreate_plan) await conn.query('INSERT INTO user_plans (username, plan_id) VALUES (?, ?)', [macAddress, config.mac_auth_autocreate_plan]);
             }
             await conn.commit();
+            if (deviceInsert.affectedRows > 0) {
+              // Audit persistence must not turn a committed creation into a failed transaction.
+              try {
+                await auditLog('system', 'system', `Auto-created MAC device: ${macAddress}`, 'success', JSON.stringify({ mac_address: macAddress, mac_id: macAddress, profile: config.mac_auth_autocreate_profile || null, plan_id: config.mac_auth_autocreate_plan || null }), '127.0.0.1', multiTenant ? { enabled: true, tenantId } : { enabled: false });
+              } catch {
+                // Database/adapter errors can contain credentials; do not log the raw error.
+                logger.error(`[MAC Auto-Create Worker] Audit unavailable for ${multiTenant ? `tenant ${tenantId}` : 'global'}: ${macAddress}`);
+              }
+            }
             logger.log(`[MAC Auto-Create Worker] Registered new MAC for ${multiTenant ? `tenant ${tenantId}` : 'global'}: ${macAddress}`);
             Promise.resolve().then(() => notify({tenantId, event:'mac_auto_created', title:'New MAC device registered', body:`MAC ${macAddress} was auto-created${multiTenant ? ` for tenant ${tenantId}` : ''}.`})).catch(() => logger.error('[MAC Auto-Create Worker] Notification unavailable'));
           } catch (error) {

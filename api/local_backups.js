@@ -1,6 +1,45 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {MAX_BACKUP_BYTES} = require('./backup_upload');
+
+// Preserve the existing JSON shape without materialising the entire backup string.
+function* backupJsonChunks(backup) {
+    yield '{'; let firstRoot=true;
+    for (const [key,value] of Object.entries(backup)) {
+        if (value === undefined) continue;
+        if (!firstRoot) yield ','; firstRoot=false;
+        yield JSON.stringify(key)+':';
+        if (key !== 'data' || !value || typeof value !== 'object' || Array.isArray(value)) {
+            yield JSON.stringify(value); continue;
+        }
+        yield '{'; let firstTable=true;
+        for (const [table,rows] of Object.entries(value)) {
+            if (rows === undefined) continue;
+            if (!firstTable) yield ','; firstTable=false;
+            yield JSON.stringify(table)+':';
+            if (!Array.isArray(rows)) {yield JSON.stringify(rows);continue;}
+            yield '[';
+            for (let i=0;i<rows.length;i++) {if(i)yield ',';yield JSON.stringify(rows[i]) ?? 'null';}
+            yield ']';
+        }
+        yield '}';
+    }
+    yield '}';
+}
+
+
+function backupFailure(error={}) {
+    if(error.code==='BACKUP_TOO_LARGE') return 'Backup exceeds the 700 MB limit. Reduce included logs or their retention.';
+    if(['ENOSPC','EDQUOT'].includes(error.code)) return 'Insufficient disk space to save the backup.';
+    if(['EACCES','EPERM','EROFS'].includes(error.code)) return 'Backup storage is not writable. Check backup-volume permissions and mount settings.';
+    if(error.message==='Primary node required') return 'Primary node required';
+    if(error.message==='Job already running or not due') return 'Job already running or not due';
+    const tables={radacct:'accounting logs',radpostauth:'authentication logs',admin_audit_log:'audit logs'};
+    const code=/^[A-Z0-9_]{2,40}$/.test(error.code||'')?' ('+error.code+')':'';
+    if(tables[error.backupTable]) return `Could not back up ${tables[error.backupTable]}${code}. Check database availability and API logs.`;
+    return `Backup operation failed${code}. Check database availability, backup storage and API logs.`;
+}
 
 function validateJob(input) {
     if (!input || typeof input.name !== 'string' || !input.name.trim() || input.name.length > 100 || /[\x00-\x1f]/.test(input.name)) throw Error('Invalid job name');
@@ -30,7 +69,7 @@ function jobView(row) {
         enabled:!!row.enabled,next_run_at:utcIso(row.next_run),last_run_at:utcIso(row.last_run),status:row.last_error?'error':row.last_run?'success':'idle',last_error:row.last_error};
 }
 function backupView(row) {return {id:row.id,job_id:row.job_id,job_name:row.job_name||null,type:row.type,created_at:utcIso(row.created_at),size_bytes:row.size,checksum:row.checksum};}
-function createLocalBackups({pool,directory='/backups',buildBackup, isPrimary=()=>true}) {
+function createLocalBackups({pool,directory='/backups',buildBackup,streamBackup,maxBytes=MAX_BACKUP_BYTES,isPrimary=()=>true}) {
     const file = id => {
         if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) throw Error('Invalid backup ID');
         return path.join(directory,id+'.json');
@@ -41,16 +80,26 @@ function createLocalBackups({pool,directory='/backups',buildBackup, isPrimary=()
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error('Unsafe backup directory');
         await fs.chmod(directory,0o700);
     }
-    async function read(id) {
+    async function open(id) {
         const [rows] = await pool.query('SELECT * FROM local_backups WHERE id=?',[id]);
         if (!rows.length) throw Error('Backup not found');
         const handle = await fs.open(file(id),fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
         try {
-            if (!(await handle.stat()).isFile()) throw Error('Invalid backup file');
-            const content = await handle.readFile();
-            if (content.length !== Number(rows[0].size) || crypto.createHash('sha256').update(content).digest('hex') !== rows[0].checksum) throw Error('Backup checksum mismatch');
-            return content;
-        } finally {await handle.close();}
+            const stat=await handle.stat();
+            if (!stat.isFile()) throw Error('Invalid backup file');
+            if (stat.size !== Number(rows[0].size)) throw Error('Backup size/checksum mismatch');
+            if (stat.size > maxBytes) {const e=Error('Backup exceeds 700 MB limit');e.code='BACKUP_TOO_LARGE';throw e;}
+            const digest=crypto.createHash('sha256');
+            for await (const chunk of handle.createReadStream({start:0,autoClose:false})) digest.update(chunk);
+            if (digest.digest('hex') !== rows[0].checksum) throw Error('Backup checksum mismatch');
+            return {size:stat.size,createReadStream:()=>handle.createReadStream({start:0,autoClose:false}),close:()=>handle.close()};
+        } catch(error) {await handle.close();throw error;}
+    }
+    async function read(id) {
+        // Compatibility for small programmatic callers; HTTP routes use open().
+        const verified=await open(id);
+        try {const chunks=[];for await(const chunk of verified.createReadStream())chunks.push(chunk);return Buffer.concat(chunks);}
+        finally {await verified.close();}
     }
     async function list() {
         const [rows] = await pool.query('SELECT * FROM local_backups ORDER BY created_at DESC');
@@ -66,19 +115,29 @@ function createLocalBackups({pool,directory='/backups',buildBackup, isPrimary=()
         if (!isPrimary()) throw Error('Primary node required');
         await privateDirectory();
         const id=crypto.randomBytes(16).toString('hex');
-        const contents=Buffer.from(JSON.stringify(backup,null,2));
-        if(contents.length > 50*1024*1024) throw Error('Backup exceeds 50 MiB restore limit');
-        const checksum=crypto.createHash('sha256').update(contents).digest('hex');
+        const chunks=backup?.[Symbol.asyncIterator] ? backup : backupJsonChunks(backup);
+        const digest=crypto.createHash('sha256');
+        let size=0, checksum;
         const tmp=path.join(directory,'.'+id+'.tmp');
         const target=file(id);
         let renamed=false, cataloged=false;
         try {
             const fd=await fs.open(tmp,'wx',0o600);
-            try {await fd.writeFile(contents); await fd.sync();} finally {await fd.close();}
+            try {
+                for await (const chunk of chunks) {
+                    const bytes=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);
+                    size+=bytes.length;
+                    if(size>maxBytes) {
+                        const error=Error('Backup exceeds 700 MB limit');error.code='BACKUP_TOO_LARGE';throw error;
+                    }
+                    digest.update(bytes);await fd.writeFile(bytes);
+                }
+                await fd.sync();checksum=digest.digest('hex');
+            } finally {await fd.close();}
             await fs.rename(tmp,target); renamed=true;
             const dirfd=await fs.open(directory,'r'); try {await dirfd.sync();} finally {await dirfd.close();}
             const created=new Date();
-            await pool.query('INSERT INTO local_backups (id,job_id,type,size,created_at,checksum) VALUES (?,?,?,?,?,?)',[id,job.id,job.type,contents.length,utcMysql(created),checksum]);
+            await pool.query('INSERT INTO local_backups (id,job_id,type,size,created_at,checksum) VALUES (?,?,?,?,?,?)',[id,job.id,job.type,size,utcMysql(created),checksum]);
             cataloged=true;
             // Retention is scoped to the current job and only follows successful cataloging.
             const [rows]=await pool.query('SELECT * FROM local_backups ORDER BY created_at DESC');
@@ -90,7 +149,7 @@ function createLocalBackups({pool,directory='/backups',buildBackup, isPrimary=()
                 await fs.unlink(file(old.id));
                 await pool.query('DELETE FROM local_backups WHERE id=?',[old.id]);
             }
-            return {id,job_id:job.id,type:job.type,size:contents.length,created_at:created,checksum};
+            return {id,job_id:job.id,type:job.type,size:size,created_at:created,checksum};
         } catch(e) {
             await fs.rm(tmp,{force:true});
             if (renamed && !cataloged) {
@@ -103,12 +162,12 @@ function createLocalBackups({pool,directory='/backups',buildBackup, isPrimary=()
     }
     async function run(job) {
         if (!isPrimary()) throw Error('Primary node required');
-        const backup=await buildBackup(job);
+        const backup=streamBackup ? streamBackup(job) : await buildBackup(job);
         return save(job,backup);
     }
-    return {file,read,list,save,run};
+    return {file,open,read,list,save,run};
 }
-function createScheduler({pool,local,isPrimary=()=>true}) {
+function createScheduler({pool,local,isPrimary=()=>true,auditLog=async()=>{}}) {
     async function run(job, manual=false) {
         if (!isPrimary()) throw Error('Primary node required');
         const token=crypto.randomBytes(16).toString('hex');
@@ -117,7 +176,14 @@ function createScheduler({pool,local,isPrimary=()=>true}) {
         let result, error;
         try {result=await local.run(job);} catch(e) {error=e;}
         const scheduled=nextRun(job,new Date());
-        await pool.query('UPDATE backup_jobs SET next_run=?, last_run=UTC_TIMESTAMP(), last_error=?, lease_until=NULL, lease_token=NULL WHERE id=? AND lease_token=?',[utcMysql(scheduled),error?`Backup failed${/^[A-Z0-9_]{2,30}$/.test(error.code||'')?' ('+error.code+')':''}`:null,job.id,token]);
+        await pool.query('UPDATE backup_jobs SET next_run=?, last_run=UTC_TIMESTAMP(), last_error=?, lease_until=NULL, lease_token=NULL WHERE id=? AND lease_token=?',[utcMysql(scheduled),error?backupFailure(error):null,job.id,token]);
+        if(!manual) {
+            try {
+                await auditLog('system','system',error?'Scheduled backup failed':'Scheduled backup completed',error?'error':'success',
+                    JSON.stringify({jobId:job.id,type:job.type,...(error?{reason:backupFailure(error)}:{backupId:result?.id,sizeBytes:result?.size})}),
+                    '127.0.0.1',{enabled:false});
+            } catch(_) {console.error('[Local Backup] Audit event unavailable');}
+        }
         if(error) throw error;
         return result;
     }
@@ -130,4 +196,4 @@ function createScheduler({pool,local,isPrimary=()=>true}) {
     function start(){if(timer)return;const check=()=>tick().catch(e=>console.error('[Local Backup] Scheduler unavailable:',e.code||'error'));timer=setInterval(check,60000);timer.unref?.();check();}
     return {run,tick,start};
 }
-module.exports={createLocalBackups,validateJob,nextRun,createScheduler,utcMysql,jobView,backupView};
+module.exports={createLocalBackups,validateJob,nextRun,createScheduler,utcMysql,jobView,backupView,backupFailure};

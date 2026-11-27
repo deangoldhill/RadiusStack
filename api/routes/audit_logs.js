@@ -1,3 +1,14 @@
+// Audit metadata only: do not change the filters used by the deletion query.
+function authLogAuditFilters(query, includeCalledStationId = false) {
+    const keys = ['username', 'nasip', 'callingstationid', 'date_from', 'date_to', 'reply'];
+    if (includeCalledStationId) keys.push('calledstationid');
+    const filters = {};
+    for (const key of keys) {
+        const value = query[key];
+        if (typeof value === 'string') filters[key] = value.slice(0, 128).replace(/[\x00-\x1f\x7f]/g, ' ');
+    }
+    return filters;
+}
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily } = dependencies;
@@ -64,7 +75,7 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
         if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
         if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
         const [result] = await pool.query(query, params);
-        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip, req.tenantScope);
+        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(authLogAuditFilters(req.query)), req.ip, req.tenantScope);
         res.json({ deleted: result.affectedRows });
     } catch (err) {
         console.error('DELETE /api/logs/auth error:', err);
@@ -75,3 +86,4 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
 
 
 };
+module.exports.authLogAuditFilters = authLogAuditFilters;

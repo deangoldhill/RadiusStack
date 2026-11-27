@@ -61,7 +61,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
         if (!installed.has(attribute)) return res.status(400).json({ error: 'Profile reply attribute is not installed in the FreeRADIUS dictionary' });
         const op = type === 'reply' ? '=' : '==';
         await pool.query(`INSERT INTO ${table} (groupname, attribute, op, value, tenant_id) VALUES (?, ?, ?, ?, ?)`, [profile, attribute, op, value, selectedTenantId(req)]);
-        await auditLog(req.admin.username, req.origin, `Added ${type} attribute to profile ${profile}`, 'success', `${attribute}=${value}`, req.ip, req.tenantScope);
+        await auditLog(req.admin.username, req.origin, `Added ${type} attribute to profile ${profile}`, 'success', JSON.stringify({ profile, attribute, op }), req.ip, req.tenantScope);
         res.json({ success: true });
     });
 

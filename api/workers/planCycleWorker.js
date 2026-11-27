@@ -5,7 +5,12 @@ const expired = `((p.reset_period = 'daily' AND DATE(u.cycle_started_at) < CURDA
   OR (p.reset_period = 'weekly' AND YEARWEEK(u.cycle_started_at, 1) < YEARWEEK(CURDATE(), 1))
   OR (p.reset_period = 'monthly' AND DATE_FORMAT(u.cycle_started_at, '%Y-%m') < DATE_FORMAT(CURDATE(), '%Y-%m')))`;
 
-function createPlanCycleWorker({pool,isPrimary,logger=console}) {
+function createPlanCycleWorker({pool,isPrimary,logger=console,auditLog=async()=>{}}) {
+  async function auditChange(action,row) {
+    try {await auditLog('system','system',action,'success',JSON.stringify({username:row.username}), '127.0.0.1',
+      row.tenant_id===null||row.tenant_id===undefined?{enabled:false}:{enabled:true,tenantId:row.tenant_id});}
+    catch(_) {logger.error('[Plan cycle] Audit event unavailable');}
+  }
   let current=null;
   function process() {
     if (!isPrimary()) return Promise.resolve(0);
@@ -44,6 +49,7 @@ function createPlanCycleWorker({pool,isPrimary,logger=console}) {
             [totals.started_at,totals.total_input,totals.total_output,totals.total_time,
              row.username,row.tenant_id,row.cycle_started_at]);
           updated+=Number(result.affectedRows||0);
+          if(result.affectedRows>0)await auditChange('Automatically reset plan usage cycle',row);
         } catch(error) {logger.error('[Plan cycle] reset failed:',error.message);throw error;}
       }
       // Older or failed plan assignments can be missing a baseline entirely.
@@ -64,6 +70,7 @@ function createPlanCycleWorker({pool,isPrimary,logger=console}) {
               SELECT 1 FROM user_plan_usage u WHERE u.username=up.username AND u.tenant_id=up.tenant_id)`,
             [totals.started_at,totals.total_input,totals.total_output,totals.total_time,row.username,row.tenant_id]);
           updated+=Number(result.affectedRows||0);
+          if(result.affectedRows>0)await auditChange('Initialized missing plan usage baseline',row);
         } catch(error) {logger.error('[Plan cycle] baseline initialization failed:',error.message);throw error;}
       }
     } catch(error) {logger.error('[Plan cycle] scan failed:',error.message);throw error;}

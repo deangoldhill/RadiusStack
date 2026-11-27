@@ -55,10 +55,10 @@ app.put('/api/auth/me/password', async (req, res) => {
     const hash = await bcrypt.hash(newPassword, 10);
     await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [hash, admin.id]);
 
-    await auditLog(admin.username, 'webui', 'Changed their own password', 'success', '', req.ip || '');
+    const scope = await resolveLoginAuditScope(pool, admin);
+    await auditLog(admin.username, 'webui', 'Changed their own password', 'success', '', req.ip || '', scope);
     // Notification failure must not undo or delay a successful password change.
     if (typeof dependencies.notify === 'function') void Promise.resolve().then(async () => {
-        const scope = await resolveLoginAuditScope(pool, admin);
         const tenantId = Number(admin.is_super_admin) === 1 ? null : scope?.enabled ? scope.tenantId : undefined;
         if (tenantId !== undefined) await dependencies.notify({tenantId, event:'admin_password_changed',title:'Administrator password changed',body:`Administrator ${admin.username} changed their password.`});
     }).catch(() => console.error('[Pushbullet] Password-change notification unavailable'));

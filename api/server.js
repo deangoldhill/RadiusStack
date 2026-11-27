@@ -1,3 +1,5 @@
+const {createOperationAudit, runHaReconciliation} = require('./operation_audit');
+const {RESTORE_TIMEOUT_MS} = require('./backup_upload');
 const express = require('express');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
@@ -45,6 +47,7 @@ app.use('/api/sync', (req, res, next) => {
     next();
 });
 app.use(express.json({ limit: '50mb' }));
+app.use(createOperationAudit({auditLog}));
 app.use(cors());
 
 const upload = multer({ dest: '/tmp/' });
@@ -384,8 +387,12 @@ function requireHaAdmin(level) {
     return async (req, res, next) => {
         const key = req.header('X-API-Key');
         if (!key) return res.status(401).json({ error: 'API Key missing' });
-        const [rows] = await pool.query('SELECT is_super_admin, permissions FROM admins WHERE api_key = ? LIMIT 1', [key]);
+        const [rows] = await pool.query('SELECT username, is_super_admin, permissions FROM admins WHERE api_key = ? LIMIT 1', [key]);
         const admin = rows[0];
+        // Trusted identity for HA command audit events; never read actor names from the body.
+        if(admin) req.admin=admin;
+        req.origin=req.header('User-Agent')?.includes('Mozilla')?'webui':'api';
+        req.tenantScope={enabled:false};
         if (!admin || Number(admin.is_super_admin) !== 1) return res.status(403).json({ error: 'Global super-admin required' });
         let permissions = {}; try { permissions = typeof admin.permissions === 'string' ? JSON.parse(admin.permissions || '{}') : (admin.permissions || {}); } catch (_) {}
         if (!permissions.settings || (level === 'read-write' && permissions.settings !== 'read-write')) return res.status(403).json({ error: 'Settings permission required' });
@@ -483,7 +490,7 @@ app.post('/api/ha/log-reconcile', requireHaAdmin('read-write'), async (req,res)=
         const [result]=await originalPoolQuery.call(pool,
             "UPDATE ha_log_reconcile_state SET status='starting',run_id=NULL,detail=NULL,error=NULL WHERE id=1 AND status IN ('idle','completed','partial','failed-pre-drain')",[],{isSync:true});
         if (result.affectedRows!==1) return res.status(409).json({error:'A reconciliation is already in progress or state requires review'});
-        haPrimaryReconciler.run().catch(error=>console.error('[HA Log Reconciliation]',error.message));
+        runHaReconciliation(req,haPrimaryReconciler,auditLog).catch(error=>console.error('[HA Log Reconciliation]',error.message));
         res.status(202).json({success:true,message:'Log reconciliation started; monitor HA status'});
     } catch(error) { console.error('[HA Reconciliation Start]',error.message);res.status(503).json({error:'Unable to start reconciliation'}); }
 });
@@ -993,11 +1000,16 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     if (req.path.startsWith('/api/tenants') && !tenantMfaPath) {
         req.tenantScope = { enabled: false, tenantId: null, superAdmin: Number(admin.is_super_admin) === 1 };
     } else {
-        try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); } catch (err) { return res.status(403).json({ error: err.message }); }
+        try { req.tenantScope = await loadTenantScope(pool, admin, req.header('X-Tenant-ID')); }
+        catch (err) {
+            await auditLog(admin.username,origin,'Tenant context access denied','denied',`Module: ${module}`,ip,{enabled:false});
+            return res.status(403).json({ error: err.message });
+        }
         const platformControls = ['/api/admins', '/api/settings', '/api/notifications', '/api/radius/stats', '/api/auth/self', '/api/system', '/api/certs'];
         const globalOperationalGetRoutes = new Set(['/api/reports/dashboard-overview', '/api/reports/live-stats', '/api/reports/dashboard-stats', '/api/reports/failed-auth', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions/active', '/api/sessions/stale', '/api/sessions/nas-options']);
         const isOperationalPath = ['/api/reports', '/api/logs/auth', '/api/accounting', '/api/audit', '/api/sessions'].some(prefix => req.path.startsWith(prefix));
         if (req.tenantScope.globalContext && !tenantMfaPath && ((!isOperationalPath && !platformControls.some(prefix => req.path.startsWith(prefix))) || (isOperationalPath && (req.method !== 'GET' || !globalOperationalGetRoutes.has(req.path))))) {
+            await auditLog(admin.username,origin,'Global-context operation denied','denied',`Module: ${module}; method: ${req.method}`,ip,{enabled:false});
             return res.status(403).json({ error: 'Global context is limited to platform controls; select a tenant for operational data' });
         }
     }
@@ -1005,8 +1017,9 @@ const requireApiAuth = (module, requiredLevel) => async (req, res, next) => {
     req.ip = ip;
     next();
 };
-const requireGlobalSuperAdmin = (req, res, next) => {
+const requireGlobalSuperAdmin = async (req, res, next) => {
     if (req.tenantScope.enabled || Number(req.admin.is_super_admin) !== 1) {
+        await auditLog(req.admin.username,req.origin||'api','Global-only operation denied','denied','Global super-admin context required',req.ip,{enabled:false});
         return res.status(403).json({ error: 'Global super-admin context required' });
     }
     next();
@@ -1209,15 +1222,19 @@ app.get('/api/radius/stats', requireApiAuth('reports', 'read-only'), requireGlob
     }
 });
 
-const planCycleWorker = createPlanCycleWorker({pool,isPrimary:()=>global.haRole==='primary'});
+const planCycleWorker = createPlanCycleWorker({pool,isPrimary:()=>global.haRole==='primary',auditLog});
 dbReady.then(recoverMarkedSecondaryRadius).then(()=>{
     require('./routes/backup').startScheduler();
     const refreshPlanCycles = () => planCycleWorker.process().catch(error => console.error('[Plan cycle] worker failed:',error));
     setInterval(refreshPlanCycles, 30000);
     setTimeout(refreshPlanCycles, 1000);
-    return app.listen(3000, '0.0.0.0', () => {
-    console.log('Radius UI Server listening on port 3000');
+    const server = app.listen(3000, '0.0.0.0', () => {
+        console.log('Radius UI Server listening on port 3000');
     });
+    // Node's default five-minute request deadline otherwise cuts off slow uploads.
+    // Header deadlines and the ordinary per-route body limits remain unchanged.
+    server.requestTimeout = RESTORE_TIMEOUT_MS;
+    return server;
 }).catch(error=>{console.error('[Startup] Database or secondary Radius recovery failed:',error);process.exit(1);});
 
 

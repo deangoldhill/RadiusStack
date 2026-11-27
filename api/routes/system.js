@@ -26,14 +26,17 @@ app.post('/api/system/restart/:container', requireApiAuth('settings', 'read-writ
     const { container } = req.params;
     if (!/^radius_[a-z0-9_-]+$/.test(container)) return res.status(403).json({ error: 'Invalid container' });
 
+    // Await the durable writer before execution: a self-restart may never call back.
+    // The existing writer is best-effort; a rejected write must not masquerade as an exec failure.
+    try { await auditLog(req.admin.username, req.origin, `Requested restart container ${container}`, 'info', JSON.stringify({container, outcome:'requested'}), req.ip, {enabled:false}); } catch { /* Best-effort audit. */ }
     // Notify before execution, since restarting the API stops this process.
     await dependencies.notify?.({tenantId:null,event:'container_restart',title:'Manual container restart requested',body:`${req.admin.username} requested a restart of ${container} from ${req.ip}.`});
     exec(`docker restart ${container}`, async (error) => {
         if (error) {
-            await auditLog(req.admin.username, req.origin, `Restart container ${container}`, 'failed', error.message, req.ip);
+            try { await auditLog(req.admin.username, req.origin, `Restart container ${container}`, 'failed', 'restart_failed', req.ip, {enabled:false}); } catch { /* Do not mask exec outcome. */ }
             return res.status(500).json({ error: error.message });
         }
-        await auditLog(req.admin.username, req.origin, `Restarted container ${container}`, 'success', '', req.ip);
+        try { await auditLog(req.admin.username, req.origin, `Restarted container ${container}`, 'success', '', req.ip, {enabled:false}); } catch { /* Do not mask exec outcome. */ }
         res.json({ success: true });
     });
 });

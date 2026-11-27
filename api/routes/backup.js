@@ -1,4 +1,8 @@
-const {createLocalBackups, createScheduler, validateJob, nextRun, utcMysql, jobView, backupView} = require('../local_backups');
+const {createLocalBackups, createScheduler, validateJob, nextRun, utcMysql, jobView, backupView, backupFailure} = require('../local_backups');
+const {createRestoreUpload, MAX_BACKUP_BYTES} = require('../backup_upload');
+const {pipeline} = require('node:stream/promises');
+const {readBackup} = require('../backup_reader');
+const {backupChunks} = require('../backup_writer');
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { bcrypt, jwt, crypto, exec, fs, qrcode, authenticator, upload, multer, JWT_SECRET, TOTP_ISSUER, generateEnrollmentCode, syncUserTotpToRadius, getRadiusPassword, snapshotUserPlanUsage, calculateRadiusStats, calculateTrendHourly, calculateTrendDaily, requireGlobalSuperAdmin } = dependencies;
 
@@ -12,10 +16,10 @@ async function buildBackup(pool, job) {
         }
         const source = connection || pool;
     const type = job.type;
-    const include_accounting = job.acct || type === 'full';
-    const include_authlogs = job.auth || type === 'full';
-    const include_auditlogs = job.audit || type === 'full';
-    const safeQuery = async (q) => { try { const [r] = await source.query(q); return r; } catch (error) { if (job.strict) throw error; return []; } };
+    const include_accounting = !job.omitLogs && (job.acct || type === 'full');
+    const include_authlogs = !job.omitLogs && (job.auth || type === 'full');
+    const include_auditlogs = !job.omitLogs && (job.audit || type === 'full');
+    const safeQuery = async (q) => { try { const [r] = await source.query(q); return r; } catch (error) { if (job.strict || job.strictQueries) throw error; return []; } };
 
         const admins = await safeQuery('SELECT * FROM admins');
         const tenants = await safeQuery('SELECT * FROM tenants');
@@ -136,21 +140,22 @@ async function chunkInsert(pool, table, rows, chunkSize = 100) {
 }
 
 const restoreHandler = async (req, res) => {
-    const conn = await pool.getConnection();
+    let conn, parsed;
     const results = {};
     const errors = [];
 
     try {
         if (!req.file) return res.status(400).json({ error: 'No backup file uploaded' });
 
-        let backup;
         try {
-            backup = JSON.parse(req.file.buffer.toString('utf8'));
+            // Fully validate the file before opening a database transaction. Large log
+            // arrays are staged on disk and subsequently read in the existing batches.
+            parsed = await readBackup(req.file);
         } catch (e) {
             return res.status(400).json({ error: 'Invalid JSON in backup file: ' + e.message });
         }
 
-        const { metadata, data } = backup;
+        const { metadata, data, logs } = parsed;
         if (!data) return res.status(400).json({ error: 'Backup file has no data section' });
 
         const isV11 = metadata?.version === '1.1' || metadata?.version === '1.2';
@@ -161,6 +166,11 @@ const restoreHandler = async (req, res) => {
         const referencedIds = new Set(tenantScopedTables.flatMap(table =>
             (data[table] || []).map(row => row.tenant_id).filter(id => id !== null && id !== undefined)
         ));
+        for (const table of ['radacct', 'radpostauth']) {
+            if (logs[table]) for await (const batch of logs[table].batches(100)) {
+                for (const row of batch) if (row.tenant_id !== null && row.tenant_id !== undefined) referencedIds.add(row.tenant_id);
+            }
+        }
         for (const table of ['admin_tenants', 'tenant_settings']) {
             for (const row of data[table] || []) referencedIds.add(row.tenant_id);
         }
@@ -178,6 +188,7 @@ const restoreHandler = async (req, res) => {
             return res.status(400).json({ error: 'Backup references tenant IDs not present in its tenants section' });
         }
 
+        conn = await pool.getConnection();
         await conn.beginTransaction();
 
         const [currentTenants] = await conn.query('SELECT id, name FROM tenants FOR UPDATE');
@@ -305,30 +316,30 @@ const restoreHandler = async (req, res) => {
             results.user_plan_usage = data.user_plan_usage.length;
         }
 
-        if (data.radacct?.length) {
+        if (logs.radacct?.length) {
             try {
-                await chunkInsert(conn, 'radacct', data.radacct, 50);
-                results.radacct = data.radacct.length;
+                for await (const batch of logs.radacct.batches(50)) await chunkInsert(conn, 'radacct', batch, 50);
+                results.radacct = logs.radacct.length;
             } catch (e) {
                 errors.push(`radacct: ${e.message}`);
                 console.error('radacct restore error:', e);
             }
         }
 
-        if (data.radpostauth?.length) {
+        if (logs.radpostauth?.length) {
             try {
-                await chunkInsert(conn, 'radpostauth', data.radpostauth, 100);
-                results.radpostauth = data.radpostauth.length;
+                for await (const batch of logs.radpostauth.batches(100)) await chunkInsert(conn, 'radpostauth', batch, 100);
+                results.radpostauth = logs.radpostauth.length;
             } catch (e) {
                 errors.push(`radpostauth: ${e.message}`);
                 console.error('radpostauth restore error:', e);
             }
         }
 
-        if (data.admin_audit_log?.length) {
+        if (logs.admin_audit_log?.length) {
             try {
-                await chunkInsert(conn, 'admin_audit_log', data.admin_audit_log, 100);
-                results.admin_audit_log = data.admin_audit_log.length;
+                for await (const batch of logs.admin_audit_log.batches(100)) await chunkInsert(conn, 'admin_audit_log', batch, 100);
+                results.admin_audit_log = logs.admin_audit_log.length;
             } catch (e) {
                 errors.push(`admin_audit_log: ${e.message}`);
             }
@@ -363,28 +374,36 @@ const restoreHandler = async (req, res) => {
             ? `Restore completed with warnings: ${errors.join('; ')}`
             : 'Restore completed successfully';
 
-        await auditLog(req.admin.username, req.origin, `Restored ${metadata?.type || 'unknown'} backup (v${metadata?.version || '1.0'})`, 'success', message, req.ip);
+        const auditMessage = errors.length
+            ? `Restore completed with warnings (${errors.length})`
+            : 'Restore completed successfully';
+        await auditLog(req.admin.username, req.origin, `Restored ${metadata?.type || 'unknown'} backup (v${metadata?.version || '1.0'})`, 'success', auditMessage, req.ip);
         res.json({ success: true, message, results, warnings: errors });
 
     } catch (err) {
-        await conn.rollback();
+        if (conn) await conn.rollback();
         console.error('Restore error:', err);
-        await auditLog(req.admin.username, req.origin, 'Restore failed', 'error', err.message, req.ip);
+        await auditLog(req.admin.username, req.origin, 'Restore failed', 'error', 'Restore failed', req.ip);
         res.status(500).json({ error: 'Restore failed: ' + err.message, results, warnings: errors });
     } finally {
-        conn.release();
+        conn?.release();
+        await parsed?.cleanup();
     }
 };
-app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('backup'), restoreHandler);
+app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requireGlobalSuperAdmin, createRestoreUpload(), restoreHandler);
 
 
     const primary = dependencies.isPrimary || (() => process.env.HA_ENABLED !== 'true' || global.haRole === 'primary');
-    const local = dependencies.localBackups || createLocalBackups({pool,buildBackup:job=>buildBackup(pool,{...job,strict:true}),isPrimary:primary});
-    const scheduler = dependencies.scheduler || createScheduler({pool,local,isPrimary:primary});
+    const local = dependencies.localBackups || createLocalBackups({pool,buildBackup:job=>buildBackup(pool,{...job,strict:true}),streamBackup:job=>backupChunks(pool,job,buildBackup),isPrimary:primary});
+    const scheduler = dependencies.scheduler || createScheduler({pool,local,isPrimary:primary,auditLog});
     module.exports.startScheduler = () => scheduler.start();
     const guard = [requireApiAuth('settings','read-write'),requireGlobalSuperAdmin];
     const auditAction=(req,action,result='success')=>auditLog(req.admin.username,req.origin,action,result,'',req.ip);
-    const fail = (res,e) => res.status(500).json({error:'Local backup operation failed'});
+    const fail = (res,e) => {
+        const reason=backupFailure(e);
+        console.error('[Local Backup] Operation failed:', e.code||'error', e.backupTable||'', reason);
+        return res.status(e.code==='BACKUP_TOO_LARGE'?413:500).json({error:reason});
+    };
     const idParam = req => {
         const id=Number(req.params.id);
         if(!Number.isSafeInteger(id) || id<1) throw Error('Invalid job ID');
@@ -418,17 +437,33 @@ app.post('/api/system/restore', requireApiAuth('settings', 'read-write'), requir
         try {res.setHeader('Cache-Control','no-store');res.json((await local.list()).map(backupView));}catch(e){fail(res,e);}
     });
     app.get('/api/system/local-backups/:id/download',...guard,async(req,res)=>{
-        try {const content=await local.read(req.params.id);await auditAction(req,`Downloaded local backup ${req.params.id}`);res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');res.setHeader('Content-Disposition',`attachment; filename="radius_backup_${req.params.id}.json"`);res.send(content);}catch(e){res.status(404).json({error:'Local backup unavailable or corrupt'});}
+        let verified;
+        try {
+            verified=local.open ? await local.open(req.params.id) : null;
+            const content=verified?null:await local.read(req.params.id);
+            await auditAction(req,`Downloaded local backup ${req.params.id}`);
+            res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');
+            res.setHeader('Content-Disposition',`attachment; filename="radius_backup_${req.params.id}.json"`);
+            if(verified) await pipeline(verified.createReadStream(),res);else res.send(content);
+        } catch(e) {
+            if(res.headersSent) res.destroy(e);else res.status(404).json({error:'Local backup unavailable or corrupt'});
+        } finally {await verified?.close();}
     });
     app.post('/api/system/local-backups/:id/restore',...guard,async(req,res)=>{
         if(!writeAllowed(res))return;
         if(req.body?.confirm!=='RESTORE_BACKUP')return res.status(400).json({error:'Explicit RESTORE_BACKUP confirmation required'});
+        let verified;
         try {
-            // The existing restore handler is the only implementation of restore SQL.
+            // The existing restore handler remains the only implementation of restore SQL.
+            if(local.open) {
+                verified=await local.open(req.params.id);
+                return await restoreHandler({...req,file:{stream:verified.createReadStream()}},res);
+            }
             const content=await local.read(req.params.id);
-            if(content.length>50*1024*1024)return res.status(413).json({error:'Backup exceeds 50 MiB restore limit'});
-            return restoreHandler({...req,file:{buffer:content}},res);
-        }catch(e){return res.status(404).json({error:'Local backup unavailable or corrupt'});}
+            if(content.length>MAX_BACKUP_BYTES)return res.status(413).json({error:'Backup exceeds 700 MB restore limit'});
+            return await restoreHandler({...req,file:{buffer:content}},res);
+        }catch(e){return res.status(e.code==='BACKUP_TOO_LARGE'?413:404).json({error:e.code==='BACKUP_TOO_LARGE'?backupFailure(e):'Local backup unavailable or corrupt'});}
+        finally {await verified?.close();}
     });
     module.exports.buildBackup = buildBackup;
 };

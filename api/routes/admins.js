@@ -28,6 +28,7 @@ module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
             const color = req.body && req.body.ui_theme;
             if (color !== null && !isTheme(color)) return res.status(400).json({ error: 'Invalid theme' });
             await pool.query('UPDATE admins SET ui_theme = ? WHERE id = ?', [color, admin.id]);
+            try { await auditLog(admin.username, req.origin || 'api', 'Updated own theme', 'success', JSON.stringify({ui_theme:color}), req.ip, {enabled:false}); } catch { /* Preference was saved; audit is best-effort. */ }
             res.json({ username: admin.username, ui_theme: color });
         } catch (_) { res.status(500).json({ error: 'Unable to save profile theme' }); }
     });
@@ -135,7 +136,7 @@ app.post('/api/admins/:id/generate-key', requireApiAuth('admins', 'read-write'),
     try {
         await assertAdminTargetAccess(req, id);
         await pool.query('UPDATE admins SET api_key = ? WHERE id = ?', [newKey, id]);
-        await auditLog(req.admin.username, req.origin, `Generated new API key for admin ID: ${id}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Generated new API key for admin ID: ${id}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true, apiKey: newKey });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -155,7 +156,7 @@ app.post('/api/admins/:id/enable-2fa', requireApiAuth('admins', 'read-write'), a
 
         const qrImage = await qrcode.toDataURL(authenticator.keyuri(admin.username, 'RadiusFullStack', secret));
 
-        await auditLog(req.admin.username, req.origin, `Enabled 2FA for admin: ${admin.username}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Enabled 2FA for admin: ${admin.username}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true, qrImage, secret });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -167,7 +168,7 @@ app.post('/api/admins/:id/disable-2fa', requireApiAuth('admins', 'read-write'), 
     try {
         await assertAdminTargetAccess(req, id);
         await pool.query('UPDATE admins SET two_factor_enabled = false, two_factor_setup_complete = false, two_factor_secret = NULL WHERE id = ?', [id]);
-        await auditLog(req.admin.username, req.origin, `Disabled 2FA for admin ID: ${id}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Disabled 2FA for admin ID: ${id}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -208,7 +209,7 @@ app.post('/api/admins/:id/sync-password', requireApiAuth('admins', 'read-write')
         await assertAdminTargetAccess(req, adminId);
         const passwordHash = await bcrypt.hash(password, 10);
         await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
-        await auditLog(req.admin.username, req.origin, `Synchronized password for admin ID: ${adminId}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Synchronized password for admin ID: ${adminId}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Unable to synchronize administrator password' });
@@ -224,7 +225,7 @@ app.post('/api/admins/:id/provision-2fa', requireApiAuth('admins', 'read-write')
     try {
         await assertAdminTargetAccess(req, adminId);
         await pool.query('UPDATE admins SET two_factor_enabled = true, two_factor_setup_complete = true, two_factor_secret = ? WHERE id = ?', [secret, adminId]);
-        await auditLog(req.admin.username, req.origin, `Provisioned existing TOTP secret for admin ID: ${adminId}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Provisioned existing TOTP secret for admin ID: ${adminId}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Unable to provision administrator MFA' });

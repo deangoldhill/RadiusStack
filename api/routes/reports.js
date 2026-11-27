@@ -1,5 +1,6 @@
 module.exports = function(app, pool, requireApiAuth, auditLog, dependencies) {
     const { scope } = require('../tenant');
+    const { authLogAuditFilters } = require('./audit_logs');
     // Global reporting is read-only observability across every tenant.
     function reportScope(req, column = 'tenant_id') {
         return req.tenantScope.enabled ? scope(req.tenantScope, column) : { sql: '', params: [] };
@@ -139,7 +140,7 @@ app.delete('/api/logs/auth', requireApiAuth('reports', 'read-write'), async (req
         if (reply) { conditions.push('p.reply = ?'); params.push(reply); }
         if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
         const [result] = await pool.query(query, params);
-        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(req.query), req.ip, req.tenantScope);
+        await auditLog(req.admin.username, req.origin, `Deleted ${result.affectedRows} auth log entries`, 'success', JSON.stringify(authLogAuditFilters(req.query, true)), req.ip, req.tenantScope);
         res.json({ deleted: result.affectedRows });
     } catch (err) {
         console.error('DELETE /api/logs/auth error:', err);
@@ -525,7 +526,7 @@ app.delete('/api/accounting', requireApiAuth('reports', 'read-write'), async (re
     try {
         const [result] = await pool.query(query, params);
         await auditLog(req.admin.username, req.origin, 'Deleted accounting records', 'success',
-            `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip);
+            `Filters: ${JSON.stringify({ username, nasip, start_date, end_date })}`, req.ip, req.tenantScope);
         res.json({ success: true, deleted: result.affectedRows });
     } catch (err) {
         console.error(err);
@@ -561,7 +562,7 @@ app.post('/api/users/:username/totp/reset', requireApiAuth('users', 'read-write'
         };
 
         await conn.commit();
-        await auditLog(req.admin.username, req.origin, `Reset TOTP for user: ${username}`, 'success', '', req.ip);
+        await auditLog(req.admin.username, req.origin, `Reset TOTP for user: ${username}`, 'success', '', req.ip, req.tenantScope);
         res.json({ success: true, enrollment });
     } catch (err) {
         await conn.rollback();
@@ -580,30 +581,31 @@ app.post('/auth/radius/totp/start', async (req, res) => {
             await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid RADIUS credentials', ip);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
+        const auditScope = credential.tenantId == null ? null : { enabled: true, tenantId: credential.tenantId };
         const [rows] = await pool.query(
             `SELECT username, enabled, secret, pending_secret, enrolled_at, enrollment_code_hash, enrollment_expires_at
              FROM user_totp WHERE username = ? AND tenant_id = ? LIMIT 1`, [username, credential.tenantId]
         );
         const totp = rows[0];
         if (!totp || Number(totp.enabled) !== 1) {
-            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP not enabled for user', ip);
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP not enabled for user', ip, auditScope);
             return res.status(403).json({ error: 'TOTP is not enabled for this user' });
         }
         if (totp.secret) {
-            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP already enrolled', ip);
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'TOTP already enrolled', ip, auditScope);
             return res.status(403).json({ error: 'TOTP already enrolled. Contact admin to reset.' });
         }
         if (!totp.enrollment_code_hash || !totp.enrollment_expires_at) {
-            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'No pending enrollment code', ip);
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'No pending enrollment code', ip, auditScope);
             return res.status(403).json({ error: 'No enrollment pending' });
         }
         if (new Date() > new Date(totp.enrollment_expires_at)) {
-            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Enrollment code expired', ip);
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Enrollment code expired', ip, auditScope);
             return res.status(403).json({ error: 'Enrollment code expired. Contact admin to reset.' });
         }
         const codeValid = await bcrypt.compare(enrollmentCode, totp.enrollment_code_hash);
         if (!codeValid) {
-            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid enrollment code', ip);
+            await auditLog(username, 'webui', 'User TOTP enrollment login', 'failed', 'Invalid enrollment code', ip, auditScope);
             return res.status(401).json({ error: 'Invalid enrollment code' });
         }
 
@@ -620,7 +622,7 @@ app.post('/auth/radius/totp/start', async (req, res) => {
         const qrImage = await qrcode.toDataURL(otpauth);
         const token = signTotpEnrollmentToken(username, credential.tenantId);
 
-        await auditLog(username, 'webui', 'User TOTP enrollment login', 'success', 'Enrollment session created', ip);
+        await auditLog(username, 'webui', 'User TOTP enrollment login', 'success', 'Enrollment session created', ip, auditScope);
         return res.json({ success: true, token, username, qrImage, manualSecret: secret });
     } catch (err) {
         console.error('TOTP start error:', err);
@@ -635,22 +637,23 @@ app.post('/auth/radius/totp/confirm', async (req, res) => {
         const decoded = verifyTotpEnrollmentToken(token);
         const username = decoded.username;
         const tenantId = decoded.tenantId;
+        const auditScope = tenantId == null ? null : { enabled: true, tenantId };
         const [rows] = await pool.query(
             `SELECT username, enabled, secret, pending_secret FROM user_totp WHERE username = ? AND tenant_id = ? LIMIT 1`, [username, tenantId]
         );
         const totp = rows[0];
         if (!totp || Number(totp.enabled) !== 1) {
-            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'TOTP not enabled for user', ip);
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'TOTP not enabled for user', ip, auditScope);
             return res.status(403).json({ error: 'TOTP is not enabled for this user' });
         }
         const secret = totp.pending_secret || totp.secret;
         if (!secret) {
-            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'No pending secret', ip);
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'No pending secret', ip, auditScope);
             return res.status(400).json({ error: 'No TOTP enrollment is pending' });
         }
         const ok = authenticator.check(String(code || '').trim(), secret);
         if (!ok) {
-            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'Invalid TOTP code', ip);
+            await auditLog(username, 'webui', 'User TOTP confirm', 'failed', 'Invalid TOTP code', ip, auditScope);
             return res.status(400).json({ error: 'Invalid TOTP code' });
         }
         const conn = await pool.getConnection();
@@ -667,7 +670,7 @@ app.post('/auth/radius/totp/confirm', async (req, res) => {
         } finally {
             conn.release();
         }
-        await auditLog(username, 'webui', 'User TOTP confirm', 'success', 'TOTP enrolled', ip);
+        await auditLog(username, 'webui', 'User TOTP confirm', 'success', 'TOTP enrolled', ip, auditScope);
         return res.json({ success: true });
     } catch (err) {
         console.error('TOTP confirm error:', err);

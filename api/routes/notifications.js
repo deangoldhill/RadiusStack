@@ -118,9 +118,13 @@ module.exports = function registerNotifications(app, pool, requireApiAuth, audit
     try {
       const {tenantId} = scopeInfo(req.tenantScope);
       const result = await deps.diagnose({tenantId});
-      console.info('[Pushbullet test]',JSON.stringify({scope:tenantId===null?'global':`tenant:${tenantId}`,ok:result.ok,checks:result.checks}));
+      const ok = result.ok === true;
+      try { await auditLog(req.admin.username, req.origin, 'Test notification', ok ? 'success' : 'failed', JSON.stringify({ok}), req.ip, req.tenantScope); } catch { /* Audit is best-effort, not the provider outcome. */ }
       return res.json(result);
-    } catch { return res.status(503).json({error:'Pushbullet test is unavailable'}); }
+    } catch {
+      try { await auditLog(req.admin.username, req.origin, 'Test notification', 'failed', JSON.stringify({ok:false, error:'test_unavailable'}), req.ip, req.tenantScope); } catch { /* Best-effort audit. */ }
+      return res.status(503).json({error:'Pushbullet test is unavailable'});
+    }
   });
 };
 module.exports.loadConfig = loadConfig;
